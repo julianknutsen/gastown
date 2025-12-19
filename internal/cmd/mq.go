@@ -144,6 +144,42 @@ Example:
 	RunE: runMqStatus,
 }
 
+var mqIntegrationCmd = &cobra.Command{
+	Use:   "integration",
+	Short: "Manage integration branches for epics",
+	Long: `Manage integration branches for batch work on epics.
+
+Integration branches allow multiple MRs for an epic to target a shared
+branch instead of main. After all epic work is complete, the integration
+branch is landed to main as a single atomic unit.
+
+Commands:
+  create  Create an integration branch for an epic
+  land    Merge integration branch to main (not yet implemented)
+  status  Show integration branch status (not yet implemented)`,
+}
+
+var mqIntegrationCreateCmd = &cobra.Command{
+	Use:   "create <epic-id>",
+	Short: "Create an integration branch for an epic",
+	Long: `Create an integration branch for batch work on an epic.
+
+Creates a branch named integration/<epic-id> from main and pushes it
+to origin. Future MRs for this epic's children can target this branch.
+
+Actions:
+  1. Verify epic exists
+  2. Create branch integration/<epic-id> from main
+  3. Push to origin
+  4. Store integration branch info in epic metadata
+
+Example:
+  gt mq integration create gt-auth-epic
+  # Creates integration/gt-auth-epic from main`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMqIntegrationCreate,
+}
+
 func init() {
 	// Submit flags
 	mqSubmitCmd.Flags().StringVar(&mqSubmitBranch, "branch", "", "Source branch (default: current branch)")
@@ -175,6 +211,10 @@ func init() {
 	mqCmd.AddCommand(mqListCmd)
 	mqCmd.AddCommand(mqRejectCmd)
 	mqCmd.AddCommand(mqStatusCmd)
+
+	// Integration branch subcommands
+	mqIntegrationCmd.AddCommand(mqIntegrationCreateCmd)
+	mqCmd.AddCommand(mqIntegrationCmd)
 
 	rootCmd.AddCommand(mqCmd)
 }
@@ -969,4 +1009,136 @@ func getDescriptionWithoutMRFields(description string) string {
 	result := strings.Join(lines, "\n")
 	result = strings.TrimSpace(result)
 	return result
+}
+
+// runMqIntegrationCreate creates an integration branch for an epic.
+func runMqIntegrationCreate(cmd *cobra.Command, args []string) error {
+	epicID := args[0]
+
+	// Find workspace
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Find current rig
+	_, r, err := findCurrentRig(townRoot)
+	if err != nil {
+		return err
+	}
+
+	// Initialize beads for the rig
+	bd := beads.New(r.Path)
+
+	// 1. Verify epic exists
+	epic, err := bd.Show(epicID)
+	if err != nil {
+		if err == beads.ErrNotFound {
+			return fmt.Errorf("epic '%s' not found", epicID)
+		}
+		return fmt.Errorf("fetching epic: %w", err)
+	}
+
+	// Verify it's actually an epic
+	if epic.Type != "epic" {
+		return fmt.Errorf("'%s' is a %s, not an epic", epicID, epic.Type)
+	}
+
+	// Build integration branch name
+	branchName := "integration/" + epicID
+
+	// Initialize git for the rig
+	g := git.NewGit(r.Path)
+
+	// Check if integration branch already exists locally
+	exists, err := g.BranchExists(branchName)
+	if err != nil {
+		return fmt.Errorf("checking branch existence: %w", err)
+	}
+	if exists {
+		return fmt.Errorf("integration branch '%s' already exists locally", branchName)
+	}
+
+	// Check if branch exists on remote
+	remoteExists, err := g.RemoteBranchExists("origin", branchName)
+	if err != nil {
+		// Log warning but continue - remote check isn't critical
+		fmt.Printf("  %s\n", style.Dim.Render("(could not check remote, continuing)"))
+	}
+	if remoteExists {
+		return fmt.Errorf("integration branch '%s' already exists on origin", branchName)
+	}
+
+	// Ensure we have latest main
+	fmt.Printf("Fetching latest from origin...\n")
+	if err := g.Fetch("origin"); err != nil {
+		return fmt.Errorf("fetching from origin: %w", err)
+	}
+
+	// 2. Create branch from origin/main
+	fmt.Printf("Creating branch '%s' from main...\n", branchName)
+	if err := g.CreateBranchFrom(branchName, "origin/main"); err != nil {
+		return fmt.Errorf("creating branch: %w", err)
+	}
+
+	// 3. Push to origin
+	fmt.Printf("Pushing to origin...\n")
+	if err := g.Push("origin", branchName, false); err != nil {
+		// Clean up local branch on push failure
+		_ = g.DeleteBranch(branchName, true)
+		return fmt.Errorf("pushing to origin: %w", err)
+	}
+
+	// 4. Store integration branch info in epic metadata
+	// Update the epic's description to include the integration branch info
+	newDesc := addIntegrationBranchField(epic.Description, branchName)
+	if newDesc != epic.Description {
+		if err := bd.Update(epicID, beads.UpdateOptions{Description: &newDesc}); err != nil {
+			// Non-fatal - branch was created, just metadata update failed
+			fmt.Printf("  %s\n", style.Dim.Render("(warning: could not update epic metadata)"))
+		}
+	}
+
+	// Success output
+	fmt.Printf("\n%s Created integration branch\n", style.Bold.Render("✓"))
+	fmt.Printf("  Epic:   %s\n", epicID)
+	fmt.Printf("  Branch: %s\n", branchName)
+	fmt.Printf("  From:   main\n")
+	fmt.Printf("\n  Future MRs for this epic's children can target:\n")
+	fmt.Printf("    gt mq submit --epic %s\n", epicID)
+
+	return nil
+}
+
+// addIntegrationBranchField adds or updates the integration_branch field in a description.
+func addIntegrationBranchField(description, branchName string) string {
+	fieldLine := "integration_branch: " + branchName
+
+	// If description is empty, just return the field
+	if description == "" {
+		return fieldLine
+	}
+
+	// Check if integration_branch field already exists
+	lines := strings.Split(description, "\n")
+	var newLines []string
+	found := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(trimmed), "integration_branch:") {
+			// Replace existing field
+			newLines = append(newLines, fieldLine)
+			found = true
+		} else {
+			newLines = append(newLines, line)
+		}
+	}
+
+	if !found {
+		// Add field at the beginning
+		newLines = append([]string{fieldLine}, newLines...)
+	}
+
+	return strings.Join(newLines, "\n")
 }

@@ -314,6 +314,39 @@ func (g *Git) CreateBranch(name string) error {
 	return err
 }
 
+// CreateBranchFrom creates a new branch from a specific ref.
+func (g *Git) CreateBranchFrom(name, ref string) error {
+	_, err := g.run("branch", name, ref)
+	return err
+}
+
+// BranchExists checks if a branch exists locally.
+func (g *Git) BranchExists(name string) (bool, error) {
+	_, err := g.run("show-ref", "--verify", "--quiet", "refs/heads/"+name)
+	if err != nil {
+		// Exit code 1 means branch doesn't exist
+		if strings.Contains(err.Error(), "exit status 1") {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// RemoteBranchExists checks if a branch exists on the remote.
+func (g *Git) RemoteBranchExists(remote, branch string) (bool, error) {
+	_, err := g.run("ls-remote", "--heads", remote, branch)
+	if err != nil {
+		return false, err
+	}
+	// ls-remote returns empty if branch doesn't exist, need to check output
+	out, err := g.run("ls-remote", "--heads", remote, branch)
+	if err != nil {
+		return false, err
+	}
+	return out != "", nil
+}
+
 // DeleteBranch deletes a branch.
 func (g *Git) DeleteBranch(name string, force bool) error {
 	flag := "-d"
