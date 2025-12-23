@@ -44,23 +44,46 @@ Every beads issue has these core fields:
 
 ### Work Molecules
 
-A molecule is an issue that represents executable work:
+A **molecule** is the general abstraction for executable work in Gas Town. Molecules
+can take various **shapes** - structural patterns that encode different workflow
+semantics. The data plane stores all shapes the same way; the semantics come from
+how the structure is interpreted.
+
+**Common molecular shapes:**
+
+| Shape | Structure | Use Case |
+|-------|-----------|----------|
+| **Epic** | Parent + flat children (TODO list) | Simple feature work, linear decomposition |
+| **Christmas Ornament** | Trunk + dynamic arms + base | Patrol cycles with variable fanout |
+| **Compound** | Multiple bonded molecules | Complex multi-phase workflows |
+| **Polymer** | Chained compound molecules | Large-scale autonomous operation |
+
+> **All epics are molecules. Not all molecules are epics.**
+> For the full taxonomy of shapes, see [molecular-chemistry.md](molecular-chemistry.md).
+
+Here's an **epic** (the simplest molecular shape) stored as beads data:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Issue: gt-abc1                                             │
 │  ─────────────────────────────────────────────────────────  │
 │  title:       "Implement user authentication"               │
-│  type:        epic                                          │
+│  type:        epic                     ← SHAPE: TODO LIST   │
 │  assignee:    "gastown/crew/max"                            │
 │  pinned:      true                     ← ON MY HOOK         │
 │  status:      in_progress                                   │
 │  description: "Full auth flow with OAuth..."                │
-│  children:    [gt-abc2, gt-abc3, gt-abc4]  ← STEPS          │
+│  children:    [gt-abc2, gt-abc3, gt-abc4]  ← FLAT CHILDREN  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 The hook query: `WHERE assignee = me AND pinned = true`
+
+**Why the data plane doesn't distinguish shapes:** The shape lives in the structure
+(parent/child relationships, dependency edges), not in a separate field. An epic
+is recognized by its flat parent-children structure. A Christmas Ornament is
+recognized by dynamic arms bonded during execution. The beads database just stores
+issues with relationships - the chemistry layer interprets the shape.
 
 ### Mail Messages
 
@@ -284,4 +307,5 @@ migration needed.
 - [pinned-beads-design.md](pinned-beads-design.md) - Hook semantics per role
 - [propulsion-principle.md](propulsion-principle.md) - The "RUN IT" protocol
 - [sling-design.md](sling-design.md) - Work assignment mechanics
-- [molecular-chemistry.md](molecular-chemistry.md) - Molecule patterns
+- [molecular-chemistry.md](molecular-chemistry.md) - Full taxonomy of molecular shapes, phases, and operators
+- [session-lifecycle.md](session-lifecycle.md) - The Single-Bond Principle and context cycling
