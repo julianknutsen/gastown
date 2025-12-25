@@ -1,5 +1,5 @@
-// Package deacon provides the Deacon agent infrastructure.
-package deacon
+// Package polecat provides polecat lifecycle management.
+package polecat
 
 import (
 	"encoding/json"
@@ -36,7 +36,7 @@ type PendingSpawn struct {
 
 // PendingFile returns the path to the pending spawns file.
 func PendingFile(townRoot string) string {
-	return filepath.Join(townRoot, "deacon", "pending.json")
+	return filepath.Join(townRoot, "spawn", "pending.json")
 }
 
 // LoadPending loads the pending spawns from disk.

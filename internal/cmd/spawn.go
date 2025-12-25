@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
@@ -35,6 +36,9 @@ var (
 	spawnMolecule string
 	spawnForce    bool
 	spawnAccount  string
+
+	// spawn pending flags
+	spawnPendingLines int
 )
 
 var spawnCmd = &cobra.Command{
@@ -43,6 +47,8 @@ var spawnCmd = &cobra.Command{
 	GroupID: GroupWork,
 	Short:   "Spawn a polecat with work assignment",
 	Long: `Spawn a polecat with a work assignment.
+
+Use 'gt spawn pending' to view spawns waiting to be triggered.
 
 Assigns an issue or task to a polecat and starts a session. If no polecat
 is specified, auto-selects an idle polecat in the rig.
@@ -67,6 +73,27 @@ Examples:
 	RunE: runSpawn,
 }
 
+var spawnPendingCmd = &cobra.Command{
+	Use:   "pending [session-to-clear]",
+	Short: "List pending spawns with captured output (for AI observation)",
+	Long: `List pending polecat spawns with their terminal output for AI analysis.
+
+This shows spawns waiting to be triggered (Claude is still initializing).
+The terminal output helps determine if Claude is ready.
+
+Workflow:
+1. Run 'gt spawn pending' to see pending spawns and their output
+2. Analyze the output to determine if Claude is ready (look for "> " prompt)
+3. Run 'gt nudge <session> "Begin."' to trigger ready polecats
+4. Run 'gt spawn pending <session>' to clear from pending list
+
+Examples:
+  gt spawn pending                    # List all pending with output
+  gt spawn pending gastown/p-abc123   # Clear specific session from pending`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runSpawnPending,
+}
+
 func init() {
 	spawnCmd.Flags().StringVar(&spawnIssue, "issue", "", "Beads issue ID to assign")
 	spawnCmd.Flags().StringVarP(&spawnMessage, "message", "m", "", "Free-form task description")
@@ -78,6 +105,11 @@ func init() {
 	spawnCmd.Flags().BoolVar(&spawnForce, "force", false, "Force spawn even if polecat has unread mail")
 	spawnCmd.Flags().StringVar(&spawnAccount, "account", "", "Claude Code account handle to use (overrides default)")
 
+	// spawn pending flags
+	spawnPendingCmd.Flags().IntVarP(&spawnPendingLines, "lines", "n", 15,
+		"Number of terminal lines to capture per session")
+
+	spawnCmd.AddCommand(spawnPendingCmd)
 	rootCmd.AddCommand(spawnCmd)
 }
 
@@ -739,5 +771,110 @@ func buildWorkAssignmentMail(issue *BeadsIssue, message, polecatAddress string, 
 		Priority: mail.PriorityHigh,
 		Type:     mail.TypeTask,
 	}
+}
+
+// runSpawnPending shows pending spawns with captured output for AI observation.
+// This is the ZFC-compliant way to observe polecats waiting to be triggered.
+func runSpawnPending(cmd *cobra.Command, args []string) error {
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// If session argument provided, clear it from pending
+	if len(args) == 1 {
+		return clearSpawnPending(townRoot, args[0])
+	}
+
+	// Step 1: Check inbox for new POLECAT_STARTED messages
+	pending, err := polecat.CheckInboxForSpawns(townRoot)
+	if err != nil {
+		return fmt.Errorf("checking inbox: %w", err)
+	}
+
+	if len(pending) == 0 {
+		fmt.Printf("%s No pending spawns\n", style.Dim.Render("○"))
+		return nil
+	}
+
+	t := tmux.NewTmux()
+
+	fmt.Printf("%s Pending spawns (%d):\n\n", style.Bold.Render("●"), len(pending))
+
+	for i, ps := range pending {
+		// Check if session still exists
+		running, err := t.HasSession(ps.Session)
+		if err != nil {
+			fmt.Printf("Session: %s\n", ps.Session)
+			fmt.Printf("  Status: error checking session: %v\n\n", err)
+			continue
+		}
+
+		if !running {
+			fmt.Printf("Session: %s\n", ps.Session)
+			fmt.Printf("  Status: session no longer exists\n\n")
+			continue
+		}
+
+		// Capture terminal output for AI analysis
+		output, err := t.CapturePane(ps.Session, spawnPendingLines)
+		if err != nil {
+			fmt.Printf("Session: %s\n", ps.Session)
+			fmt.Printf("  Status: error capturing output: %v\n\n", err)
+			continue
+		}
+
+		// Print session info
+		fmt.Printf("Session: %s\n", ps.Session)
+		fmt.Printf("  Rig: %s\n", ps.Rig)
+		fmt.Printf("  Polecat: %s\n", ps.Polecat)
+		if ps.Issue != "" {
+			fmt.Printf("  Issue: %s\n", ps.Issue)
+		}
+		fmt.Printf("  Spawned: %s ago\n", time.Since(ps.SpawnedAt).Round(time.Second))
+		fmt.Printf("  Terminal output (last %d lines):\n", spawnPendingLines)
+		fmt.Println(strings.Repeat("─", 50))
+		fmt.Println(output)
+		fmt.Println(strings.Repeat("─", 50))
+
+		if i < len(pending)-1 {
+			fmt.Println()
+		}
+	}
+
+	fmt.Println()
+	fmt.Printf("%s To trigger a ready polecat:\n", style.Dim.Render("→"))
+	fmt.Printf("  gt nudge <session> \"Begin.\"\n")
+
+	return nil
+}
+
+// clearSpawnPending removes a session from the pending list.
+func clearSpawnPending(townRoot, session string) error {
+	pending, err := polecat.LoadPending(townRoot)
+	if err != nil {
+		return fmt.Errorf("loading pending: %w", err)
+	}
+
+	var remaining []*polecat.PendingSpawn
+	found := false
+	for _, ps := range pending {
+		if ps.Session == session {
+			found = true
+			continue
+		}
+		remaining = append(remaining, ps)
+	}
+
+	if !found {
+		return fmt.Errorf("session %s not found in pending list", session)
+	}
+
+	if err := polecat.SavePending(townRoot, remaining); err != nil {
+		return fmt.Errorf("saving pending: %w", err)
+	}
+
+	fmt.Printf("%s Cleared %s from pending list\n", style.Bold.Render("✓"), session)
+	return nil
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/deacon"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -112,21 +113,16 @@ This command is typically called by the daemon during cold startup.`,
 
 var deaconPendingCmd = &cobra.Command{
 	Use:   "pending [session-to-clear]",
-	Short: "List pending spawns with captured output (for AI observation)",
-	Long: `List pending polecat spawns with their terminal output for AI analysis.
+	Short: "[DEPRECATED] Use 'gt spawn pending' instead",
+	Long: `DEPRECATED: Use 'gt spawn pending' instead.
 
-This is the ZFC-compliant way for the Deacon (AI) to observe polecats:
-1. Run 'gt deacon pending' to see pending spawns and their output
-2. Analyze the output to determine if Claude is ready (look for "> " prompt)
-3. Run 'gt nudge <session> "Begin."' to trigger ready polecats
-4. Run 'gt deacon pending <session>' to clear from pending list
+This command has been moved to 'gt spawn pending' since pending spawn
+tracking is not Deacon-specific - anyone might need to observe pending
+polecats (Mayor, humans, debugging, etc.).
 
-This replaces the regex-based trigger-pending for steady-state operation.
-The AI makes the readiness judgment, not hardcoded regex.
-
-Examples:
-  gt deacon pending                    # List all pending with output
-  gt deacon pending gastown/p-abc123   # Clear specific session from pending`,
+The functionality is identical:
+  gt spawn pending                    # List all pending with output
+  gt spawn pending gastown/p-abc123   # Clear specific session from pending`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runDeaconPending,
 }
@@ -364,7 +360,7 @@ func runDeaconTriggerPending(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 1: Check inbox for new POLECAT_STARTED messages
-	pending, err := deacon.CheckInboxForSpawns(townRoot)
+	pending, err := polecat.CheckInboxForSpawns(townRoot)
 	if err != nil {
 		return fmt.Errorf("checking inbox: %w", err)
 	}
@@ -377,7 +373,7 @@ func runDeaconTriggerPending(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Found %d pending spawn(s)\n", style.Bold.Render("●"), len(pending))
 
 	// Step 2: Try to trigger each pending spawn
-	results, err := deacon.TriggerPendingSpawns(townRoot, triggerTimeout)
+	results, err := polecat.TriggerPendingSpawns(townRoot, triggerTimeout)
 	if err != nil {
 		return fmt.Errorf("triggering: %w", err)
 	}
@@ -398,7 +394,7 @@ func runDeaconTriggerPending(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 3: Prune stale pending spawns (older than 5 minutes)
-	pruned, _ := deacon.PruneStalePending(townRoot, 5*time.Minute)
+	pruned, _ := polecat.PruneStalePending(townRoot, 5*time.Minute)
 	if pruned > 0 {
 		fmt.Printf("  %s Pruned %d stale spawn(s)\n", style.Dim.Render("○"), pruned)
 	}
@@ -427,7 +423,7 @@ func runDeaconPending(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 1: Check inbox for new POLECAT_STARTED messages
-	pending, err := deacon.CheckInboxForSpawns(townRoot)
+	pending, err := polecat.CheckInboxForSpawns(townRoot)
 	if err != nil {
 		return fmt.Errorf("checking inbox: %w", err)
 	}
@@ -491,12 +487,12 @@ func runDeaconPending(cmd *cobra.Command, args []string) error {
 
 // clearPendingSession removes a session from the pending list.
 func clearPendingSession(townRoot, session string) error {
-	pending, err := deacon.LoadPending(townRoot)
+	pending, err := polecat.LoadPending(townRoot)
 	if err != nil {
 		return fmt.Errorf("loading pending: %w", err)
 	}
 
-	var remaining []*deacon.PendingSpawn
+	var remaining []*polecat.PendingSpawn
 	found := false
 	for _, ps := range pending {
 		if ps.Session == session {
@@ -510,7 +506,7 @@ func clearPendingSession(townRoot, session string) error {
 		return fmt.Errorf("session %s not found in pending list", session)
 	}
 
-	if err := deacon.SavePending(townRoot, remaining); err != nil {
+	if err := polecat.SavePending(townRoot, remaining); err != nil {
 		return fmt.Errorf("saving pending: %w", err)
 	}
 
