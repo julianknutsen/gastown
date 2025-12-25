@@ -2,18 +2,16 @@
   "formula": "mol-polecat-lease",
   "description": "Semaphore tracking a single polecat's lifecycle.\n\nUsed by Witness to track polecat lifecycle during patrol. The Witness bonds this proto for each active polecat, creating a lease that tracks the polecat from spawn through work to cleanup.\n\n## Variables\n\n| Variable | Required | Description |\n|----------|----------|-------------|\n| polecat | Yes | Name of the polecat |\n| issue | Yes | The issue assigned to the polecat |",
   "version": 1,
-  "variables": [
-    {
-      "name": "polecat",
+  "vars": {
+    "polecat": {
       "required": true,
       "description": "Name of the polecat"
     },
-    {
-      "name": "issue",
+    "issue": {
       "required": true,
       "description": "The issue assigned to the polecat"
     }
-  ],
+  },
   "steps": [
     {
       "id": "boot",

@@ -2,13 +2,12 @@
   "formula": "mol-polecat-work",
   "description": "Full polecat lifecycle from assignment to decommission.\n\nThis proto enables nondeterministic idempotence for polecat work. A polecat that crashes after any step can restart, read its molecule state, and continue from the last completed step. No work is lost.\n\n## Variables\n\n| Variable | Required | Description |\n|----------|----------|-------------|\n| issue | Yes | The source issue ID being worked on |",
   "version": 1,
-  "variables": [
-    {
-      "name": "issue",
+  "vars": {
+    "issue": {
       "required": true,
       "description": "The source issue ID being worked on"
     }
-  ],
+  },
   "steps": [
     {
       "id": "load-context",
