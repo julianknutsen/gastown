@@ -86,6 +86,11 @@ func runSling(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("polecats cannot sling (use gt done for handoff)")
 	}
 
+	// --var is only for standalone formula mode, not formula-on-bead mode
+	if slingOnTarget != "" && len(slingVars) > 0 {
+		return fmt.Errorf("--var cannot be used with --on (formula-on-bead mode doesn't support variables)")
+	}
+
 	// Determine mode based on flags and argument types
 	var beadID string
 	var formulaName string
@@ -128,48 +133,15 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 	if len(args) > 1 {
 		// Slinging to another agent
-		targetAgent, targetPane, err = resolveTargetAgent(args[1])
+		targetAgent, targetPane, hookRoot, err = resolveTargetAgent(args[1])
 		if err != nil {
 			return fmt.Errorf("resolving target: %w", err)
 		}
-		// For remote targets, use their home directory
-		// TODO: resolve target's home properly
-		hookRoot, err = detectCloneRoot()
-		if err != nil {
-			return fmt.Errorf("detecting clone root: %w", err)
-		}
 	} else {
-		// Slinging to self - use env-aware role detection
-		roleInfo, err := GetRole()
+		// Slinging to self
+		targetAgent, targetPane, hookRoot, err = resolveSelfTarget()
 		if err != nil {
-			return fmt.Errorf("detecting role: %w", err)
-		}
-		// Build agent identity from role
-		switch roleInfo.Role {
-		case RoleMayor:
-			targetAgent = "mayor"
-		case RoleDeacon:
-			targetAgent = "deacon"
-		case RoleWitness:
-			targetAgent = fmt.Sprintf("%s/witness", roleInfo.Rig)
-		case RoleRefinery:
-			targetAgent = fmt.Sprintf("%s/refinery", roleInfo.Rig)
-		case RolePolecat:
-			targetAgent = fmt.Sprintf("%s/polecats/%s", roleInfo.Rig, roleInfo.Polecat)
-		case RoleCrew:
-			targetAgent = fmt.Sprintf("%s/crew/%s", roleInfo.Rig, roleInfo.Polecat)
-		default:
-			return fmt.Errorf("cannot determine agent identity (role: %s)", roleInfo.Role)
-		}
-		targetPane = os.Getenv("TMUX_PANE")
-		// Use role's home for hook storage
-		hookRoot = roleInfo.Home
-		if hookRoot == "" {
-			// Fallback to git root if home not determined
-			hookRoot, err = detectCloneRoot()
-			if err != nil {
-				return fmt.Errorf("detecting clone root: %w", err)
-			}
+			return err
 		}
 	}
 
@@ -240,23 +212,30 @@ func injectStartPrompt(pane, beadID, subject string) error {
 	return t.NudgePane(pane, prompt)
 }
 
-// resolveTargetAgent converts a target spec to agent ID and pane.
-func resolveTargetAgent(target string) (agentID string, pane string, err error) {
+// resolveTargetAgent converts a target spec to agent ID, pane, and hook root.
+func resolveTargetAgent(target string) (agentID string, pane string, hookRoot string, err error) {
 	// First resolve to session name
 	sessionName, err := resolveRoleToSession(target)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	// Get the pane for that session
 	pane, err = getSessionPane(sessionName)
 	if err != nil {
-		return "", "", fmt.Errorf("getting pane for %s: %w", sessionName, err)
+		return "", "", "", fmt.Errorf("getting pane for %s: %w", sessionName, err)
+	}
+
+	// Get the target's working directory for hook storage
+	t := tmux.NewTmux()
+	hookRoot, err = t.GetPaneWorkDir(sessionName)
+	if err != nil {
+		return "", "", "", fmt.Errorf("getting working dir for %s: %w", sessionName, err)
 	}
 
 	// Convert session name back to agent ID format
 	agentID = sessionToAgentID(sessionName)
-	return agentID, pane, nil
+	return agentID, pane, hookRoot, nil
 }
 
 // sessionToAgentID converts a session name to agent ID format.
@@ -297,52 +276,6 @@ func verifyBeadExists(beadID string) error {
 	return nil
 }
 
-// detectAgentIdentity figures out who we are (crew/joe, witness, etc).
-func detectAgentIdentity() (string, error) {
-	// Check environment first
-	if crew := os.Getenv("GT_CREW"); crew != "" {
-		if rig := os.Getenv("GT_RIG"); rig != "" {
-			return fmt.Sprintf("%s/crew/%s", rig, crew), nil
-		}
-	}
-
-	// Check if we're a polecat
-	if polecat := os.Getenv("GT_POLECAT"); polecat != "" {
-		if rig := os.Getenv("GT_RIG"); rig != "" {
-			return fmt.Sprintf("%s/polecats/%s", rig, polecat), nil
-		}
-	}
-
-	// Try to detect from cwd
-	detected, err := detectCrewFromCwd()
-	if err == nil {
-		return fmt.Sprintf("%s/crew/%s", detected.rigName, detected.crewName), nil
-	}
-
-	// Check for other role markers in session name
-	if session := os.Getenv("TMUX"); session != "" {
-		sessionName, err := getCurrentTmuxSession()
-		if err == nil {
-			if sessionName == "gt-mayor" {
-				return "mayor", nil
-			}
-			if sessionName == "gt-deacon" {
-				return "deacon", nil
-			}
-			if strings.HasSuffix(sessionName, "-witness") {
-				rig := strings.TrimSuffix(strings.TrimPrefix(sessionName, "gt-"), "-witness")
-				return fmt.Sprintf("%s/witness", rig), nil
-			}
-			if strings.HasSuffix(sessionName, "-refinery") {
-				rig := strings.TrimSuffix(strings.TrimPrefix(sessionName, "gt-"), "-refinery")
-				return fmt.Sprintf("%s/refinery", rig), nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("cannot determine agent identity - set GT_RIG/GT_CREW or run from clone directory")
-}
-
 // detectCloneRoot finds the root of the current git clone.
 func detectCloneRoot() (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
@@ -351,6 +284,44 @@ func detectCloneRoot() (string, error) {
 		return "", fmt.Errorf("not in a git repository")
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// resolveSelfTarget determines agent identity, pane, and hook root for slinging to self.
+func resolveSelfTarget() (agentID string, pane string, hookRoot string, err error) {
+	roleInfo, err := GetRole()
+	if err != nil {
+		return "", "", "", fmt.Errorf("detecting role: %w", err)
+	}
+
+	// Build agent identity from role
+	switch roleInfo.Role {
+	case RoleMayor:
+		agentID = "mayor"
+	case RoleDeacon:
+		agentID = "deacon"
+	case RoleWitness:
+		agentID = fmt.Sprintf("%s/witness", roleInfo.Rig)
+	case RoleRefinery:
+		agentID = fmt.Sprintf("%s/refinery", roleInfo.Rig)
+	case RolePolecat:
+		agentID = fmt.Sprintf("%s/polecats/%s", roleInfo.Rig, roleInfo.Polecat)
+	case RoleCrew:
+		agentID = fmt.Sprintf("%s/crew/%s", roleInfo.Rig, roleInfo.Polecat)
+	default:
+		return "", "", "", fmt.Errorf("cannot determine agent identity (role: %s)", roleInfo.Role)
+	}
+
+	pane = os.Getenv("TMUX_PANE")
+	hookRoot = roleInfo.Home
+	if hookRoot == "" {
+		// Fallback to git root if home not determined
+		hookRoot, err = detectCloneRoot()
+		if err != nil {
+			return "", "", "", fmt.Errorf("detecting clone root: %w", err)
+		}
+	}
+
+	return agentID, pane, hookRoot, nil
 }
 
 // verifyFormulaExists checks that the formula exists using bd formula show.
@@ -390,43 +361,15 @@ func runSlingFormula(args []string) error {
 
 	if target != "" {
 		// Slinging to another agent
-		targetAgent, targetPane, err = resolveTargetAgent(target)
+		targetAgent, targetPane, hookRoot, err = resolveTargetAgent(target)
 		if err != nil {
 			return fmt.Errorf("resolving target: %w", err)
 		}
-		hookRoot, err = detectCloneRoot()
-		if err != nil {
-			return fmt.Errorf("detecting clone root: %w", err)
-		}
 	} else {
 		// Slinging to self
-		roleInfo, err := GetRole()
+		targetAgent, targetPane, hookRoot, err = resolveSelfTarget()
 		if err != nil {
-			return fmt.Errorf("detecting role: %w", err)
-		}
-		switch roleInfo.Role {
-		case RoleMayor:
-			targetAgent = "mayor"
-		case RoleDeacon:
-			targetAgent = "deacon"
-		case RoleWitness:
-			targetAgent = fmt.Sprintf("%s/witness", roleInfo.Rig)
-		case RoleRefinery:
-			targetAgent = fmt.Sprintf("%s/refinery", roleInfo.Rig)
-		case RolePolecat:
-			targetAgent = fmt.Sprintf("%s/polecats/%s", roleInfo.Rig, roleInfo.Polecat)
-		case RoleCrew:
-			targetAgent = fmt.Sprintf("%s/crew/%s", roleInfo.Rig, roleInfo.Polecat)
-		default:
-			return fmt.Errorf("cannot determine agent identity (role: %s)", roleInfo.Role)
-		}
-		targetPane = os.Getenv("TMUX_PANE")
-		hookRoot = roleInfo.Home
-		if hookRoot == "" {
-			hookRoot, err = detectCloneRoot()
-			if err != nil {
-				return fmt.Errorf("detecting clone root: %w", err)
-			}
+			return err
 		}
 	}
 
@@ -460,6 +403,7 @@ func runSlingFormula(args []string) error {
 	wispArgs = append(wispArgs, "--json")
 
 	wispCmd := exec.Command("bd", wispArgs...)
+	wispCmd.Stderr = os.Stderr // Show wisp errors to user
 	wispOut, err := wispCmd.Output()
 	if err != nil {
 		return fmt.Errorf("creating wisp: %w", err)
@@ -470,7 +414,8 @@ func runSlingFormula(args []string) error {
 		RootID string `json:"root_id"`
 	}
 	if err := json.Unmarshal(wispOut, &wispResult); err != nil {
-		// Fallback: use formula name as identifier
+		// Fallback: use formula name as identifier, but warn user
+		fmt.Printf("%s Could not parse wisp output, using formula name as ID\n", style.Dim.Render("Warning:"))
 		wispResult.RootID = formulaName
 	}
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/style"
@@ -65,16 +64,10 @@ func runHook(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Determine agent identity
-	agentID, err := detectAgentIdentity()
+	// Determine agent identity and clone root
+	agentID, _, cloneRoot, err := resolveSelfTarget()
 	if err != nil {
 		return fmt.Errorf("detecting agent identity: %w", err)
-	}
-
-	// Get cwd for wisp storage (use clone root, not town root)
-	cloneRoot, err := detectCloneRoot()
-	if err != nil {
-		return fmt.Errorf("detecting clone root: %w", err)
 	}
 
 	// Create the slung work wisp
@@ -120,60 +113,3 @@ func verifyBeadExistsForHook(beadID string) error {
 	return nil
 }
 
-// detectAgentIdentityForHook figures out who we are (crew/joe, witness, etc).
-// Duplicated from sling.go - will be consolidated when sling.go is removed.
-func detectAgentIdentityForHook() (string, error) {
-	// Check environment first
-	if crew := os.Getenv("GT_CREW"); crew != "" {
-		if rig := os.Getenv("GT_RIG"); rig != "" {
-			return fmt.Sprintf("%s/crew/%s", rig, crew), nil
-		}
-	}
-
-	// Check if we're a polecat
-	if polecat := os.Getenv("GT_POLECAT"); polecat != "" {
-		if rig := os.Getenv("GT_RIG"); rig != "" {
-			return fmt.Sprintf("%s/polecats/%s", rig, polecat), nil
-		}
-	}
-
-	// Try to detect from cwd
-	detected, err := detectCrewFromCwd()
-	if err == nil {
-		return fmt.Sprintf("%s/crew/%s", detected.rigName, detected.crewName), nil
-	}
-
-	// Check for other role markers in session name
-	if session := os.Getenv("TMUX"); session != "" {
-		sessionName, err := getCurrentTmuxSession()
-		if err == nil {
-			if sessionName == "gt-mayor" {
-				return "mayor", nil
-			}
-			if sessionName == "gt-deacon" {
-				return "deacon", nil
-			}
-			if strings.HasSuffix(sessionName, "-witness") {
-				rig := strings.TrimSuffix(strings.TrimPrefix(sessionName, "gt-"), "-witness")
-				return fmt.Sprintf("%s/witness", rig), nil
-			}
-			if strings.HasSuffix(sessionName, "-refinery") {
-				rig := strings.TrimSuffix(strings.TrimPrefix(sessionName, "gt-"), "-refinery")
-				return fmt.Sprintf("%s/refinery", rig), nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("cannot determine agent identity - set GT_RIG/GT_CREW or run from clone directory")
-}
-
-// detectCloneRootForHook finds the root of the current git clone.
-// Duplicated from sling.go - will be consolidated when sling.go is removed.
-func detectCloneRootForHook() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("not in a git repository")
-	}
-	return strings.TrimSpace(string(out)), nil
-}

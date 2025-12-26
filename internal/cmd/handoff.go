@@ -494,16 +494,10 @@ func hookBeadForHandoff(beadID string) error {
 		return fmt.Errorf("bead '%s' not found", beadID)
 	}
 
-	// Determine agent identity
-	agentID, err := detectAgentIdentity()
+	// Determine agent identity and clone root
+	agentID, _, cloneRoot, err := resolveSelfTarget()
 	if err != nil {
 		return fmt.Errorf("detecting agent identity: %w", err)
-	}
-
-	// Get clone root for wisp storage
-	cloneRoot, err := detectCloneRoot()
-	if err != nil {
-		return fmt.Errorf("detecting clone root: %w", err)
 	}
 
 	// Create the slung work wisp
