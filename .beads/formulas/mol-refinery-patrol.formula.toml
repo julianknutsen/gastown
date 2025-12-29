@@ -161,20 +161,20 @@ id = "merge-push"
 title = "Merge and push to main"
 needs = ["handle-failures"]
 description = """
-Merge to main and push immediately.
+Merge to main and push. CRITICAL: Notifications come IMMEDIATELY after push.
 
-**Step 1: Merge**
+**Step 1: Merge and Push**
 ```bash
 git checkout main
 git merge --ff-only temp
 git push origin main
-git branch -d temp
-git push origin --delete <polecat-branch>  # Delete remote polecat branch
 ```
 
-**Step 2: Notify Witness (REQUIRED - DO NOT SKIP)**
+⚠️ **STOP HERE - DO NOT PROCEED UNTIL STEPS 2-3 COMPLETE**
 
-After successful merge, you MUST send MERGED mail to Witness:
+**Step 2: Send MERGED Notification (REQUIRED - DO THIS IMMEDIATELY)**
+
+RIGHT NOW, before any cleanup, send MERGED mail to Witness:
 
 ```bash
 gt mail send <rig>/witness -s "MERGED <polecat-name>" -m "Branch: <branch>
@@ -182,25 +182,31 @@ Issue: <issue-id>
 Merged-At: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
-This signals the Witness to nuke the polecat worktree. Without this notification,
-polecat worktrees accumulate indefinitely.
+This signals the Witness to nuke the polecat worktree. WITHOUT THIS NOTIFICATION,
+POLECAT WORKTREES ACCUMULATE INDEFINITELY AND THE LIFECYCLE BREAKS.
 
-**Step 3: Close MR bead (REQUIRED - DO NOT SKIP)**
-
-Close the merge-request bead that was created when polecat ran `gt done`:
+**Step 3: Close MR Bead (REQUIRED - DO THIS IMMEDIATELY)**
 
 ```bash
 bd close <mr-bead-id> --reason "Merged to main at $(git rev-parse --short HEAD)"
 ```
 
-The MR bead ID was included in the MERGE_READY message or can be found via:
+The MR bead ID was in the MERGE_READY message or find via:
 ```bash
 bd list --type=merge-request --status=open | grep <polecat-name>
 ```
 
-**Verification**: Before proceeding, confirm:
-- [ ] MERGED mail sent to witness
-- [ ] MR bead closed
+**Step 4: Cleanup (only after Steps 2-3 confirmed)**
+```bash
+git branch -d temp
+git push origin --delete <polecat-branch>
+```
+
+**VERIFICATION GATE**: You CANNOT proceed to loop-check without:
+- [x] MERGED mail sent to witness
+- [x] MR bead closed
+
+If you skipped notifications, GO BACK AND SEND THEM NOW.
 
 Main has moved. Any remaining branches need rebasing on new baseline."""
 
