@@ -62,14 +62,14 @@ type EscalationData struct {
 
 // HandoffData contains information for session handoff messages.
 type HandoffData struct {
-	Role         string
-	CurrentWork  string
-	Status       string
-	NextSteps    []string
-	Notes        string
-	PendingMail  int
-	GitBranch    string
-	GitDirty     bool
+	Role        string
+	CurrentWork string
+	Status      string
+	NextSteps   []string
+	Notes       string
+	PendingMail int
+	GitBranch   string
+	GitDirty    bool
 }
 
 // New creates a new Templates instance.
@@ -125,4 +125,26 @@ func (t *Templates) RoleNames() []string {
 // MessageNames returns the list of available message templates.
 func (t *Templates) MessageNames() []string {
 	return []string{"spawn", "nudge", "escalation", "handoff"}
+}
+
+// GetAllRoleTemplates returns all role templates as a map of filename to content.
+func GetAllRoleTemplates() (map[string][]byte, error) {
+	entries, err := templateFS.ReadDir("roles")
+	if err != nil {
+		return nil, fmt.Errorf("reading roles directory: %w", err)
+	}
+
+	result := make(map[string][]byte)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		content, err := templateFS.ReadFile("roles/" + entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", entry.Name(), err)
+		}
+		result[entry.Name()] = content
+	}
+
+	return result, nil
 }
