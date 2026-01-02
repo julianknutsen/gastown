@@ -317,9 +317,48 @@ gt mail send mayor/ -s "Health: <rig> <component> unresponsive" \\
 Reset unresponsive_cycles to 0 when component responds normally."""
 
 [[steps]]
+id = "zombie-scan"
+title = "Backup check for zombie polecats"
+needs = ["health-scan"]
+description = """
+Defense-in-depth check for zombie polecats that Witness should have cleaned.
+
+**Why this exists:**
+The Witness is responsible for nuking polecats after they complete work (via POLECAT_DONE).
+This step provides backup detection in case the Witness fails to clean up.
+
+**Zombie criteria:**
+- State: idle or done (no active work assigned)
+- Session: not running (tmux session dead)
+- No hooked work (nothing pending for this polecat)
+- Last activity: older than 10 minutes
+
+**Run the zombie scan:**
+```bash
+gt deacon zombie-scan --dry-run
+```
+
+**If zombies detected:**
+1. Review the output to confirm they are truly abandoned
+2. Run without --dry-run to nuke them:
+   ```bash
+   gt deacon zombie-scan
+   ```
+3. This will:
+   - Nuke each zombie polecat
+   - Notify the Mayor about Witness failure
+   - Log the cleanup action
+
+**If no zombies:**
+No action needed - Witness is doing its job.
+
+**Note:** This is a backup mechanism. If you frequently find zombies,
+investigate why the Witness isn't cleaning up properly."""
+
+[[steps]]
 id = "plugin-run"
 title = "Execute registered plugins"
-needs = ["health-scan"]
+needs = ["zombie-scan"]
 description = """
 Execute registered plugins.
 
