@@ -181,6 +181,16 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 					state.LastHeartbeat.Format("15:04:05"),
 					state.HeartbeatCount)
 			}
+
+			// Check if binary is newer than process
+			if binaryModTime, err := getBinaryModTime(); err == nil {
+				fmt.Printf("  Binary: %s\n", binaryModTime.Format("2006-01-02 15:04:05"))
+				if binaryModTime.After(state.StartedAt) {
+					fmt.Printf("  %s Binary is newer than process - consider '%s'\n",
+						style.Bold.Render("⚠"),
+						style.Dim.Render("gt daemon stop && gt daemon start"))
+				}
+			}
 		}
 	} else {
 		fmt.Printf("%s Daemon is %s\n",
@@ -190,6 +200,19 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// getBinaryModTime returns the modification time of the current executable
+func getBinaryModTime() (time.Time, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return time.Time{}, err
+	}
+	info, err := os.Stat(exePath)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
 }
 
 func runDaemonLogs(cmd *cobra.Command, args []string) error {
