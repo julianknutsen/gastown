@@ -22,14 +22,25 @@ import (
 // Examples:
 //   - "mayor" -> "hq-mayor"
 //   - "deacon" -> "hq-deacon"
-//   - "gastown/witness" -> "gt-gastown-witness"
-//   - "gastown/refinery" -> "gt-gastown-refinery"
-//   - "gastown/nux" (polecat) -> "gt-gastown-polecat-nux"
-//   - "gastown/crew/max" -> "gt-gastown-crew-max"
+//   - "polybot/witness" -> "po-polybot-witness"
+//   - "polybot/refinery" -> "po-polybot-refinery"
+//   - "polybot/nux" (polecat) -> "po-polybot-polecat-nux"
+//   - "polybot/crew/max" -> "po-polybot-crew-max"
 //
 // If role is unknown, it tries to infer from the identity string.
 func buildAgentBeadID(identity string, role Role) string {
+	// Get town root to look up rig prefixes
+	townRoot, _ := workspace.FindFromCwd()
+
 	parts := strings.Split(identity, "/")
+
+	// Helper to get prefix for a rig
+	getPrefix := func(rigName string) string {
+		if townRoot != "" {
+			return beads.GetPrefixForRig(townRoot, rigName)
+		}
+		return "gt" // fallback
+	}
 
 	// If role is unknown or empty, try to infer from identity
 	if role == RoleUnknown || role == Role("") {
@@ -39,18 +50,23 @@ func buildAgentBeadID(identity string, role Role) string {
 		case identity == "deacon":
 			return beads.DeaconBeadIDTown()
 		case len(parts) == 2 && parts[1] == "witness":
-			return beads.WitnessBeadID(parts[0])
+			prefix := getPrefix(parts[0])
+			return beads.WitnessBeadIDWithPrefix(prefix, parts[0])
 		case len(parts) == 2 && parts[1] == "refinery":
-			return beads.RefineryBeadID(parts[0])
+			prefix := getPrefix(parts[0])
+			return beads.RefineryBeadIDWithPrefix(prefix, parts[0])
 		case len(parts) == 2:
 			// Assume rig/name is a polecat
-			return beads.PolecatBeadID(parts[0], parts[1])
+			prefix := getPrefix(parts[0])
+			return beads.PolecatBeadIDWithPrefix(prefix, parts[0], parts[1])
 		case len(parts) == 3 && parts[1] == "crew":
 			// rig/crew/name - crew member
-			return beads.CrewBeadID(parts[0], parts[2])
+			prefix := getPrefix(parts[0])
+			return beads.CrewBeadIDWithPrefix(prefix, parts[0], parts[2])
 		case len(parts) == 3 && parts[1] == "polecats":
 			// rig/polecats/name - explicit polecat
-			return beads.PolecatBeadID(parts[0], parts[2])
+			prefix := getPrefix(parts[0])
+			return beads.PolecatBeadIDWithPrefix(prefix, parts[0], parts[2])
 		default:
 			return ""
 		}
@@ -63,26 +79,31 @@ func buildAgentBeadID(identity string, role Role) string {
 		return beads.DeaconBeadIDTown()
 	case RoleWitness:
 		if len(parts) >= 1 {
-			return beads.WitnessBeadID(parts[0])
+			prefix := getPrefix(parts[0])
+			return beads.WitnessBeadIDWithPrefix(prefix, parts[0])
 		}
 		return ""
 	case RoleRefinery:
 		if len(parts) >= 1 {
-			return beads.RefineryBeadID(parts[0])
+			prefix := getPrefix(parts[0])
+			return beads.RefineryBeadIDWithPrefix(prefix, parts[0])
 		}
 		return ""
 	case RolePolecat:
 		// Handle both 2-part (rig/name) and 3-part (rig/polecats/name) formats
 		if len(parts) == 3 && parts[1] == "polecats" {
-			return beads.PolecatBeadID(parts[0], parts[2])
+			prefix := getPrefix(parts[0])
+			return beads.PolecatBeadIDWithPrefix(prefix, parts[0], parts[2])
 		}
 		if len(parts) >= 2 {
-			return beads.PolecatBeadID(parts[0], parts[1])
+			prefix := getPrefix(parts[0])
+			return beads.PolecatBeadIDWithPrefix(prefix, parts[0], parts[1])
 		}
 		return ""
 	case RoleCrew:
 		if len(parts) >= 3 && parts[1] == "crew" {
-			return beads.CrewBeadID(parts[0], parts[2])
+			prefix := getPrefix(parts[0])
+			return beads.CrewBeadIDWithPrefix(prefix, parts[0], parts[2])
 		}
 		return ""
 	default:
