@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -394,7 +395,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 		// Parse wisp output to get the root ID
 		var wispResult struct {
-			RootID string `json:"root_id"`
+			RootID string `json:"new_epic_id"`
 		}
 		if err := json.Unmarshal(wispOut, &wispResult); err != nil {
 			return fmt.Errorf("parsing wisp output: %w", err)
@@ -415,7 +416,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 		// Parse bond output - the wisp root becomes the compound root
 		// After bonding, we hook the wisp root (which now contains the original bead)
 		var bondResult struct {
-			RootID string `json:"root_id"`
+			RootID string `json:"result_id"`
 		}
 		if err := json.Unmarshal(bondOut, &bondResult); err != nil {
 			// Fallback: use wisp root as the compound root
@@ -592,10 +593,17 @@ func sessionToAgentID(sessionName string) string {
 }
 
 // verifyBeadExists checks that the bead exists using bd show.
+// Note: bd show returns exit 0 even when bead doesn't exist (bug in bd),
+// so we also check that the output is valid JSON starting with '['.
 func verifyBeadExists(beadID string) error {
 	cmd := exec.Command("bd", "show", beadID, "--json")
-	if err := cmd.Run(); err != nil {
+	out, err := cmd.Output()
+	if err != nil {
 		return fmt.Errorf("bead '%s' not found (bd show failed)", beadID)
+	}
+	// bd show --json returns an array; verify we got valid JSON array
+	if len(out) == 0 || !bytes.HasPrefix(bytes.TrimSpace(out), []byte("[")) {
+		return fmt.Errorf("bead '%s' not found", beadID)
 	}
 	return nil
 }
@@ -775,22 +783,17 @@ func runSlingFormula(args []string) error {
 		} else {
 			// Slinging to an existing agent
 			// Skip pane lookup if --naked (agent may be terminated)
-			var targetWorkDir string
 			targetAgent, targetPane, targetWorkDir, err = resolveTargetAgent(target, slingNaked)
 			if err != nil {
 				return fmt.Errorf("resolving target: %w", err)
 			}
-			// Use target's working directory for bd commands (needed for redirect-based routing)
-			_ = targetWorkDir // Formula sling doesn't need hookWorkDir
 		}
 	} else {
 		// Slinging to self
-		var selfWorkDir string
-		targetAgent, targetPane, selfWorkDir, err = resolveSelfTarget()
+		targetAgent, targetPane, targetWorkDir, err = resolveSelfTarget()
 		if err != nil {
 			return err
 		}
-		_ = selfWorkDir // Formula sling doesn't need hookWorkDir
 	}
 
 	fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, targetAgent)
@@ -831,7 +834,7 @@ func runSlingFormula(args []string) error {
 
 	// Parse wisp output to get the root ID
 	var wispResult struct {
-		RootID string `json:"root_id"`
+		RootID string `json:"new_epic_id"`
 	}
 	if err := json.Unmarshal(wispOut, &wispResult); err != nil {
 		// Fallback: use formula name as identifier, but warn user
