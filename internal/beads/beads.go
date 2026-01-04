@@ -1388,15 +1388,20 @@ func IsAgentSessionBead(beadID string) bool {
 }
 
 // Role bead ID naming convention:
-//   gt-<role>-role
+// Role beads are stored in town beads (~/.beads/) with hq- prefix.
+//
+// Canonical format: hq-<role>-role
 //
 // Examples:
-//   - gt-mayor-role
-//   - gt-deacon-role
-//   - gt-witness-role
-//   - gt-refinery-role
-//   - gt-crew-role
-//   - gt-polecat-role
+//   - hq-mayor-role
+//   - hq-deacon-role
+//   - hq-witness-role
+//   - hq-refinery-role
+//   - hq-crew-role
+//   - hq-polecat-role
+//
+// Use RoleBeadIDTown() to get canonical role bead IDs.
+// The legacy RoleBeadID() function returns gt-<role>-role for backward compatibility.
 
 // RoleBeadID returns the role bead ID for a given role type.
 // Role beads define lifecycle configuration for each agent type.
