@@ -106,7 +106,7 @@ func runUnsling(cmd *cobra.Command, args []string) error {
 	b := beads.New(beadsPath)
 
 	// Convert agent ID to agent bead ID and look up the agent bead
-	agentBeadID := agentIDToBeadID(agentID)
+	agentBeadID := agentIDToBeadID(agentID, townRoot)
 	if agentBeadID == "" {
 		return fmt.Errorf("could not convert agent ID %s to bead ID", agentID)
 	}

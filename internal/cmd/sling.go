@@ -432,10 +432,13 @@ func runSling(cmd *cobra.Command, args []string) error {
 	}
 
 	// Hook the bead using bd update
-	// Set BEADS_DIR to town-level beads so hq-* beads are accessible
-	// even when running from polecat worktree (which only sees gt-* via redirect)
+	// For hq-* beads (town beads), set BEADS_DIR to town-level beads so they're accessible
+	// even when running from polecat worktree (which only sees rig beads via redirect).
+	// For rig beads (po-*, gt-*, etc.), let the redirect mechanism work naturally.
 	hookCmd := exec.Command("bd", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
-	hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
+	if isTownBead(beadID) {
+		hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
+	}
 	if hookWorkDir != "" {
 		hookCmd.Dir = hookWorkDir
 	} else {
@@ -783,17 +786,22 @@ func runSlingFormula(args []string) error {
 		} else {
 			// Slinging to an existing agent
 			// Skip pane lookup if --naked (agent may be terminated)
+			var targetWorkDir string
 			targetAgent, targetPane, targetWorkDir, err = resolveTargetAgent(target, slingNaked)
 			if err != nil {
 				return fmt.Errorf("resolving target: %w", err)
 			}
+			// Use target's working directory for bd commands (needed for redirect-based routing)
+			_ = targetWorkDir // Formula sling doesn't need hookWorkDir
 		}
 	} else {
 		// Slinging to self
-		targetAgent, targetPane, targetWorkDir, err = resolveSelfTarget()
+		var selfWorkDir string
+		targetAgent, targetPane, selfWorkDir, err = resolveSelfTarget()
 		if err != nil {
 			return err
 		}
+		_ = selfWorkDir // Formula sling doesn't need hookWorkDir
 	}
 
 	fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, targetAgent)
@@ -845,9 +853,11 @@ func runSlingFormula(args []string) error {
 	fmt.Printf("%s Wisp created: %s\n", style.Bold.Render("✓"), wispResult.RootID)
 
 	// Step 3: Hook the wisp bead using bd update (discovery-based approach)
-	// Set BEADS_DIR to town-level beads so hq-* beads are accessible
+	// Wisps are created in town beads (hq-* prefix), so set BEADS_DIR to town beads.
 	hookCmd := exec.Command("bd", "update", wispResult.RootID, "--status=hooked", "--assignee="+targetAgent)
-	hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
+	if isTownBead(wispResult.RootID) {
+		hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
+	}
 	hookCmd.Dir = townRoot
 	hookCmd.Stderr = os.Stderr
 	if err := hookCmd.Run(); err != nil {
@@ -911,13 +921,21 @@ func runSlingFormula(args []string) error {
 func updateAgentHookBead(agentID, _, workDir, townBeadsDir string) { // beadID unused due to BD_BUG_AGENT_STATE_ROUTING
 	_ = townBeadsDir // Not used - BEADS_DIR breaks redirect mechanism
 
+	// Find town root first (needed for prefix lookup)
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		// Not in a Gas Town workspace - can't update agent bead
+		fmt.Fprintf(os.Stderr, "Warning: couldn't find town root to update agent hook: %v\n", err)
+		return
+	}
+
 	// Convert agent ID to agent bead ID
 	// Format examples (canonical: prefix-rig-role-name):
-	//   greenplace/crew/max -> gt-greenplace-crew-max
-	//   greenplace/polecats/Toast -> gt-greenplace-polecat-Toast
-	//   mayor -> gt-mayor
-	//   greenplace/witness -> gt-greenplace-witness
-	agentBeadID := agentIDToBeadID(agentID)
+	//   polybot/crew/max -> po-polybot-crew-max (uses rig prefix)
+	//   polybot/polecats/Toast -> po-polybot-polecat-Toast (uses rig prefix)
+	//   mayor -> hq-mayor (town-level)
+	//   polybot/witness -> po-polybot-witness (uses rig prefix)
+	agentBeadID := agentIDToBeadID(agentID, townRoot)
 	if agentBeadID == "" {
 		return
 	}
@@ -927,12 +945,6 @@ func updateAgentHookBead(agentID, _, workDir, townBeadsDir string) { // beadID u
 	// - Otherwise fall back to town root
 	bdWorkDir := workDir
 	if bdWorkDir == "" {
-		townRoot, err := workspace.FindFromCwd()
-		if err != nil {
-			// Not in a Gas Town workspace - can't update agent bead
-			fmt.Fprintf(os.Stderr, "Warning: couldn't find town root to update agent hook: %v\n", err)
-			return
-		}
 		bdWorkDir = townRoot
 	}
 
@@ -974,10 +986,10 @@ func detectActor() string {
 
 // agentIDToBeadID converts an agent ID to its corresponding agent bead ID.
 // Uses canonical naming: prefix-rig-role-name
-// Town-level agents (Mayor, Deacon) use hq- prefix and are stored in town beads.
-// Rig-level agents use the rig's configured prefix (default "gt-").
-func agentIDToBeadID(agentID string) string {
-	// Handle simple cases (town-level agents with hq- prefix)
+// Town-level agents (mayor, deacon) use hq- prefix.
+// Rig-level agents (witness, refinery, crew, polecat) use the rig's configured prefix.
+func agentIDToBeadID(agentID, townRoot string) string {
+	// Handle simple cases (town-level agents)
 	if agentID == "mayor" {
 		return beads.MayorBeadIDTown()
 	}
@@ -992,19 +1004,27 @@ func agentIDToBeadID(agentID string) string {
 	}
 
 	rig := parts[0]
+	prefix := beads.GetPrefixForRig(townRoot, rig)
 
 	switch {
 	case len(parts) == 2 && parts[1] == "witness":
-		return beads.WitnessBeadID(rig)
+		return beads.WitnessBeadIDWithPrefix(prefix, rig)
 	case len(parts) == 2 && parts[1] == "refinery":
-		return beads.RefineryBeadID(rig)
+		return beads.RefineryBeadIDWithPrefix(prefix, rig)
 	case len(parts) == 3 && parts[1] == "crew":
-		return beads.CrewBeadID(rig, parts[2])
+		return beads.CrewBeadIDWithPrefix(prefix, rig, parts[2])
 	case len(parts) == 3 && parts[1] == "polecats":
-		return beads.PolecatBeadID(rig, parts[2])
+		return beads.PolecatBeadIDWithPrefix(prefix, rig, parts[2])
 	default:
 		return ""
 	}
+}
+
+// isTownBead returns true if the bead ID is a town-level bead (hq-* prefix).
+// Town beads are stored in the town's .beads/ directory and require special
+// handling when running bd commands from agent worktrees that use the redirect mechanism.
+func isTownBead(beadID string) bool {
+	return strings.HasPrefix(beadID, "hq-")
 }
 
 // qualityToFormula converts a quality level to the corresponding polecat workflow formula.
@@ -1340,8 +1360,11 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		}
 
 		// Hook the bead
+		// For hq-* beads, set BEADS_DIR to town beads. For rig beads, let redirect work.
 		hookCmd := exec.Command("bd", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
-		hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
+		if isTownBead(beadID) {
+			hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
+		}
 		if hookWorkDir != "" {
 			hookCmd.Dir = hookWorkDir
 		}

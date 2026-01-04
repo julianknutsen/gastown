@@ -83,8 +83,7 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s Removed crew workspace: %s/%s\n",
 			style.Bold.Render("✓"), r.Name, name)
 
-		// Close the agent bead if it exists
-		// Use the rig's configured prefix (e.g., "gt" for gastown, "bd" for beads)
+		// Close the agent bead if it exists (crew beads use rig prefix in rig beads)
 		townRoot, _ := workspace.Find(r.Path)
 		if townRoot == "" {
 			townRoot = r.Path
@@ -96,7 +95,7 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 			closeArgs = append(closeArgs, "--session="+sessionID)
 		}
 		closeCmd := exec.Command("bd", closeArgs...)
-		closeCmd.Dir = r.Path // Run from rig directory for proper beads resolution
+		closeCmd.Dir = filepath.Join(r.Path, "mayor", "rig") // Run from rig beads directory
 		if output, err := closeCmd.CombinedOutput(); err != nil {
 			// Non-fatal: bead might not exist or already be closed
 			if !strings.Contains(string(output), "no issue found") &&
