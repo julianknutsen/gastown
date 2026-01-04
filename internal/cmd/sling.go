@@ -724,6 +724,7 @@ func runSlingFormula(args []string) error {
 	// Resolve target agent and pane
 	var targetAgent string
 	var targetPane string
+	var targetWorkDir string
 
 	if target != "" {
 		// Resolve "." to current agent identity (like git's "." meaning current directory)
@@ -872,8 +873,8 @@ func runSlingFormula(args []string) error {
 	_ = events.LogFeed(events.TypeSling, actor, payload)
 
 	// Update agent bead's hook_bead field (ZFC: agents track their current work)
-	// Note: formula slinging uses town root as workDir (no polecat-specific path)
-	updateAgentHookBead(targetAgent, wispResult.RootID, "", townBeadsDir)
+	// Use targetWorkDir for redirect-based routing to find agent bead in rig beads
+	updateAgentHookBead(targetAgent, wispResult.RootID, targetWorkDir, townBeadsDir)
 
 	// Store args in wisp bead if provided (no-tmux mode: beads as data plane)
 	if slingArgs != "" {
@@ -908,17 +909,17 @@ func runSlingFormula(args []string) error {
 	return nil
 }
 
-// updateAgentHookBead updates the agent bead's state when work is slung.
-// This enables the witness to see that each agent is working.
+// updateAgentHookBead updates the agent bead's state and hook when work is slung.
+// This enables the witness to see that each agent is working and what they're working on.
 //
 // We run from the polecat's workDir (which redirects to the rig's beads database)
 // WITHOUT setting BEADS_DIR, so the redirect mechanism works for gt-* agent beads.
 //
-// Note: We only update the agent_state field, not hook_bead. The hook_bead field
-// requires cross-database access (agent in rig db, hook bead in town db), but
-// bd slot set has a bug where it doesn't support this. See BD_BUG_AGENT_STATE_ROUTING.md.
-// The work is still correctly attached via `bd update <bead> --assignee=<agent>`.
-func updateAgentHookBead(agentID, _, workDir, townBeadsDir string) { // beadID unused due to BD_BUG_AGENT_STATE_ROUTING
+// The hook_bead field is set via bd.UpdateAgentState which calls bd agent state.
+// As of beads commit 079b346b, bd agent state supports cross-repo routing, so
+// we can now set hook_bead even when the agent bead is in rig beads and the
+// hook bead is in town beads.
+func updateAgentHookBead(agentID, beadID, workDir, townBeadsDir string) {
 	_ = townBeadsDir // Not used - BEADS_DIR breaks redirect mechanism
 
 	// Find town root first (needed for prefix lookup)
@@ -949,9 +950,13 @@ func updateAgentHookBead(agentID, _, workDir, townBeadsDir string) { // beadID u
 	}
 
 	// Run from workDir WITHOUT BEADS_DIR to enable redirect-based routing.
-	// Only update agent_state (not hook_bead) due to bd cross-database bug.
+	// Update both agent_state and hook_bead.
 	bd := beads.New(bdWorkDir)
-	if err := bd.UpdateAgentState(agentBeadID, "running", nil); err != nil {
+	var hookBeadPtr *string
+	if beadID != "" {
+		hookBeadPtr = &beadID
+	}
+	if err := bd.UpdateAgentState(agentBeadID, "running", hookBeadPtr); err != nil {
 		// Log warning instead of silent ignore - helps debug cross-beads issues
 		fmt.Fprintf(os.Stderr, "Warning: couldn't update agent %s state: %v\n", agentBeadID, err)
 		return
