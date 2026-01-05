@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-01-05
+
+Bug fixes, security hardening, and new `gt config` command.
+
+### Added
+
+- **`gt config` command** - Manage agent settings (model, provider) per-rig or globally
+- **`hq-` prefix for patrol sessions** - Mayor and Deacon sessions use town-prefixed names
+- **Doctor hooks-path check** - Verify Git hooks path is configured correctly
+- **Block internal PRs** - Pre-push hook and GitHub Action prevent accidental internal PRs (#117)
+- **Dispatcher notifications** - Notify dispatcher when polecat work completes
+- **Unit tests** - Added tests for `formatTrackBeadID` helper, done redirect, hook slot E2E
+
+### Fixed
+
+#### Security
+- **Command injection prevention** - Validate beads prefix to prevent injection (gt-l1xsa)
+- **Path traversal prevention** - Validate crew names to prevent traversal (gt-wzxwm)
+- **ReDoS prevention** - Escape user input in mail search (gt-qysj9)
+- **Error handling** - Handle crypto/rand.Read errors in ID generation
+
+#### Convoy & Sling
+- **Hook slot initialization** - Set hook slot when creating agent beads during sling (#124)
+- **Cross-rig bead formatting** - Format cross-rig beads as external refs in convoy tracking (#123)
+- **Reliable bd calls** - Add `--no-daemon` and `BEADS_DIR` for reliable beads operations
+
+#### Rig Inference
+- **`gt rig status`** - Infer rig name from current working directory
+- **`gt crew start --all`** - Infer rig from cwd for batch crew starts
+- **`gt prime` in crew start** - Pass as initial prompt in crew start commands
+- **Town default_agent** - Honor default agent setting for Mayor and Deacon
+
+#### Session & Lifecycle
+- **Hook persistence** - Hook persists across session interruption via `in_progress` lookup (gt-ttn3h)
+- **Polecat cleanup** - Clean up stale worktrees and git tracking
+- **`gt done` redirect** - Use ResolveBeadsDir for redirect file support
+
+#### Build & CI
+- **Embedded formulas** - Sync and commit formulas for `go install @latest`
+- **CI lint fixes** - Resolve lint and build errors
+- **Flaky test fix** - Sync database before beads integration tests
+
 ## [0.2.0] - 2026-01-04
 
 Major release featuring the Convoy Dashboard, two-level beads architecture, and significant multi-agent improvements.
