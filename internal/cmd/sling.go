@@ -54,7 +54,6 @@ Target Resolution:
   gt sling gt-abc deacon/dogs/alpha     # Specific dog
 
 Spawning Options (when target is a rig):
-  gt sling gp-abc greenplace --molecule mol-review  # Use specific workflow
   gt sling gp-abc greenplace --create               # Create polecat if missing
   gt sling gp-abc greenplace --naked                # No-tmux (manual start)
   gt sling gp-abc greenplace --force                # Ignore unread mail
@@ -102,7 +101,6 @@ var (
 	// Flags migrated for polecat spawning (used by sling for work assignment
 	slingNaked    bool   // --naked: no-tmux mode (skip session creation)
 	slingCreate   bool   // --create: create polecat if it doesn't exist
-	slingMolecule string // --molecule: workflow to instantiate on the bead
 	slingForce    bool   // --force: force spawn even if polecat has unread mail
 	slingAccount  string // --account: Claude Code account handle to use
 	slingNoConvoy bool   // --no-convoy: skip auto-convoy creation
@@ -119,7 +117,6 @@ func init() {
 	// Flags for polecat spawning (when target is a rig)
 	slingCmd.Flags().BoolVar(&slingNaked, "naked", false, "No-tmux mode: assign work but skip session creation (manual start)")
 	slingCmd.Flags().BoolVar(&slingCreate, "create", false, "Create polecat if it doesn't exist")
-	slingCmd.Flags().StringVar(&slingMolecule, "molecule", "", "Molecule workflow to instantiate on the bead")
 	slingCmd.Flags().BoolVar(&slingForce, "force", false, "Force spawn even if polecat has unread mail")
 	slingCmd.Flags().StringVar(&slingAccount, "account", "", "Claude Code account handle to use")
 	slingCmd.Flags().BoolVar(&slingNoConvoy, "no-convoy", false, "Skip auto-convoy creation for single-issue sling")

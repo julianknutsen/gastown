@@ -242,7 +242,7 @@ Note: "Swarm" is ephemeral (workers on a convoy's issues). See [Convoys](convoy.
 # Standard workflow: convoy first, then sling
 gt convoy create "Feature X" gt-abc gt-def
 gt sling gt-abc <rig>                    # Assign to polecat
-gt sling gt-def <rig> --molecule=<proto> # With workflow template
+gt sling <proto> --on gt-def <rig>       # With workflow template
 
 # Quick sling (auto-creates convoy)
 gt sling <bead> <rig>                    # Auto-convoy for dashboard visibility
