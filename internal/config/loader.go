@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/constants"
 )
 
 var (
@@ -850,13 +852,14 @@ func BuildAgentStartupCommand(role, bdActor, rigPath, prompt string) string {
 }
 
 // BuildPolecatStartupCommand builds the startup command for a polecat.
-// Sets GT_ROLE, GT_RIG, GT_POLECAT, BD_ACTOR, and GIT_AUTHOR_NAME.
+// Sets GT_ROLE, GT_RIG, GT_POLECAT, BD_ACTOR, GIT_AUTHOR_NAME, and GT_ROOT.
 func BuildPolecatStartupCommand(rigName, polecatName, rigPath, prompt string) string {
 	bdActor := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
 	envVars := map[string]string{
 		"GT_ROLE":         "polecat",
 		"GT_RIG":          rigName,
 		"GT_POLECAT":      polecatName,
+		"GT_ROOT":         constants.TownRootFromRig(rigPath),
 		"BD_ACTOR":        bdActor,
 		"GIT_AUTHOR_NAME": polecatName,
 	}
@@ -864,13 +867,14 @@ func BuildPolecatStartupCommand(rigName, polecatName, rigPath, prompt string) st
 }
 
 // BuildCrewStartupCommand builds the startup command for a crew member.
-// Sets GT_ROLE, GT_RIG, GT_CREW, BD_ACTOR, and GIT_AUTHOR_NAME.
+// Sets GT_ROLE, GT_RIG, GT_CREW, BD_ACTOR, GIT_AUTHOR_NAME, and GT_ROOT.
 func BuildCrewStartupCommand(rigName, crewName, rigPath, prompt string) string {
 	bdActor := fmt.Sprintf("%s/crew/%s", rigName, crewName)
 	envVars := map[string]string{
 		"GT_ROLE":         "crew",
 		"GT_RIG":          rigName,
 		"GT_CREW":         crewName,
+		"GT_ROOT":         constants.TownRootFromRig(rigPath),
 		"BD_ACTOR":        bdActor,
 		"GIT_AUTHOR_NAME": crewName,
 	}

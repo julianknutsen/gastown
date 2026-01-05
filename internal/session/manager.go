@@ -152,8 +152,11 @@ func (m *Manager) Start(polecat string, opts StartOptions) error {
 	// Town beads use hq- prefix and store hooks, mail, and cross-rig coordination.
 	// BEADS_NO_DAEMON=1 prevents daemon from committing to wrong branch.
 	// Using town-level beads ensures gt prime and bd commands can find hooked work.
+	// GT_ROOT allows beads formula parser to find formulas in town beads when running
+	// from rig context
 	townRoot := filepath.Dir(m.rig.Path) // Town root is parent of rig directory
 	beadsDir := filepath.Join(townRoot, ".beads")
+	_ = m.tmux.SetEnvironment(sessionID, "GT_ROOT", townRoot)
 	_ = m.tmux.SetEnvironment(sessionID, "BEADS_DIR", beadsDir)
 	_ = m.tmux.SetEnvironment(sessionID, "BEADS_NO_DAEMON", "1")
 	_ = m.tmux.SetEnvironment(sessionID, "BEADS_AGENT_NAME", fmt.Sprintf("%s/%s", m.rig.Name, polecat))
