@@ -2,7 +2,10 @@
 // Centralizing these magic strings improves maintainability and consistency.
 package constants
 
-import "time"
+import (
+	"path/filepath"
+	"time"
+)
 
 // Timing constants for session management and tmux operations.
 const (
@@ -164,58 +167,137 @@ func RoleEmoji(role string) string {
 var SupportedShells = []string{"bash", "zsh", "sh", "fish", "tcsh", "ksh"}
 
 // Path helpers construct common paths.
+// All helpers panic on empty inputs to catch programming errors early.
+
+// RigPath returns the absolute path to a rig given the town root and rig name.
+func RigPath(townRoot, rigName string) string {
+	if townRoot == "" {
+		panic("RigPath: townRoot is required")
+	}
+	if rigName == "" {
+		panic("RigPath: rigName is required")
+	}
+	return filepath.Join(townRoot, rigName)
+}
+
+// TownRootFromRig returns the town root given a rig path.
+// Rigs are always direct children of the town root.
+func TownRootFromRig(rigPath string) string {
+	if rigPath == "" {
+		panic("TownRootFromRig: rigPath is required")
+	}
+	return filepath.Dir(rigPath)
+}
+
+// AgentClonePath returns the path to an agent's worktree within a rig.
+// agentDir should be DirPolecats or DirCrew.
+func AgentClonePath(rigPath, agentDir, agentName string) string {
+	if rigPath == "" {
+		panic("AgentClonePath: rigPath is required")
+	}
+	if agentDir == "" {
+		panic("AgentClonePath: agentDir is required")
+	}
+	if agentName == "" {
+		panic("AgentClonePath: agentName is required")
+	}
+	return filepath.Join(rigPath, agentDir, agentName)
+}
+
+// RigPathFromAgentClone returns the rig path from an agent clone path.
+// Agent clones (polecat or crew) are at rigPath/{polecats,crew}/name,
+// so rig is two dirs up.
+func RigPathFromAgentClone(agentClonePath string) string {
+	if agentClonePath == "" {
+		panic("RigPathFromAgentClone: agentClonePath is required")
+	}
+	return filepath.Dir(filepath.Dir(agentClonePath))
+}
 
 // MayorRigsPath returns the path to rigs.json within a town root.
 func MayorRigsPath(townRoot string) string {
-	return townRoot + "/" + DirMayor + "/" + FileRigsJSON
+	if townRoot == "" {
+		panic("MayorRigsPath: townRoot is required")
+	}
+	return filepath.Join(townRoot, DirMayor, FileRigsJSON)
 }
 
 // MayorTownPath returns the path to town.json within a town root.
 func MayorTownPath(townRoot string) string {
-	return townRoot + "/" + DirMayor + "/" + FileTownJSON
+	if townRoot == "" {
+		panic("MayorTownPath: townRoot is required")
+	}
+	return filepath.Join(townRoot, DirMayor, FileTownJSON)
 }
 
 // RigMayorPath returns the path to mayor/rig within a rig.
 func RigMayorPath(rigPath string) string {
-	return rigPath + "/" + DirMayor + "/" + DirRig
+	if rigPath == "" {
+		panic("RigMayorPath: rigPath is required")
+	}
+	return filepath.Join(rigPath, DirMayor, DirRig)
 }
 
 // RigBeadsPath returns the path to mayor/rig/.beads within a rig.
 func RigBeadsPath(rigPath string) string {
-	return rigPath + "/" + DirMayor + "/" + DirRig + "/" + DirBeads
+	if rigPath == "" {
+		panic("RigBeadsPath: rigPath is required")
+	}
+	return filepath.Join(rigPath, DirMayor, DirRig, DirBeads)
 }
 
 // RigPolecatsPath returns the path to polecats/ within a rig.
 func RigPolecatsPath(rigPath string) string {
-	return rigPath + "/" + DirPolecats
+	if rigPath == "" {
+		panic("RigPolecatsPath: rigPath is required")
+	}
+	return filepath.Join(rigPath, DirPolecats)
 }
 
 // RigCrewPath returns the path to crew/ within a rig.
 func RigCrewPath(rigPath string) string {
-	return rigPath + "/" + DirCrew
+	if rigPath == "" {
+		panic("RigCrewPath: rigPath is required")
+	}
+	return filepath.Join(rigPath, DirCrew)
 }
 
 // MayorConfigPath returns the path to mayor/config.json within a town root.
 func MayorConfigPath(townRoot string) string {
-	return townRoot + "/" + DirMayor + "/" + FileConfigJSON
+	if townRoot == "" {
+		panic("MayorConfigPath: townRoot is required")
+	}
+	return filepath.Join(townRoot, DirMayor, FileConfigJSON)
 }
 
 // TownRuntimePath returns the path to .runtime/ at the town root.
 func TownRuntimePath(townRoot string) string {
-	return townRoot + "/" + DirRuntime
+	if townRoot == "" {
+		panic("TownRuntimePath: townRoot is required")
+	}
+	return filepath.Join(townRoot, DirRuntime)
 }
 
 // RigRuntimePath returns the path to .runtime/ within a rig.
 func RigRuntimePath(rigPath string) string {
-	return rigPath + "/" + DirRuntime
+	if rigPath == "" {
+		panic("RigRuntimePath: rigPath is required")
+	}
+	return filepath.Join(rigPath, DirRuntime)
 }
 
 // RigSettingsPath returns the path to settings/ within a rig.
 func RigSettingsPath(rigPath string) string {
-	return rigPath + "/" + DirSettings
+	if rigPath == "" {
+		panic("RigSettingsPath: rigPath is required")
+	}
+	return filepath.Join(rigPath, DirSettings)
 }
 
 // MayorAccountsPath returns the path to mayor/accounts.json within a town root.
 func MayorAccountsPath(townRoot string) string {
-	return townRoot + "/" + DirMayor + "/" + FileAccountsJSON
+	if townRoot == "" {
+		panic("MayorAccountsPath: townRoot is required")
+	}
+	return filepath.Join(townRoot, DirMayor, FileAccountsJSON)
 }

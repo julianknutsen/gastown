@@ -429,7 +429,8 @@ func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIde
 
 	// Polecats need environment variables set in the command
 	if parsed.RoleType == "polecat" {
-		return config.BuildPolecatStartupCommand(parsed.RigName, parsed.AgentName, "", "")
+		rigPath := constants.RigPath(d.config.TownRoot, parsed.RigName)
+		return config.BuildPolecatStartupCommand(parsed.RigName, parsed.AgentName, rigPath, "")
 	}
 
 	return defaultCmd

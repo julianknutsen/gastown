@@ -558,8 +558,7 @@ func ensureCrewSession(t *tmux.Tmux, sessionName, crewPath, rigName, crewName st
 	_ = t.ConfigureGasTownSession(sessionName, theme, "", "Crew", crewName)
 
 	// Launch Claude using runtime config
-	// crewPath is like ~/gt/gastown/crew/max, so rig path is two dirs up
-	rigPath := filepath.Dir(filepath.Dir(crewPath))
+	rigPath := constants.RigPathFromAgentClone(crewPath)
 	claudeCmd := config.BuildCrewStartupCommand(rigName, crewName, rigPath, "")
 	if err := t.SendKeysDelayed(sessionName, claudeCmd, 200); err != nil {
 		return err
@@ -655,10 +654,13 @@ func ensurePolecatSession(t *tmux.Tmux, sessionName, polecatPath, rigName, polec
 	}
 
 	// Set environment
+	rigPath := constants.RigPathFromAgentClone(polecatPath)
+	townRoot := constants.TownRootFromRig(rigPath)
 	bdActor := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
 	_ = t.SetEnvironment(sessionName, "GT_ROLE", "polecat")
 	_ = t.SetEnvironment(sessionName, "GT_RIG", rigName)
 	_ = t.SetEnvironment(sessionName, "GT_POLECAT", polecatName)
+	_ = t.SetEnvironment(sessionName, "GT_ROOT", townRoot)
 	_ = t.SetEnvironment(sessionName, "BD_ACTOR", bdActor)
 
 	// Apply theme (use rig-based theme)
@@ -666,8 +668,6 @@ func ensurePolecatSession(t *tmux.Tmux, sessionName, polecatPath, rigName, polec
 	_ = t.ConfigureGasTownSession(sessionName, theme, "", "Polecat", polecatName)
 
 	// Launch Claude using runtime config
-	// polecatPath is like ~/gt/gastown/polecats/toast, so rig path is two dirs up
-	rigPath := filepath.Dir(filepath.Dir(polecatPath))
 	claudeCmd := config.BuildPolecatStartupCommand(rigName, polecatName, rigPath, "")
 	if err := t.SendKeysDelayed(sessionName, claudeCmd, 200); err != nil {
 		return err

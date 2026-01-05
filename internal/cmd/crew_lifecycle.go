@@ -517,7 +517,8 @@ func restartCrewSession(rigName, crewName, clonePath string) error {
 
 	// Start claude with environment exports and beacon as initial prompt
 	// SessionStart hook handles context loading (gt prime --hook)
-	claudeCmd := config.BuildCrewStartupCommand(rigName, crewName, "", beacon)
+	rigPath := constants.RigPathFromAgentClone(clonePath)
+	claudeCmd := config.BuildCrewStartupCommand(rigName, crewName, rigPath, beacon)
 	if err := t.SendKeys(sessionID, claudeCmd); err != nil {
 		return fmt.Errorf("starting claude: %w", err)
 	}
