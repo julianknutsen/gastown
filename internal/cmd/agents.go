@@ -499,10 +499,10 @@ func buildCollisionReport(townRoot string) (*CollisionReport, error) {
 		sessions = []string{} // Continue even if tmux not running
 	}
 
-	// Filter to gt- sessions
+	// Filter to Gas Town sessions (gt-* and hq-*)
 	var gtSessions []string
 	for _, s := range sessions {
-		if strings.HasPrefix(s, "gt-") {
+		if strings.HasPrefix(s, "gt-") || strings.HasPrefix(s, "hq-") {
 			gtSessions = append(gtSessions, s)
 		}
 	}

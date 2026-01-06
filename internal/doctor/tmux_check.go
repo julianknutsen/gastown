@@ -42,10 +42,10 @@ func (c *LinkedPaneCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// Filter to gt-* sessions only
+	// Filter to Gas Town sessions (gt-* and hq-*)
 	var gtSessions []string
 	for _, session := range sessions {
-		if strings.HasPrefix(session, "gt-") {
+		if strings.HasPrefix(session, "gt-") || strings.HasPrefix(session, "hq-") {
 			gtSessions = append(gtSessions, session)
 		}
 	}

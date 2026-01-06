@@ -40,10 +40,10 @@ func (c *ThemeCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// Check for Gas Town sessions
+	// Check for Gas Town sessions (gt-* and hq-*)
 	var gtSessions []string
 	for _, s := range sessions {
-		if strings.HasPrefix(s, "gt-") {
+		if strings.HasPrefix(s, "gt-") || strings.HasPrefix(s, "hq-") {
 			gtSessions = append(gtSessions, s)
 		}
 	}
