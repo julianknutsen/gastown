@@ -378,6 +378,10 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		return nil, fmt.Errorf("creating refinery worktree: %w", err)
 	}
 	fmt.Printf("   ✓ Created refinery worktree\n")
+	// Set up beads redirect for refinery (points to rig-level .beads)
+	if err := beads.SetupRedirect(m.townRoot, refineryRigPath); err != nil {
+		fmt.Printf("  Warning: Could not set up refinery beads redirect: %v\n", err)
+	}
 	// Create refinery CLAUDE.md (overrides any from cloned repo)
 	if err := m.createRoleCLAUDEmd(refineryRigPath, "refinery", opts.Name, ""); err != nil {
 		return nil, fmt.Errorf("creating refinery CLAUDE.md: %w", err)
@@ -507,6 +511,23 @@ func (m *Manager) initBeads(rigPath, prefix string) error {
 	}
 
 	beadsDir := filepath.Join(rigPath, ".beads")
+	mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
+
+	// Check if source repo has tracked .beads/ (cloned into mayor/rig).
+	// If so, create a redirect file instead of a new database.
+	if _, err := os.Stat(mayorRigBeads); err == nil {
+		// Tracked beads exist - create redirect to mayor/rig/.beads
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			return err
+		}
+		redirectPath := filepath.Join(beadsDir, "redirect")
+		if err := os.WriteFile(redirectPath, []byte("mayor/rig/.beads\n"), 0644); err != nil {
+			return fmt.Errorf("creating redirect file: %w", err)
+		}
+		return nil
+	}
+
+	// No tracked beads - create local database
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		return err
 	}
@@ -558,11 +579,12 @@ func (m *Manager) initBeads(rigPath, prefix string) error {
 // Format: <prefix>-<rig>-<role> (e.g., gt-gastown-witness)
 //
 // Agent beads track lifecycle state for ZFC compliance (gt-h3hak, gt-pinkq).
-func (m *Manager) initAgentBeads(_, rigName, _ string) error { // rigPath and prefix unused until Phase 2
-	// TEMPORARY (gt-4r1ph): Currently all agent beads go in town beads.
-	// After Phase 2, only Mayor/Deacon will be here; Witness/Refinery go to rig beads.
-	townBeadsDir := filepath.Join(m.townRoot, ".beads")
-	bd := beads.NewWithBeadsDir(m.townRoot, townBeadsDir)
+func (m *Manager) initAgentBeads(rigPath, rigName, prefix string) error {
+	// Rig-level agents go in rig beads with rig prefix (per docs/architecture.md).
+	// Town-level agents (Mayor, Deacon) are created by gt install in town beads.
+	// Use ResolveBeadsDir to follow redirect files for tracked beads.
+	rigBeadsDir := beads.ResolveBeadsDir(rigPath)
+	bd := beads.NewWithBeadsDir(rigPath, rigBeadsDir)
 
 	// Define rig-level agents to create
 	type agentDef struct {
