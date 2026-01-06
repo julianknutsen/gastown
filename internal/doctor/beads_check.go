@@ -225,3 +225,127 @@ func (c *PrefixConflictCheck) Run(ctx *CheckContext) *CheckResult {
 		FixHint: "Use 'bd rename-prefix <new-prefix>' in one of the conflicting rigs to resolve",
 	}
 }
+
+// BeadsRedirectCheck verifies that rig-level beads redirect exists for tracked beads.
+// When a repo has .beads/ tracked in git (at mayor/rig/.beads), the rig root needs
+// a redirect file pointing to that location.
+type BeadsRedirectCheck struct {
+	FixableCheck
+}
+
+// NewBeadsRedirectCheck creates a new beads redirect check.
+func NewBeadsRedirectCheck() *BeadsRedirectCheck {
+	return &BeadsRedirectCheck{
+		FixableCheck: FixableCheck{
+			BaseCheck: BaseCheck{
+				CheckName:        "beads-redirect",
+				CheckDescription: "Verify rig-level beads redirect for tracked beads",
+			},
+		},
+	}
+}
+
+// Run checks if the rig-level beads redirect exists when needed.
+func (c *BeadsRedirectCheck) Run(ctx *CheckContext) *CheckResult {
+	// Only applies when checking a specific rig
+	if ctx.RigName == "" {
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusOK,
+			Message: "No rig specified (skipping redirect check)",
+		}
+	}
+
+	rigPath := ctx.RigPath()
+	mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
+	rigBeadsDir := filepath.Join(rigPath, ".beads")
+	redirectPath := filepath.Join(rigBeadsDir, "redirect")
+
+	// Check if this rig has tracked beads (mayor/rig/.beads exists)
+	if _, err := os.Stat(mayorRigBeads); os.IsNotExist(err) {
+		// No tracked beads - check if rig/.beads exists (local beads)
+		if _, err := os.Stat(rigBeadsDir); os.IsNotExist(err) {
+			return &CheckResult{
+				Name:    c.Name(),
+				Status:  StatusWarning,
+				Message: "No .beads directory found at rig root",
+				FixHint: "Run 'bd init' in the rig directory",
+			}
+		}
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusOK,
+			Message: "Rig uses local beads (no redirect needed)",
+		}
+	}
+
+	// Tracked beads exist - verify redirect file exists
+	if _, err := os.Stat(redirectPath); os.IsNotExist(err) {
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusError,
+			Message: "Missing rig-level beads redirect for tracked beads",
+			Details: []string{
+				"Tracked beads exist at: mayor/rig/.beads",
+				"Missing redirect at: .beads/redirect",
+				"Without this redirect, bd commands from rig root won't find beads",
+			},
+			FixHint: "Run 'gt doctor --fix' to create the redirect",
+		}
+	}
+
+	// Verify redirect points to correct location
+	content, err := os.ReadFile(redirectPath)
+	if err != nil {
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusWarning,
+			Message: fmt.Sprintf("Could not read redirect file: %v", err),
+		}
+	}
+
+	target := strings.TrimSpace(string(content))
+	if target != "mayor/rig/.beads" {
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusWarning,
+			Message: fmt.Sprintf("Redirect points to %q, expected mayor/rig/.beads", target),
+			FixHint: "Run 'gt doctor --fix' to correct the redirect",
+		}
+	}
+
+	return &CheckResult{
+		Name:    c.Name(),
+		Status:  StatusOK,
+		Message: "Rig-level beads redirect is correctly configured",
+	}
+}
+
+// Fix creates or corrects the rig-level beads redirect.
+func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
+	if ctx.RigName == "" {
+		return nil
+	}
+
+	rigPath := ctx.RigPath()
+	mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
+	rigBeadsDir := filepath.Join(rigPath, ".beads")
+	redirectPath := filepath.Join(rigBeadsDir, "redirect")
+
+	// Only fix if tracked beads exist
+	if _, err := os.Stat(mayorRigBeads); os.IsNotExist(err) {
+		return nil
+	}
+
+	// Create .beads directory if needed
+	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		return fmt.Errorf("creating .beads directory: %w", err)
+	}
+
+	// Write redirect file
+	if err := os.WriteFile(redirectPath, []byte("mayor/rig/.beads\n"), 0644); err != nil {
+		return fmt.Errorf("writing redirect file: %w", err)
+	}
+
+	return nil
+}
