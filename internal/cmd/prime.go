@@ -1298,9 +1298,7 @@ func getAgentBeadID(ctx RoleContext) string {
 
 // ensureBeadsRedirect ensures the .beads/redirect file exists for worktree-based roles.
 // This handles cases where git clean or other operations delete the redirect file.
-//
-// All worktree redirects point to the rig-level .beads. The rig-level .beads
-// handles tracked vs local beads via its own redirect to mayor/rig/.beads if needed.
+// Uses the shared SetupRedirect helper which handles both tracked and local beads.
 func ensureBeadsRedirect(ctx RoleContext) {
 	// Only applies to worktree-based roles that use shared beads
 	if ctx.Role != RoleCrew && ctx.Role != RolePolecat && ctx.Role != RoleRefinery {
@@ -1308,49 +1306,14 @@ func ensureBeadsRedirect(ctx RoleContext) {
 	}
 
 	// Check if redirect already exists
-	beadsDir := filepath.Join(ctx.WorkDir, ".beads")
-	redirectPath := filepath.Join(beadsDir, "redirect")
-
+	redirectPath := filepath.Join(ctx.WorkDir, ".beads", "redirect")
 	if _, err := os.Stat(redirectPath); err == nil {
 		// Redirect exists, nothing to do
 		return
 	}
 
-	// Get the rig root and verify .beads exists there
-	relPath, err := filepath.Rel(ctx.TownRoot, ctx.WorkDir)
-	if err != nil {
-		return
-	}
-	parts := strings.Split(filepath.ToSlash(relPath), "/")
-	if len(parts) < 1 {
-		return
-	}
-	rigRoot := filepath.Join(ctx.TownRoot, parts[0])
-	rigBeads := filepath.Join(rigRoot, ".beads")
-
-	if _, err := os.Stat(rigBeads); os.IsNotExist(err) {
-		// No rig-level .beads, nothing to redirect to
-		return
-	}
-
-	// All worktree redirects point to ../../.beads (rig level)
-	// The rig-level handles tracked vs local beads via its own redirect
-	redirectContent := "../../.beads"
-
-	// Create .beads directory if needed
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		// Silently fail - not critical
-		return
-	}
-
-	// Write redirect file
-	if err := os.WriteFile(redirectPath, []byte(redirectContent+"\n"), 0644); err != nil {
-		// Silently fail - not critical
-		return
-	}
-
-	// Note: We don't print a message here to avoid cluttering prime output
-	// The redirect is silently restored
+	// Use shared helper - silently ignore errors during prime
+	_ = beads.SetupRedirect(ctx.TownRoot, ctx.WorkDir)
 }
 
 // checkPendingEscalations queries for open escalation beads and displays them prominently.
