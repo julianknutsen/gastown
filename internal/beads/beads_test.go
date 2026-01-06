@@ -980,7 +980,7 @@ func TestResolveBeadsDir(t *testing.T) {
 		}
 	})
 
-	t.Run("circular redirect", func(t *testing.T) {
+	t.Run("circular redirect self-reference", func(t *testing.T) {
 		// Redirect that points to itself (e.g., mayor/rig/.beads/redirect -> ../../mayor/rig/.beads)
 		// This is the bug scenario from gt-csbjj
 		workDir := filepath.Join(tmpDir, "mayor", "rig")
@@ -1005,6 +1005,42 @@ func TestResolveBeadsDir(t *testing.T) {
 		// The circular redirect file should have been removed
 		if _, err := os.Stat(redirectPath); err == nil {
 			t.Error("circular redirect file should have been removed, but it still exists")
+		}
+	})
+
+	t.Run("circular redirect chain A->B->A", func(t *testing.T) {
+		// Test redirect chain that forms a cycle: A -> B -> A
+		// This tests the depth limit and chain detection in resolveBeadsDirWithDepth
+		dirA := filepath.Join(tmpDir, "chain", "dirA")
+		dirB := filepath.Join(tmpDir, "chain", "dirB")
+		beadsDirA := filepath.Join(dirA, ".beads")
+		beadsDirB := filepath.Join(dirB, ".beads")
+
+		if err := os.MkdirAll(beadsDirA, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(beadsDirB, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create circular chain: A -> B -> A
+		if err := os.WriteFile(filepath.Join(beadsDirA, "redirect"), []byte("../dirB/.beads\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(beadsDirB, "redirect"), []byte("../dirA/.beads\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// ResolveBeadsDir should eventually stop (via depth limit) and not infinite loop
+		got := ResolveBeadsDir(dirA)
+		// Due to depth limit of 3, it will follow A->B->A and stop somewhere in the chain
+		// The important thing is it doesn't hang
+		if got == "" {
+			t.Error("ResolveBeadsDir() returned empty string for circular chain")
+		}
+		// Verify it returns one of the beads dirs (doesn't matter which due to cycle)
+		if got != beadsDirA && got != beadsDirB {
+			t.Errorf("ResolveBeadsDir() = %q, want either %q or %q", got, beadsDirA, beadsDirB)
 		}
 	})
 }
