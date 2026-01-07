@@ -233,7 +233,7 @@ func TestCalculateWorkDirFromSession(t *testing.T) {
 		{
 			name:        "witness session",
 			sessionName: "gt-testrig-witness",
-			wantSuffix:  filepath.Join("testrig", "witness", "rig"),
+			wantSuffix:  filepath.Join("testrig", "witness"),
 		},
 		{
 			name:        "refinery session",

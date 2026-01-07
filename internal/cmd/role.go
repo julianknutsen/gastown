@@ -277,7 +277,7 @@ func getRoleHome(role Role, rig, polecat, townRoot string) string {
 		if rig == "" {
 			return ""
 		}
-		return filepath.Join(townRoot, rig, "witness", "rig")
+		return filepath.Join(townRoot, rig, "witness")
 	case RoleRefinery:
 		if rig == "" {
 			return ""

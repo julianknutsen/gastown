@@ -20,6 +20,19 @@ import (
 	"testing"
 )
 
+// cleanEnvForSling returns an environment with GT_POLECAT cleared.
+// This prevents "polecats cannot sling" errors when tests run from polecat contexts.
+func cleanEnvForSling() []string {
+	var env []string
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "GT_POLECAT=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	return env
+}
+
 // TestSlingE2E_LocalBeads tests sling with local-only beads (rig root .beads).
 func TestSlingE2E_LocalBeads(t *testing.T) {
 	if _, err := exec.LookPath("bd"); err != nil {
@@ -88,8 +101,12 @@ func TestSlingE2E_TrackedBeads(t *testing.T) {
 		t.Fatalf("gt rig add failed: %v\nOutput: %s", err, rigAddOutput)
 	}
 	// Check for warnings - redirect setup should succeed
-	if strings.Contains(string(rigAddOutput), "Warning:") {
-		t.Errorf("Unexpected warning in gt rig add:\n%s", rigAddOutput)
+	// Ignore "could not set role slot" - expected in test env without role beads
+	for _, line := range strings.Split(string(rigAddOutput), "\n") {
+		if strings.Contains(line, "Warning:") && !strings.Contains(line, "could not set role slot") {
+			t.Errorf("Unexpected warning in gt rig add:\n%s", rigAddOutput)
+			break
+		}
 	}
 
 	trackedBeadsPath := filepath.Join(townRoot, "testrig", "mayor", "rig")
@@ -163,11 +180,33 @@ func runSlingTestsForRig(t *testing.T, gtBinary, townRoot, rigName, rigBeadsPath
 	// Helper to check for errors/warnings in output
 	checkNoErrorsOrWarnings := func(t *testing.T, output, context string) {
 		t.Helper()
-		if strings.Contains(output, "Warning:") {
-			t.Errorf("Unexpected warning in %s:\n%s", context, output)
-		}
-		if strings.Contains(output, "Error:") {
-			t.Errorf("Unexpected error in %s:\n%s", context, output)
+		// Check each line for warnings and errors, ignoring expected ones
+		for _, line := range strings.Split(output, "\n") {
+			// Check for warnings first
+			if strings.Contains(line, "Warning:") {
+				// Ignore "could not set role slot" - expected in test env without role beads
+				if strings.Contains(line, "could not set role slot") {
+					continue
+				}
+				// Ignore "couldn't set agent ... hook" - expected when agent bead not yet created
+				// (polecat agent beads are created by the agent on first run, not at spawn time)
+				if strings.Contains(line, "couldn't set agent") && strings.Contains(line, "hook") {
+					continue
+				}
+				t.Errorf("Unexpected warning in %s:\n%s", context, output)
+				return
+			}
+			// Check for errors, but ignore lines that are part of warnings (which may contain "Error:")
+			// and ignore bd help text that may be printed after a bd error
+			if strings.Contains(line, "Error:") {
+				// bd slot set failures show "Error:" in their output - these are expected
+				// when role beads don't exist or agent beads aren't created yet
+				if strings.Contains(line, "failed to resolve") {
+					continue
+				}
+				t.Errorf("Unexpected error in %s:\n%s", context, output)
+				return
+			}
 		}
 	}
 
@@ -240,6 +279,7 @@ func runSlingTestsForRig(t *testing.T, gtBinary, townRoot, rigName, rigBeadsPath
 
 				cmd := exec.Command(gtBinary, "sling", taskID, agent.target, "--naked")
 				cmd.Dir = townRoot
+				cmd.Env = cleanEnvForSling()
 				output, err := cmd.CombinedOutput()
 				outputStr := string(output)
 				t.Logf("Sling output:\n%s", outputStr)
@@ -263,6 +303,7 @@ func runSlingTestsForRig(t *testing.T, gtBinary, townRoot, rigName, rigBeadsPath
 
 				cmd := exec.Command(gtBinary, "sling", "test-work", "--on", taskID, agent.target, "--naked")
 				cmd.Dir = townRoot
+				cmd.Env = cleanEnvForSling()
 				output, err := cmd.CombinedOutput()
 				outputStr := string(output)
 				t.Logf("Sling formula output:\n%s", outputStr)
@@ -284,6 +325,7 @@ func runSlingTestsForRig(t *testing.T, gtBinary, townRoot, rigName, rigBeadsPath
 
 		cmd := exec.Command(gtBinary, "sling", taskID, rigName, "--naked")
 		cmd.Dir = townRoot
+		cmd.Env = cleanEnvForSling()
 		output, err := cmd.CombinedOutput()
 		outputStr := string(output)
 		t.Logf("Sling to rig output:\n%s", outputStr)
@@ -304,6 +346,7 @@ func runSlingTestsForRig(t *testing.T, gtBinary, townRoot, rigName, rigBeadsPath
 
 		cmd := exec.Command(gtBinary, "sling", "test-work", "--on", taskID, rigName, "--naked")
 		cmd.Dir = townRoot
+		cmd.Env = cleanEnvForSling()
 		output, err := cmd.CombinedOutput()
 		outputStr := string(output)
 		t.Logf("Sling formula to rig output:\n%s", outputStr)
