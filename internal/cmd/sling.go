@@ -400,9 +400,9 @@ func runSling(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("cooking formula %s: %w", formulaName, err)
 		}
 
-		// Step 2: Create wisp with feature variable from bead title
-		featureVar := fmt.Sprintf("feature=%s", info.Title)
-		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--json"}
+		// Step 2: Create wisp with issue variable from bead ID
+		issueVar := fmt.Sprintf("issue=%s", beadID)
+		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", issueVar, "--json"}
 		wispCmd := exec.Command("bd", wispArgs...)
 		wispCmd.Dir = formulaWorkDir
 		wispCmd.Stderr = os.Stderr
