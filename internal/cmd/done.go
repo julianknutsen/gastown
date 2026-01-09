@@ -41,13 +41,20 @@ Phase handoff workflow:
   The Witness will recycle this polecat and dispatch a new one when the gate
   resolves.
 
+Human review workflow:
+  Use --review to queue completed work for human review instead of auto-closing.
+  This sets the source issue to status=review, assignee=overseer so humans can
+  query 'bd list --assignee overseer --status review' to find work needing review.
+  The polecat's hook is cleared so it can accept new work.
+
 Examples:
   gt done                              # Submit branch, notify COMPLETED
   gt done --exit                       # Submit and exit Claude session
   gt done --issue gt-abc               # Explicit issue ID
   gt done --status ESCALATED           # Signal blocker, skip MR
   gt done --status DEFERRED            # Pause work, skip MR
-  gt done --phase-complete --gate g-x  # Phase done, waiting on gate g-x`,
+  gt done --phase-complete --gate g-x  # Phase done, waiting on gate g-x
+  gt done --review                     # Queue for human review`,
 	RunE: runDone,
 }
 
@@ -58,6 +65,7 @@ var (
 	doneExit          bool
 	donePhaseComplete bool
 	doneGate          string
+	doneReview        bool
 )
 
 // Valid exit types for gt done
@@ -75,6 +83,7 @@ func init() {
 	doneCmd.Flags().BoolVar(&doneExit, "exit", false, "Exit Claude session after MR submission (self-terminate)")
 	doneCmd.Flags().BoolVar(&donePhaseComplete, "phase-complete", false, "Signal phase complete - await gate before continuing")
 	doneCmd.Flags().StringVar(&doneGate, "gate", "", "Gate bead ID to wait on (with --phase-complete)")
+	doneCmd.Flags().BoolVar(&doneReview, "review", false, "Queue work for human review (sets issue status=review, assignee=overseer)")
 
 	rootCmd.AddCommand(doneCmd)
 }
@@ -129,6 +138,24 @@ func runDone(cmd *cobra.Command, args []string) error {
 		issueID = info.Issue
 	}
 	worker := info.Worker
+
+	// Handle --review flag: queue work for human review instead of auto-closing
+	// This sets the source issue to status=review, assignee=overseer so humans
+	// can query 'bd list --assignee overseer --status review' to find work.
+	// The status change prevents the hooked bead from being auto-closed.
+	if doneReview && issueID != "" {
+		bd := beads.New(beads.ResolveBeadsDir(cwd))
+		reviewStatus := "review"
+		overseer := "overseer"
+		if err := bd.Update(issueID, beads.UpdateOptions{
+			Status:   &reviewStatus,
+			Assignee: &overseer,
+		}); err != nil {
+			return fmt.Errorf("setting issue %s for human review: %w", issueID, err)
+		}
+		fmt.Printf("%s Queued %s for human review (status=review, assignee=overseer)\n",
+			style.Bold.Render("✓"), issueID)
+	}
 
 	// Determine polecat name from sender detection
 	sender := detectSender()
