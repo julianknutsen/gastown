@@ -71,6 +71,12 @@ func TestFindNotFound(t *testing.T) {
 	// Create temp dir with no markers
 	dir := t.TempDir()
 
+	// Skip if /tmp has a mayor/ directory (environmental pollution from other Gas Town sessions)
+	// which would cause Find() to walk up and incorrectly find a workspace
+	if _, err := os.Stat("/tmp/mayor"); err == nil {
+		t.Skip("skipping: /tmp/mayor exists from another Gas Town session, would pollute test")
+	}
+
 	found, err := Find(dir)
 	if err != nil {
 		t.Fatalf("Find: %v", err)
@@ -82,6 +88,11 @@ func TestFindNotFound(t *testing.T) {
 
 func TestFindOrErrorNotFound(t *testing.T) {
 	dir := t.TempDir()
+
+	// Skip if /tmp has a mayor/ directory (environmental pollution from other Gas Town sessions)
+	if _, err := os.Stat("/tmp/mayor"); err == nil {
+		t.Skip("skipping: /tmp/mayor exists from another Gas Town session, would pollute test")
+	}
 
 	_, err := FindOrError(dir)
 	if err != ErrNotFound {
