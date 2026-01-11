@@ -256,8 +256,10 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Verify we're in a Gas Town workspace (for good error messages)
-	if _, err := workspace.FindFromCwdOrError(); err != nil {
+	// Get town root - needed for bd create since --id prefix validation requires
+	// being in a directory where the local .beads has the matching prefix (hq-)
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
@@ -270,7 +272,7 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		description += fmt.Sprintf("\nMolecule: %s", convoyMolecule)
 	}
 
-	// Generate convoy ID with hq- prefix (routes via routes.jsonl from any cwd)
+	// Generate convoy ID with hq- prefix
 	convoyID := fmt.Sprintf("hq-cv-%s", generateShortID())
 
 	createArgs := []string{
@@ -282,8 +284,10 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		"--json",
 	}
 
-	// bd uses cwd-based discovery and routes prefixed IDs (hq-) via routes.jsonl
+	// bd create with --id validates prefix against LOCAL database, so we must
+	// run from town root where the hq- prefix is defined
 	createCmd := exec.Command("bd", createArgs...)
+	createCmd.Dir = townRoot
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	createCmd.Stdout = &stdout
@@ -301,7 +305,7 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		// Use --type=tracks for non-blocking tracking relation
 		depArgs := []string{"dep", "add", convoyID, issueID, "--type=tracks"}
 		depCmd := exec.Command("bd", depArgs...)
-		// No cmd.Dir needed - prefixed IDs route via routes.jsonl from cwd
+		depCmd.Dir = townRoot // dep add uses show internally which routes, but run from town for consistency
 
 		if err := depCmd.Run(); err != nil {
 			style.PrintWarning("couldn't track %s: %v", issueID, err)
@@ -333,15 +337,17 @@ func runConvoyAdd(cmd *cobra.Command, args []string) error {
 	convoyID := args[0]
 	issuesToAdd := args[1:]
 
-	// Verify we're in a Gas Town workspace
-	if _, err := workspace.FindFromCwdOrError(); err != nil {
+	// Get town root for consistency with convoy operations
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
 	// Validate convoy exists and get its status
-	// bd routes prefixed IDs (hq-) via routes.jsonl from cwd
+	// bd show with prefixed IDs routes via routes.jsonl
 	showArgs := []string{"show", convoyID, "--json"}
 	showCmd := exec.Command("bd", showArgs...)
+	showCmd.Dir = townRoot
 	var stdout bytes.Buffer
 	showCmd.Stdout = &stdout
 
@@ -375,6 +381,7 @@ func runConvoyAdd(cmd *cobra.Command, args []string) error {
 	if convoy.Status == "closed" {
 		reopenArgs := []string{"update", convoyID, "--status=open"}
 		reopenCmd := exec.Command("bd", reopenArgs...)
+		reopenCmd.Dir = townRoot
 		if err := reopenCmd.Run(); err != nil {
 			return fmt.Errorf("couldn't reopen convoy: %w", err)
 		}
@@ -387,6 +394,7 @@ func runConvoyAdd(cmd *cobra.Command, args []string) error {
 	for _, issueID := range issuesToAdd {
 		depArgs := []string{"dep", "add", convoyID, issueID, "--type=tracks"}
 		depCmd := exec.Command("bd", depArgs...)
+		depCmd.Dir = townRoot
 
 		if err := depCmd.Run(); err != nil {
 			style.PrintWarning("couldn't add %s: %v", issueID, err)
@@ -490,7 +498,7 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 	var stranded []strandedConvoyInfo
 
 	// Get blocked issues (we need this to filter out blocked issues)
-	blockedIssues := getBlockedIssueIDs()
+	blockedIssues := getBlockedIssueIDs(townBeads)
 
 	// List all open convoys
 	listArgs := []string{"list", "--type=convoy", "--status=open", "--json"}
@@ -540,11 +548,12 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 }
 
 // getBlockedIssueIDs returns a set of issue IDs that are currently blocked.
-func getBlockedIssueIDs() map[string]bool {
+func getBlockedIssueIDs(workDir string) map[string]bool {
 	blocked := make(map[string]bool)
 
-	// Run bd blocked --json
+	// Run bd blocked --json from workDir for cwd-based discovery
 	blockedCmd := exec.Command("bd", "blocked", "--json")
+	blockedCmd.Dir = workDir
 	var stdout bytes.Buffer
 	blockedCmd.Stdout = &stdout
 
