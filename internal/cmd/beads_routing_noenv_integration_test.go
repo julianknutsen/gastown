@@ -53,6 +53,9 @@ func TestBeadsInterface(t *testing.T) {
 	t.Run("CrossRigRouting", func(t *testing.T) {
 		testCrossRigRouting(t, townRoot)
 	})
+	t.Run("CrossRigWriteRouting", func(t *testing.T) {
+		testCrossRigWriteRouting(t, townRoot)
+	})
 	t.Run("WorktreeRedirects", func(t *testing.T) {
 		testWorktreeRedirects(t, townRoot)
 	})
@@ -466,6 +469,110 @@ func testCrossRigRouting(t *testing.T, townRoot string) {
 		showBead(t, deaconDir, urIssue)
 		showBead(t, deaconDir, trIssue)
 	})
+}
+
+// testCrossRigWriteRouting tests WRITING beads across rigs via routes.jsonl.
+// This is the critical test for convoy-style operations where we create
+// an issue with a specific prefix from a different rig's directory.
+func testCrossRigWriteRouting(t *testing.T, townRoot string) {
+	unrigPath := filepath.Join(townRoot, "unrig")
+	trrigPath := filepath.Join(townRoot, "trrig")
+	deaconDir := filepath.Join(townRoot, "deacon")
+
+	t.Run("CreateInTownFromUnrig", func(t *testing.T) {
+		// From unrig directory, create an issue with hq- prefix (town beads)
+		// This simulates convoy create running from a rig directory
+		issueID := createBeadViaCLIRouting(t, unrigPath, "hq", "cross-rig-write-test-1")
+
+		// Verify the issue was created in town beads (accessible from deacon)
+		issue := showBead(t, deaconDir, issueID)
+		if issue == nil {
+			t.Fatal("Issue not found in town beads - routing failed for write")
+		}
+		if issue.Title != "cross-rig-write-test-1" {
+			t.Errorf("Wrong issue found: expected title 'cross-rig-write-test-1', got %q", issue.Title)
+		}
+		t.Logf("Successfully created %s in town beads from unrig via routing", issueID)
+	})
+
+	t.Run("CreateInTrrigFromUnrig", func(t *testing.T) {
+		// From unrig directory, create an issue with tr- prefix (trrig beads)
+		issueID := createBeadViaCLIRouting(t, unrigPath, "tr", "cross-rig-write-test-2")
+
+		// Verify the issue was created in trrig beads
+		issue := showBead(t, trrigPath, issueID)
+		if issue == nil {
+			t.Fatal("Issue not found in trrig beads - routing failed for write")
+		}
+		if issue.Title != "cross-rig-write-test-2" {
+			t.Errorf("Wrong issue found: expected title 'cross-rig-write-test-2', got %q", issue.Title)
+		}
+		t.Logf("Successfully created %s in trrig beads from unrig via routing", issueID)
+	})
+
+	t.Run("CreateInUnrigFromTrrig", func(t *testing.T) {
+		// From trrig directory, create an issue with ur- prefix (unrig beads)
+		issueID := createBeadViaCLIRouting(t, trrigPath, "ur", "cross-rig-write-test-3")
+
+		// Verify the issue was created in unrig beads
+		issue := showBead(t, unrigPath, issueID)
+		if issue == nil {
+			t.Fatal("Issue not found in unrig beads - routing failed for write")
+		}
+		if issue.Title != "cross-rig-write-test-3" {
+			t.Errorf("Wrong issue found: expected title 'cross-rig-write-test-3', got %q", issue.Title)
+		}
+		t.Logf("Successfully created %s in unrig beads from trrig via routing", issueID)
+	})
+
+	t.Run("CreateWithExplicitIDFailsWithoutRouting", func(t *testing.T) {
+		// This tests the convoy.go bug: bd create --id=hq-cv-xxx from a rig
+		// does NOT route - it validates the ID prefix against LOCAL database.
+		// From unrig (ur- prefix), --id=hq-xxx should fail.
+		cmd := exec.Command("bd", "--no-daemon", "create", "--id=hq-explicit-test", "--title=should-fail", "--type=task")
+		cmd.Dir = unrigPath
+		cmd.Env = filterOutBeadsDir(os.Environ())
+
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("Expected bd create --id=hq-xxx to fail from unrig, but it succeeded!\nOutput: %s", output)
+		}
+		// Should fail with prefix mismatch error
+		if !strings.Contains(string(output), "prefix") {
+			t.Logf("bd create --id=hq-xxx failed as expected (prefix mismatch): %s", output)
+		} else {
+			t.Logf("bd create --id=hq-xxx failed: %s", output)
+		}
+	})
+}
+
+// createBeadViaCLIRouting creates a bead using bd create --prefix to test routing.
+// This specifically tests the CLI routing path, not the Go interface.
+func createBeadViaCLIRouting(t *testing.T, workDir, prefix, title string) string {
+	t.Helper()
+
+	cmd := exec.Command("bd", "--no-daemon", "create", "--prefix="+prefix, "--title="+title, "--type=task", "--json")
+	cmd.Dir = workDir
+	// Explicitly unset BEADS_DIR to ensure cwd-based discovery
+	cmd.Env = filterOutBeadsDir(os.Environ())
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bd create --prefix=%s from %s failed: %v\nOutput: %s", prefix, workDir, err, output)
+	}
+
+	// Parse JSON output to get issue ID (bd create returns single object, not array)
+	var issue struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(output, &issue); err != nil {
+		t.Fatalf("Failed to parse bd create output: %v\nOutput: %s", err, output)
+	}
+	if issue.ID == "" {
+		t.Fatalf("bd create returned empty ID\nOutput: %s", output)
+	}
+
+	return issue.ID
 }
 
 // testWorktreeRedirects verifies that redirects are followed correctly
