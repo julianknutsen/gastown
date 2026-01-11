@@ -256,9 +256,9 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	townBeads, err := getTownBeadsDir()
-	if err != nil {
-		return err
+	// Verify we're in a Gas Town workspace (for good error messages)
+	if _, err := workspace.FindFromCwdOrError(); err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
 	// Create convoy issue in town beads
@@ -270,7 +270,7 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		description += fmt.Sprintf("\nMolecule: %s", convoyMolecule)
 	}
 
-	// Generate convoy ID with cv- prefix
+	// Generate convoy ID with hq- prefix (routes via routes.jsonl from any cwd)
 	convoyID := fmt.Sprintf("hq-cv-%s", generateShortID())
 
 	createArgs := []string{
@@ -282,8 +282,8 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		"--json",
 	}
 
+	// bd uses cwd-based discovery and routes prefixed IDs (hq-) via routes.jsonl
 	createCmd := exec.Command("bd", createArgs...)
-	createCmd.Dir = townBeads
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	createCmd.Stdout = &stdout
@@ -301,7 +301,7 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		// Use --type=tracks for non-blocking tracking relation
 		depArgs := []string{"dep", "add", convoyID, issueID, "--type=tracks"}
 		depCmd := exec.Command("bd", depArgs...)
-		depCmd.Dir = townBeads
+		// No cmd.Dir needed - prefixed IDs route via routes.jsonl from cwd
 
 		if err := depCmd.Run(); err != nil {
 			style.PrintWarning("couldn't track %s: %v", issueID, err)
@@ -333,15 +333,15 @@ func runConvoyAdd(cmd *cobra.Command, args []string) error {
 	convoyID := args[0]
 	issuesToAdd := args[1:]
 
-	townBeads, err := getTownBeadsDir()
-	if err != nil {
-		return err
+	// Verify we're in a Gas Town workspace
+	if _, err := workspace.FindFromCwdOrError(); err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
 	// Validate convoy exists and get its status
+	// bd routes prefixed IDs (hq-) via routes.jsonl from cwd
 	showArgs := []string{"show", convoyID, "--json"}
 	showCmd := exec.Command("bd", showArgs...)
-	showCmd.Dir = townBeads
 	var stdout bytes.Buffer
 	showCmd.Stdout = &stdout
 
@@ -375,7 +375,6 @@ func runConvoyAdd(cmd *cobra.Command, args []string) error {
 	if convoy.Status == "closed" {
 		reopenArgs := []string{"update", convoyID, "--status=open"}
 		reopenCmd := exec.Command("bd", reopenArgs...)
-		reopenCmd.Dir = townBeads
 		if err := reopenCmd.Run(); err != nil {
 			return fmt.Errorf("couldn't reopen convoy: %w", err)
 		}
@@ -388,7 +387,6 @@ func runConvoyAdd(cmd *cobra.Command, args []string) error {
 	for _, issueID := range issuesToAdd {
 		depArgs := []string{"dep", "add", convoyID, issueID, "--type=tracks"}
 		depCmd := exec.Command("bd", depArgs...)
-		depCmd.Dir = townBeads
 
 		if err := depCmd.Run(); err != nil {
 			style.PrintWarning("couldn't add %s: %v", issueID, err)
