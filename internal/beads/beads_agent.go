@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -129,30 +128,21 @@ func ParseAgentFields(description string) *AgentFields {
 // The ID format is: <prefix>-<rig>-<role>-<name> (e.g., gt-gastown-polecat-Toast)
 // Use AgentBeadID() helper to generate correct IDs.
 // The created_by field is populated from BD_ACTOR env var for provenance tracking.
+//
+// NOTE: This method extracts the prefix from the ID and passes --prefix to bd
+// to enable routing via routes.jsonl.
 func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, error) {
 	description := FormatAgentDescription(title, fields)
 
-	args := []string{"create", "--json",
-		"--id=" + id,
-		"--title=" + title,
-		"--description=" + description,
-		"--type=agent",
-		"--labels=gt:agent",
-	}
-
-	// Default actor from BD_ACTOR env var for provenance tracking
-	if actor := os.Getenv("BD_ACTOR"); actor != "" {
-		args = append(args, "--actor="+actor)
-	}
-
-	out, err := b.run(args...)
+	issue, err := b.Create(CreateOptions{
+		ID:          id,
+		Title:       title,
+		Description: description,
+		BdType:      "agent",
+		Labels:      []string{"gt:agent"},
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	var issue Issue
-	if err := json.Unmarshal(out, &issue); err != nil {
-		return nil, fmt.Errorf("parsing bd create output: %w", err)
 	}
 
 	// Set the role slot if specified (this is the authoritative storage)
@@ -173,7 +163,7 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 		}
 	}
 
-	return &issue, nil
+	return issue, nil
 }
 
 // CreateOrReopenAgentBead creates an agent bead or reopens an existing one.

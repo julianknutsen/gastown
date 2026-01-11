@@ -16,6 +16,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tui/convoy"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -256,45 +257,24 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Get town root - needed for bd create since --id prefix validation requires
-	// being in a directory where the local .beads has the matching prefix (hq-)
+	// Get town root - needed for dep add since it doesn't support cross-rig routing
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	// Create convoy issue in town beads
-	description := fmt.Sprintf("Convoy tracking %d issues", len(trackedIssues))
-	if convoyNotify != "" {
-		description += fmt.Sprintf("\nNotify: %s", convoyNotify)
-	}
-	if convoyMolecule != "" {
-		description += fmt.Sprintf("\nMolecule: %s", convoyMolecule)
-	}
-
 	// Generate convoy ID with hq- prefix
-	convoyID := fmt.Sprintf("hq-cv-%s", generateShortID())
+	convoyID := beads.ConvoyID(generateShortID())
 
-	createArgs := []string{
-		"create",
-		"--type=convoy",
-		"--id=" + convoyID,
-		"--title=" + name,
-		"--description=" + description,
-		"--json",
+	// Create convoy using beads interface (handles routing via prefix extraction)
+	bd := beads.New(townRoot)
+	fields := &beads.ConvoyFields{
+		Notify:   convoyNotify,
+		Molecule: convoyMolecule,
 	}
-
-	// bd create with --id validates prefix against LOCAL database, so we must
-	// run from town root where the hq- prefix is defined
-	createCmd := exec.Command("bd", createArgs...)
-	createCmd.Dir = townRoot
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	createCmd.Stdout = &stdout
-	createCmd.Stderr = &stderr
-
-	if err := createCmd.Run(); err != nil {
-		return fmt.Errorf("creating convoy: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	_, err = bd.CreateConvoy(convoyID, name, len(trackedIssues), fields)
+	if err != nil {
+		return fmt.Errorf("creating convoy: %w", err)
 	}
 
 	// Notify address is stored in description (line 166-168) and read from there

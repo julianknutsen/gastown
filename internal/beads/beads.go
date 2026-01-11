@@ -81,11 +81,14 @@ type ListOptions struct {
 // CreateOptions specifies options for creating an issue.
 type CreateOptions struct {
 	Title       string
-	Type        string // "task", "bug", "feature", "epic"
-	Priority    int    // 0-4
+	Type        string   // Deprecated: use Labels instead. "task", "bug", "feature", "epic" - converted to gt:<type> label
+	Priority    int      // 0-4
 	Description string
 	Parent      string
-	Actor       string // Who is creating this issue (populates created_by)
+	Actor       string   // Who is creating this issue (populates created_by)
+	ID          string   // Optional: explicit ID (enables routing via prefix extraction)
+	Labels      []string // Optional: additional labels (e.g., "gt:agent", "gt:convoy")
+	BdType      string   // Optional: raw bd --type value (e.g., "convoy", "agent") - NOT converted to label
 }
 
 // UpdateOptions specifies options for updating an issue.
@@ -349,15 +352,37 @@ func (b *Beads) Blocked() ([]*Issue, error) {
 // Create creates a new issue and returns it.
 // If opts.Actor is empty, it defaults to the BD_ACTOR environment variable.
 // This ensures created_by is populated for issue provenance tracking.
+//
+// If opts.ID is set, the issue is created with that specific ID and routing
+// is enabled via prefix extraction (see CreateWithID for details).
 func (b *Beads) Create(opts CreateOptions) (*Issue, error) {
 	args := []string{"create", "--json"}
+
+	// Add explicit ID if specified (enables routing)
+	if opts.ID != "" {
+		args = append(args, "--id="+opts.ID)
+		// Add --prefix from ID for routing (validates consistency if already specified)
+		var err error
+		args, err = addPrefixForRouting(args, opts.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if opts.Title != "" {
 		args = append(args, "--title="+opts.Title)
 	}
+	// BdType is the raw bd --type value (e.g., "convoy", "agent")
+	if opts.BdType != "" {
+		args = append(args, "--type="+opts.BdType)
+	}
 	// Type is deprecated: convert to gt:<type> label
 	if opts.Type != "" {
 		args = append(args, "--labels=gt:"+opts.Type)
+	}
+	// Add explicit labels
+	for _, label := range opts.Labels {
+		args = append(args, "--labels="+label)
 	}
 	if opts.Priority >= 0 {
 		args = append(args, fmt.Sprintf("--priority=%d", opts.Priority))
@@ -390,48 +415,58 @@ func (b *Beads) Create(opts CreateOptions) (*Issue, error) {
 	return &issue, nil
 }
 
+// extractPrefix extracts the prefix from a beads ID.
+// For "hq-cv-xxx" returns "hq", for "gt-abc" returns "gt".
+// Returns empty string if no hyphen found.
+func extractPrefix(id string) string {
+	idx := strings.Index(id, "-")
+	if idx < 0 {
+		return ""
+	}
+	return id[:idx]
+}
+
+// addPrefixForRouting adds --prefix to args for routing, with conflict detection.
+// If --prefix is already in args:
+//   - and matches the extracted prefix from id: no-op
+//   - and differs: returns error
+//
+// If --prefix is not in args: adds --prefix=<extracted>
+// Returns the updated args and any error.
+func addPrefixForRouting(args []string, id string) ([]string, error) {
+	extractedPrefix := extractPrefix(id)
+	if extractedPrefix == "" {
+		return args, nil
+	}
+
+	// Check if --prefix is already specified
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--prefix=") {
+			existingPrefix := strings.TrimPrefix(arg, "--prefix=")
+			if existingPrefix != extractedPrefix {
+				return nil, fmt.Errorf("prefix mismatch: ID %q has prefix %q but --prefix=%s was specified", id, extractedPrefix, existingPrefix)
+			}
+			// Already specified and matches, no-op
+			return args, nil
+		}
+	}
+
+	// Not specified, add it
+	return append(args, "--prefix="+extractedPrefix), nil
+}
+
 // CreateWithID creates an issue with a specific ID.
 // This is useful for agent beads, role beads, and other beads that need
 // deterministic IDs rather than auto-generated ones.
+//
+// NOTE: This method extracts the prefix from the ID and passes --prefix to bd
+// to enable routing via routes.jsonl. Without --prefix, bd create --id validates
+// against the LOCAL database prefix and fails if they don't match.
+//
+// Deprecated: Use Create with opts.ID set instead.
 func (b *Beads) CreateWithID(id string, opts CreateOptions) (*Issue, error) {
-	args := []string{"create", "--json", "--id=" + id}
-
-	if opts.Title != "" {
-		args = append(args, "--title="+opts.Title)
-	}
-	// Type is deprecated: convert to gt:<type> label
-	if opts.Type != "" {
-		args = append(args, "--labels=gt:"+opts.Type)
-	}
-	if opts.Priority >= 0 {
-		args = append(args, fmt.Sprintf("--priority=%d", opts.Priority))
-	}
-	if opts.Description != "" {
-		args = append(args, "--description="+opts.Description)
-	}
-	if opts.Parent != "" {
-		args = append(args, "--parent="+opts.Parent)
-	}
-	// Default Actor from BD_ACTOR env var if not specified
-	actor := opts.Actor
-	if actor == "" {
-		actor = os.Getenv("BD_ACTOR")
-	}
-	if actor != "" {
-		args = append(args, "--actor="+actor)
-	}
-
-	out, err := b.run(args...)
-	if err != nil {
-		return nil, err
-	}
-
-	var issue Issue
-	if err := json.Unmarshal(out, &issue); err != nil {
-		return nil, fmt.Errorf("parsing bd create output: %w", err)
-	}
-
-	return &issue, nil
+	opts.ID = id
+	return b.Create(opts)
 }
 
 // Update updates an existing issue.

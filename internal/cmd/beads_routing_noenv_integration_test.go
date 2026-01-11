@@ -56,6 +56,9 @@ func TestBeadsInterface(t *testing.T) {
 	t.Run("CrossRigWriteRouting", func(t *testing.T) {
 		testCrossRigWriteRouting(t, townRoot)
 	})
+	t.Run("BeadsInterfaceCreateWithIDRouting", func(t *testing.T) {
+		testBeadsInterfaceCreateWithIDRouting(t, townRoot)
+	})
 	t.Run("WorktreeRedirects", func(t *testing.T) {
 		testWorktreeRedirects(t, townRoot)
 	})
@@ -544,6 +547,50 @@ func testCrossRigWriteRouting(t *testing.T, townRoot string) {
 			t.Logf("bd create --id=hq-xxx failed: %s", output)
 		}
 	})
+}
+
+// testBeadsInterfaceCreateWithIDRouting tests that beads.CreateWithID routes correctly
+// via routes.jsonl. This verifies the fix for the --id routing bug.
+func testBeadsInterfaceCreateWithIDRouting(t *testing.T, townRoot string) {
+	unrigPath := filepath.Join(townRoot, "unrig")
+	deaconDir := filepath.Join(townRoot, "deacon")
+
+	t.Run("CreateWithIDInTownFromUnrig", func(t *testing.T) {
+		// From unrig directory, use beads interface to create issue with hq- prefix ID
+		// This tests that CreateWithID extracts the prefix and passes --prefix to bd
+		db := beads.New(unrigPath)
+
+		customID := fmt.Sprintf("hq-test-%s", generateShortTestID())
+		issue, err := db.CreateWithID(customID, beads.CreateOptions{
+			Title: "Interface routing test",
+			Type:  "task",
+		})
+		if err != nil {
+			t.Fatalf("CreateWithID failed: %v", err)
+		}
+
+		if issue.ID != customID {
+			t.Errorf("Expected ID %q, got %q", customID, issue.ID)
+		}
+
+		// Verify the issue was created in town beads (accessible from deacon)
+		townDB := beads.New(deaconDir)
+		found, err := townDB.Show(customID)
+		if err != nil {
+			t.Fatalf("Show from town failed: %v", err)
+		}
+		if found == nil {
+			t.Fatal("Issue not found in town beads - CreateWithID routing failed")
+		}
+		t.Logf("Successfully created %s in town beads from unrig via beads.CreateWithID", customID)
+	})
+}
+
+// generateShortTestID generates a short random ID for tests
+func generateShortTestID() string {
+	b := make([]byte, 3)
+	_, _ = rand.Read(b)
+	return strings.ToLower(fmt.Sprintf("%x", b))
 }
 
 // createBeadViaCLIRouting creates a bead using bd create --prefix to test routing.

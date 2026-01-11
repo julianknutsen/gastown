@@ -1799,3 +1799,79 @@ func TestSetupRedirect(t *testing.T) {
 		}
 	})
 }
+
+// TestAddPrefixForRouting tests the prefix routing helper.
+func TestAddPrefixForRouting(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		id        string
+		wantArgs  []string
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name:     "adds prefix from ID",
+			args:     []string{"create", "--json", "--id=gt-abc"},
+			id:       "gt-abc",
+			wantArgs: []string{"create", "--json", "--id=gt-abc", "--prefix=gt"},
+		},
+		{
+			name:     "adds prefix from multi-part ID",
+			args:     []string{"create", "--json", "--id=hq-cv-xyz"},
+			id:       "hq-cv-xyz",
+			wantArgs: []string{"create", "--json", "--id=hq-cv-xyz", "--prefix=hq"},
+		},
+		{
+			name:     "no-op when prefix already specified and matches",
+			args:     []string{"create", "--json", "--id=gt-abc", "--prefix=gt"},
+			id:       "gt-abc",
+			wantArgs: []string{"create", "--json", "--id=gt-abc", "--prefix=gt"},
+		},
+		{
+			name:      "error when prefix mismatch",
+			args:      []string{"create", "--json", "--id=gt-abc", "--prefix=hq"},
+			id:        "gt-abc",
+			wantError: true,
+			errorMsg:  "prefix mismatch",
+		},
+		{
+			name:     "no change for ID without hyphen",
+			args:     []string{"create", "--json", "--id=abc123"},
+			id:       "abc123",
+			wantArgs: []string{"create", "--json", "--id=abc123"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := addPrefixForRouting(tt.args, tt.id)
+
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("addPrefixForRouting() expected error, got nil")
+					return
+				}
+				if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("addPrefixForRouting() error = %q, want to contain %q", err.Error(), tt.errorMsg)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("addPrefixForRouting() unexpected error: %v", err)
+				return
+			}
+
+			if len(got) != len(tt.wantArgs) {
+				t.Errorf("addPrefixForRouting() got %v, want %v", got, tt.wantArgs)
+				return
+			}
+			for i, arg := range got {
+				if arg != tt.wantArgs[i] {
+					t.Errorf("addPrefixForRouting()[%d] = %q, want %q", i, arg, tt.wantArgs[i])
+				}
+			}
+		})
+	}
+}

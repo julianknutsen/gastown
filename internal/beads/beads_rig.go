@@ -2,9 +2,7 @@
 package beads
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -76,32 +74,18 @@ func ParseRigFields(description string) *RigFields {
 // The ID format is: <prefix>-rig-<name> (e.g., gt-rig-gastown)
 // Use RigBeadID() helper to generate correct IDs.
 // The created_by field is populated from BD_ACTOR env var for provenance tracking.
+//
+// NOTE: This method extracts the prefix from the ID and passes --prefix to bd
+// to enable routing via routes.jsonl.
 func (b *Beads) CreateRigBead(id, title string, fields *RigFields) (*Issue, error) {
 	description := FormatRigDescription(title, fields)
 
-	args := []string{"create", "--json",
-		"--id=" + id,
-		"--title=" + title,
-		"--description=" + description,
-		"--labels=gt:rig",
-	}
-
-	// Default actor from BD_ACTOR env var for provenance tracking
-	if actor := os.Getenv("BD_ACTOR"); actor != "" {
-		args = append(args, "--actor="+actor)
-	}
-
-	out, err := b.run(args...)
-	if err != nil {
-		return nil, err
-	}
-
-	var issue Issue
-	if err := json.Unmarshal(out, &issue); err != nil {
-		return nil, fmt.Errorf("parsing bd create output: %w", err)
-	}
-
-	return &issue, nil
+	return b.Create(CreateOptions{
+		ID:          id,
+		Title:       title,
+		Description: description,
+		Labels:      []string{"gt:rig"},
+	})
 }
 
 // RigBeadIDWithPrefix generates a rig identity bead ID using the specified prefix.
