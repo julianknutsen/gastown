@@ -100,12 +100,10 @@ func runMoleculeAwaitSignal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
 
-	beadsDir := beads.ResolveBeadsDir(workDir)
-
 	// Read current idle cycles from agent bead (if specified)
 	var idleCycles int
 	if awaitSignalAgentBead != "" {
-		labels, err := getAgentLabels(awaitSignalAgentBead, beadsDir)
+		labels, err := getAgentLabels(awaitSignalAgentBead, workDir)
 		if err != nil {
 			// Agent bead might not exist yet - that's OK, start at 0
 			if !awaitSignalQuiet {
@@ -151,7 +149,7 @@ func runMoleculeAwaitSignal(cmd *cobra.Command, args []string) error {
 	// On timeout, increment idle cycles on agent bead
 	if result.Reason == "timeout" && awaitSignalAgentBead != "" {
 		newIdleCycles := idleCycles + 1
-		if err := setAgentIdleCycles(awaitSignalAgentBead, workDir, beadsDir, newIdleCycles); err != nil {
+		if err := setAgentIdleCycles(awaitSignalAgentBead, workDir, newIdleCycles); err != nil {
 			if !awaitSignalQuiet {
 				fmt.Printf("%s Failed to update agent bead idle count: %v\n",
 					style.Dim.Render("⚠"), err)
@@ -321,10 +319,10 @@ func parseIntSimple(s string) (int, error) {
 
 // setAgentIdleCycles sets the idle:N label on an agent bead.
 // Uses read-modify-write pattern to update only the idle label.
-// workDir is used for the update (cwd-based discovery), beadsDir for reading labels.
-func setAgentIdleCycles(agentBead, workDir, beadsDir string, cycles int) error {
-	// Read all current labels (uses BEADS_DIR internally via agent_state.go)
-	allLabels, err := getAllAgentLabels(agentBead, beadsDir)
+// workDir is used for cwd-based discovery (both read and write).
+func setAgentIdleCycles(agentBead, workDir string, cycles int) error {
+	// Read all current labels using cwd-based discovery
+	allLabels, err := getAllAgentLabels(agentBead, workDir)
 	if err != nil {
 		return err
 	}

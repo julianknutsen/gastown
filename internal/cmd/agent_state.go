@@ -98,8 +98,8 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting working directory: %w", err)
 	}
 
-	beadsDir := beads.ResolveBeadsDir(cwd)
-	if beadsDir == "" {
+	// Validate we're in a beads workspace
+	if beads.ResolveBeadsDir(cwd) == "" {
 		return fmt.Errorf("not in a beads workspace")
 	}
 
@@ -110,16 +110,16 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 
 	if hasSet || hasIncr || hasDel {
 		// Modification mode
-		return modifyAgentState(agentBead, beadsDir, hasIncr)
+		return modifyAgentState(agentBead, cwd, hasIncr)
 	}
 
 	// Query mode
-	return queryAgentState(agentBead, beadsDir)
+	return queryAgentState(agentBead, cwd)
 }
 
 // queryAgentState retrieves and displays labels from an agent bead.
-func queryAgentState(agentBead, beadsDir string) error {
-	labels, err := getAgentLabels(agentBead, beadsDir)
+func queryAgentState(agentBead, workDir string) error {
+	labels, err := getAgentLabels(agentBead, workDir)
 	if err != nil {
 		return err
 	}
@@ -152,15 +152,15 @@ func queryAgentState(agentBead, beadsDir string) error {
 
 // modifyAgentState modifies labels on an agent bead.
 // Uses read-modify-write pattern: read current labels, apply changes, write back all.
-func modifyAgentState(agentBead, beadsDir string, hasIncr bool) error {
+func modifyAgentState(agentBead, workDir string, hasIncr bool) error {
 	// Read current labels
-	labels, err := getAgentLabels(agentBead, beadsDir)
+	labels, err := getAgentLabels(agentBead, workDir)
 	if err != nil {
 		return err
 	}
 
 	// Also get non-state labels (ones without : separator) to preserve them
-	allLabels, err := getAllAgentLabels(agentBead, beadsDir)
+	allLabels, err := getAllAgentLabels(agentBead, workDir)
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func modifyAgentState(agentBead, beadsDir string, hasIncr bool) error {
 
 	// Execute bd update - uses cwd-based discovery + routes.jsonl for prefixed IDs
 	cmd := exec.Command("bd", args...)
-	cmd.Dir = beadsDir // Run from beads directory for cwd-based discovery
+	cmd.Dir = workDir
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -239,8 +239,8 @@ func modifyAgentState(agentBead, beadsDir string, hasIncr bool) error {
 // getAgentLabels retrieves state labels from an agent bead.
 // Returns only labels in key:value format, parsed into a map.
 // State labels are those with a : separator (e.g., idle:3, backoff:2m).
-func getAgentLabels(agentBead, beadsDir string) (map[string]string, error) {
-	allLabels, err := getAllAgentLabels(agentBead, beadsDir)
+func getAgentLabels(agentBead, workDir string) (map[string]string, error) {
+	allLabels, err := getAllAgentLabels(agentBead, workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -258,12 +258,12 @@ func getAgentLabels(agentBead, beadsDir string) (map[string]string, error) {
 }
 
 // getAllAgentLabels retrieves all labels (including non-state) from an agent bead.
-func getAllAgentLabels(agentBead, beadsDir string) ([]string, error) {
+func getAllAgentLabels(agentBead, workDir string) ([]string, error) {
 	args := []string{"show", agentBead, "--json"}
 
 	// Uses cwd-based discovery + routes.jsonl for prefixed IDs
 	cmd := exec.Command("bd", args...)
-	cmd.Dir = beadsDir // Run from beads directory for cwd-based discovery
+	cmd.Dir = workDir
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

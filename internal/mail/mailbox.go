@@ -63,16 +63,6 @@ func NewMailboxFromAddress(address, workDir string) *Mailbox {
 	}
 }
 
-// NewMailboxWithBeadsDir creates a mailbox with an explicit beads directory.
-func NewMailboxWithBeadsDir(address, workDir, beadsDir string) *Mailbox {
-	return &Mailbox{
-		identity: addressToIdentity(address),
-		workDir:  workDir,
-		beadsDir: beadsDir,
-		legacy:   false,
-	}
-}
-
 // Identity returns the beads identity for this mailbox.
 func (m *Mailbox) Identity() string {
 	return m.identity
