@@ -256,7 +256,6 @@ func testTownAgentRouting(t *testing.T, townRoot string) {
 	}
 
 	t.Run("CreateHqBead", func(t *testing.T) {
-		t.Skip("Requires fix: issues.jsonl must be created before routes.jsonl to prevent corruption")
 		// Create an hq- bead from deacon directory WITHOUT BEADS_DIR
 		issueID := createBead(t, deaconDir, "hq-", "test-from-deacon")
 		if !strings.HasPrefix(issueID, "hq-") {
@@ -268,7 +267,6 @@ func testTownAgentRouting(t *testing.T, townRoot string) {
 	})
 
 	t.Run("ReadRigBeadFromTown", func(t *testing.T) {
-		t.Skip("Requires fix: issues.jsonl must be created before routes.jsonl to prevent corruption")
 		// First create a bead in unrig
 		unrigPath := filepath.Join(townRoot, "unrig")
 		issueID := createBead(t, unrigPath, "ur-", "test-for-cross-read")
@@ -283,7 +281,6 @@ func testUntrackedRigRouting(t *testing.T, townRoot string) {
 	unrigPath := filepath.Join(townRoot, "unrig")
 
 	t.Run("CreateOwnPrefixBead", func(t *testing.T) {
-		t.Skip("Requires fix: issues.jsonl must be created before routes.jsonl to prevent corruption")
 		// Create a ur- bead from rig root WITHOUT BEADS_DIR
 		issueID := createBead(t, unrigPath, "ur-", "test-own-prefix")
 		if !strings.HasPrefix(issueID, "ur-") {
@@ -295,7 +292,6 @@ func testUntrackedRigRouting(t *testing.T, townRoot string) {
 	})
 
 	t.Run("CreateHqBeadFromRig", func(t *testing.T) {
-		t.Skip("Requires fix: issues.jsonl must be created before routes.jsonl to prevent corruption")
 		// Create an hq- bead from rig directory
 		// This should route to town beads via routes.jsonl walk-up
 		issueID := createBead(t, unrigPath, "hq-", "test-hq-from-rig")
@@ -308,7 +304,6 @@ func testUntrackedRigRouting(t *testing.T, townRoot string) {
 	})
 
 	t.Run("FromPolecatWorktree", func(t *testing.T) {
-		t.Skip("Requires fix: issues.jsonl must be created before routes.jsonl to prevent corruption")
 		polecatDir := filepath.Join(unrigPath, "polecats", "test")
 
 		// Create bead from polecat (should follow redirect to rig beads)
@@ -350,7 +345,6 @@ func testTrackedRigRouting(t *testing.T, townRoot string) {
 	})
 
 	t.Run("CreateHqBeadFromTrackedRig", func(t *testing.T) {
-		t.Skip("Requires fix: issues.jsonl must be created before routes.jsonl to prevent corruption")
 		// Create an hq- bead from tracked rig directory
 		// This works because hq- routes to town beads, not the tracked rig beads
 		issueID := createBead(t, trrigPath, "hq-", "test-hq-from-tracked")
@@ -399,7 +393,10 @@ func testTrackedRigRouting(t *testing.T, townRoot string) {
 
 // testCrossRigRouting tests reading beads across rigs via routes.jsonl
 func testCrossRigRouting(t *testing.T, townRoot string) {
-	t.Skip("Requires fix: issues.jsonl must be created before routes.jsonl to prevent corruption")
+	// This test requires both tracked and untracked rigs to work.
+	// Tracked rig requires Bug 2 fix (bd init after clone).
+	t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
+
 	unrigPath := filepath.Join(townRoot, "unrig")
 	trrigPath := filepath.Join(townRoot, "trrig")
 
@@ -429,7 +426,6 @@ func testCrossRigRouting(t *testing.T, townRoot string) {
 // testWorktreeRedirects verifies that redirects are followed correctly
 func testWorktreeRedirects(t *testing.T, townRoot string) {
 	t.Run("PolecatSharesRigDb", func(t *testing.T) {
-		t.Skip("Requires fix: issues.jsonl must be created before routes.jsonl to prevent corruption")
 		unrigPath := filepath.Join(townRoot, "unrig")
 		polecatDir := filepath.Join(unrigPath, "polecats", "test")
 
@@ -679,7 +675,10 @@ func testDefaultPrefixBehavior(t *testing.T, townRoot string) {
 // database, not from other databases. This is important for agents that expect
 // to see only their own work.
 func testListIsolation(t *testing.T, townRoot string) {
-	t.Skip("Requires fix: issues.jsonl must be created before routes.jsonl to prevent corruption")
+	// This test requires both tracked and untracked rigs to work.
+	// Tracked rig requires Bug 2 fix (bd init after clone).
+	t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
+
 	// Create unique beads in each location
 	deaconDir := filepath.Join(townRoot, "deacon")
 	unrigPath := filepath.Join(townRoot, "unrig")
