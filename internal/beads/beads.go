@@ -684,3 +684,70 @@ func ProvisionPrimeMDForWorktree(worktreePath string) error {
 	// Provision PRIME.md in the target directory
 	return ProvisionPrimeMD(beadsDir)
 }
+
+// Init initializes a new beads database with the given prefix.
+// This creates the .beads/ directory and sets up the database configuration.
+func (b *Beads) Init(prefix string) error {
+	args := []string{"init", "--prefix", prefix}
+	_, err := b.run(args...)
+	return err
+}
+
+// GetConfig retrieves a configuration value from the beads database.
+// Common keys: "issue_prefix", "types.custom", "sync-branch"
+func (b *Beads) GetConfig(key string) (string, error) {
+	args := []string{"config", "get", key}
+	out, err := b.run(args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// SetConfig sets a configuration value in the beads database.
+func (b *Beads) SetConfig(key, value string) error {
+	args := []string{"config", "set", key, value}
+	_, err := b.run(args...)
+	return err
+}
+
+// CreateWithPrefix creates a new issue with an explicit prefix.
+// This is useful when you need to create a bead in a different database
+// than the one discovered from workDir (routing via routes.jsonl).
+// Note: Actor is always taken from BD_ACTOR env var (set by config/env.go).
+func (b *Beads) CreateWithPrefix(prefix string, opts CreateOptions) (*Issue, error) {
+	args := []string{"create", "--json", "--prefix=" + prefix}
+
+	if opts.Title != "" {
+		args = append(args, "--title="+opts.Title)
+	}
+	// Type is deprecated: convert to gt:<type> label
+	if opts.Type != "" {
+		args = append(args, "--labels=gt:"+opts.Type)
+	}
+	if opts.Priority >= 0 {
+		args = append(args, fmt.Sprintf("--priority=%d", opts.Priority))
+	}
+	if opts.Description != "" {
+		args = append(args, "--description="+opts.Description)
+	}
+	if opts.Parent != "" {
+		args = append(args, "--parent="+opts.Parent)
+	}
+	// Actor comes from BD_ACTOR env var (set by config/env.go for all roles)
+	if actor := os.Getenv("BD_ACTOR"); actor != "" {
+		args = append(args, "--actor="+actor)
+	}
+
+	out, err := b.run(args...)
+	if err != nil {
+		return nil, err
+	}
+
+	var issue Issue
+	if err := json.Unmarshal(out, &issue); err != nil {
+		return nil, fmt.Errorf("parsing bd create output: %w", err)
+	}
+
+	return &issue, nil
+}
