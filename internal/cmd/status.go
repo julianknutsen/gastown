@@ -1137,8 +1137,8 @@ func getMQSummary(r *rig.Rig) *MQSummary {
 		return nil
 	}
 
-	// Create beads instance for the rig
-	b := beads.New(r.BeadsPath())
+	// Create beads instance for the rig (bd follows redirects for tracked beads)
+	b := beads.New(r.Path)
 
 	// Query for all open merge-request type issues
 	opts := beads.ListOptions{

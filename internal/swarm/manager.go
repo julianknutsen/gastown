@@ -32,8 +32,8 @@ type Manager struct {
 func NewManager(r *rig.Rig) *Manager {
 	return &Manager{
 		rig:     r,
-		workDir: r.BeadsPath(), // bd uses cwd-based discovery from this directory
-		gitDir:  r.Path,        // Use rig root for git operations
+		workDir: r.Path, // bd uses cwd-based discovery (follows redirects for tracked beads)
+		gitDir:  r.Path, // Use rig root for git operations
 	}
 }
 

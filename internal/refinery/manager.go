@@ -279,8 +279,8 @@ func (m *Manager) Stop() error {
 // Uses beads merge-request issues as the source of truth (not git branches).
 func (m *Manager) Queue() ([]QueueItem, error) {
 	// Query beads for open merge-request type issues
-	// BeadsPath() returns the git-synced beads location
-	b := beads.New(m.rig.BeadsPath())
+	// bd uses cwd-based discovery and follows redirects for tracked beads
+	b := beads.New(m.rig.Path)
 	issues, err := b.List(beads.ListOptions{
 		Type:     "merge-request",
 		Status:   "open",

@@ -80,7 +80,7 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 
 	// Find the rig identity bead
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
-	bd := beads.New(r.BeadsPath())
+	bd := beads.New(r.Path)
 
 	// Check if rig bead exists, create if not
 	rigBead, err := bd.Show(rigBeadID)
@@ -147,7 +147,7 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	// Sync beads to propagate to other clones
 	fmt.Printf("  Syncing beads...\n")
 	syncCmd := exec.Command("bd", "sync")
-	syncCmd.Dir = r.BeadsPath()
+	syncCmd.Dir = r.Path
 	if output, err := syncCmd.CombinedOutput(); err != nil {
 		fmt.Printf("  %s bd sync warning: %v\n%s", style.Warning.Render("!"), err, string(output))
 	}
@@ -180,7 +180,7 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 
 	// Find the rig identity bead
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
-	bd := beads.New(r.BeadsPath())
+	bd := beads.New(r.Path)
 
 	// Check if rig bead exists, create if not
 	rigBead, err := bd.Show(rigBeadID)
@@ -213,7 +213,7 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 	// Sync beads to propagate to other clones
 	fmt.Printf("  Syncing beads...\n")
 	syncCmd := exec.Command("bd", "sync")
-	syncCmd.Dir = r.BeadsPath()
+	syncCmd.Dir = r.Path
 	if output, err := syncCmd.CombinedOutput(); err != nil {
 		fmt.Printf("  %s bd sync warning: %v\n%s", style.Warning.Render("!"), err, string(output))
 	}

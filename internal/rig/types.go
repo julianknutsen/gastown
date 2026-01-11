@@ -69,17 +69,6 @@ func (r *Rig) Summary() RigSummary {
 	}
 }
 
-// BeadsPath returns the path to use for beads operations.
-// Returns the mayor/rig clone path if available (has proper sync-branch config),
-// otherwise falls back to the rig root path.
-// This ensures beads commands read from a location with git-synced beads data.
-func (r *Rig) BeadsPath() string {
-	if r.HasMayor {
-		return r.Path + "/mayor/rig"
-	}
-	return r.Path
-}
-
 // DefaultBranch returns the configured default branch for this rig.
 // Falls back to "main" if not configured or if config cannot be loaded.
 func (r *Rig) DefaultBranch() string {
