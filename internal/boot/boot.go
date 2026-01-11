@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -179,7 +178,6 @@ func (b *Boot) spawnTmux() error {
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:     "boot",
 		TownRoot: b.townRoot,
-		BeadsDir: beads.ResolveBeadsDir(b.townRoot),
 	})
 	for k, v := range envVars {
 		_ = b.tmux.SetEnvironment(SessionName, k, v)
@@ -212,7 +210,6 @@ func (b *Boot) spawnDegraded() error {
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:     "boot",
 		TownRoot: b.townRoot,
-		BeadsDir: beads.ResolveBeadsDir(b.townRoot),
 	})
 	cmd.Env = config.EnvForExecCommand(envVars)
 	cmd.Env = append(cmd.Env, "GT_DEGRADED=true")

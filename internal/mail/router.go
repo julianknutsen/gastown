@@ -172,6 +172,15 @@ func detectTownRoot(startDir string) string {
 
 // resolveBeadsDir returns the correct .beads directory for the given address.
 //
+// bdWorkDir returns the directory to run bd commands from.
+// Mail always uses town-level beads, so we run from townRoot when set.
+func (r *Router) bdWorkDir() string {
+	if r.townRoot != "" {
+		return r.townRoot
+	}
+	return r.workDir
+}
+
 // Two-level beads architecture:
 // - ALL mail uses town beads ({townRoot}/.beads) regardless of address
 // - Rig-level beads ({rig}/.beads) are for project issues only, not mail
@@ -439,14 +448,13 @@ func (r *Router) resolveAgentsByRig(rig string) ([]string, error) {
 
 // queryAgents queries agent beads using bd list with description filtering.
 func (r *Router) queryAgents(descContains string) ([]*agentBead, error) {
-	beadsDir := r.resolveBeadsDir("")
 	args := []string{"list", "--type=agent", "--json", "--limit=0"}
 
 	if descContains != "" {
 		args = append(args, "--desc-contains="+descContains)
 	}
 
-	stdout, err := runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	stdout, err := runBdCommand(args, r.bdWorkDir())
 	if err != nil {
 		return nil, fmt.Errorf("querying agents: %w", err)
 	}
@@ -603,8 +611,7 @@ func (r *Router) sendToSingle(msg *Message) error {
 		args = append(args, "--ephemeral")
 	}
 
-	beadsDir := r.resolveBeadsDir(msg.To)
-	_, err := runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	_, err := runBdCommand(args, r.bdWorkDir())
 	if err != nil {
 		return fmt.Errorf("sending message: %w", err)
 	}
@@ -712,9 +719,7 @@ func (r *Router) sendToQueue(msg *Message) error {
 	// Queue messages are never ephemeral - they need to persist until claimed
 	// (deliberately not checking shouldBeWisp)
 
-	// Queue messages go to town-level beads (shared location)
-	beadsDir := r.resolveBeadsDir("")
-	_, err = runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	_, err = runBdCommand(args, r.bdWorkDir())
 	if err != nil {
 		return fmt.Errorf("sending to queue %s: %w", queueName, err)
 	}
@@ -783,9 +788,7 @@ func (r *Router) sendToAnnounce(msg *Message) error {
 	// Announce messages are never ephemeral - they need to persist for readers
 	// (deliberately not checking shouldBeWisp)
 
-	// Announce messages go to town-level beads (shared location)
-	beadsDir := r.resolveBeadsDir("")
-	_, err = runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	_, err = runBdCommand(args, r.bdWorkDir())
 	if err != nil {
 		return fmt.Errorf("sending to announce %s: %w", announceName, err)
 	}
@@ -802,8 +805,6 @@ func (r *Router) pruneAnnounce(announceName string, retainCount int) error {
 		return nil // No retention limit
 	}
 
-	beadsDir := r.resolveBeadsDir("")
-
 	// Query existing messages in this announce channel
 	// Use bd list with labels filter to find messages with announce:<name> label
 	args := []string{"list",
@@ -815,7 +816,7 @@ func (r *Router) pruneAnnounce(announceName string, retainCount int) error {
 		"--asc", // Oldest first
 	}
 
-	stdout, err := runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	stdout, err := runBdCommand(args, r.bdWorkDir())
 	if err != nil {
 		return fmt.Errorf("querying announce messages: %w", err)
 	}
@@ -840,7 +841,7 @@ func (r *Router) pruneAnnounce(announceName string, retainCount int) error {
 	for i := 0; i < toDelete && i < len(messages); i++ {
 		deleteArgs := []string{"close", messages[i].ID, "--reason=retention pruning"}
 		// Best-effort deletion - don't fail if one delete fails
-		_, _ = runBdCommand(deleteArgs, filepath.Dir(beadsDir), beadsDir)
+		_, _ = runBdCommand(deleteArgs, r.bdWorkDir())
 	}
 
 	return nil
@@ -857,9 +858,7 @@ func isSelfMail(from, to string) bool {
 // GetMailbox returns a Mailbox for the given address.
 // Routes to the correct beads database based on the address.
 func (r *Router) GetMailbox(address string) (*Mailbox, error) {
-	beadsDir := r.resolveBeadsDir(address)
-	workDir := filepath.Dir(beadsDir) // Parent of .beads
-	return NewMailboxFromAddress(address, workDir), nil
+	return NewMailboxFromAddress(address, r.bdWorkDir()), nil
 }
 
 // notifyRecipient sends a notification to a recipient's tmux session.

@@ -151,7 +151,7 @@ func runMoleculeAwaitSignal(cmd *cobra.Command, args []string) error {
 	// On timeout, increment idle cycles on agent bead
 	if result.Reason == "timeout" && awaitSignalAgentBead != "" {
 		newIdleCycles := idleCycles + 1
-		if err := setAgentIdleCycles(awaitSignalAgentBead, beadsDir, newIdleCycles); err != nil {
+		if err := setAgentIdleCycles(awaitSignalAgentBead, workDir, beadsDir, newIdleCycles); err != nil {
 			if !awaitSignalQuiet {
 				fmt.Printf("%s Failed to update agent bead idle count: %v\n",
 					style.Dim.Render("⚠"), err)
@@ -321,8 +321,9 @@ func parseIntSimple(s string) (int, error) {
 
 // setAgentIdleCycles sets the idle:N label on an agent bead.
 // Uses read-modify-write pattern to update only the idle label.
-func setAgentIdleCycles(agentBead, beadsDir string, cycles int) error {
-	// Read all current labels
+// workDir is used for the update (cwd-based discovery), beadsDir for reading labels.
+func setAgentIdleCycles(agentBead, workDir, beadsDir string, cycles int) error {
+	// Read all current labels (uses BEADS_DIR internally via agent_state.go)
 	allLabels, err := getAllAgentLabels(agentBead, beadsDir)
 	if err != nil {
 		return err
@@ -341,18 +342,9 @@ func setAgentIdleCycles(agentBead, beadsDir string, cycles int) error {
 	// Add new idle value
 	newLabels = append(newLabels, fmt.Sprintf("idle:%d", cycles))
 
-	// Use bd update with --set-labels to replace all labels
-	args := []string{"update", agentBead}
-	for _, label := range newLabels {
-		args = append(args, "--set-labels="+label)
-	}
-
-	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("setting idle label: %w", err)
-	}
-
-	return nil
+	// Use beads interface for update - cwd-based discovery finds correct database
+	bd := beads.New(workDir)
+	return bd.Update(agentBead, beads.UpdateOptions{
+		SetLabels: newLabels,
+	})
 }

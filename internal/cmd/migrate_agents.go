@@ -106,7 +106,8 @@ func runMigrateAgents(cmd *cobra.Command, args []string) error {
 	sourceBd := beads.New(sourceBeadsDir)
 
 	// Target beads (town beads where new agent beads should go)
-	targetBd := beads.NewWithBeadsDir(townRoot, townBeadsDir)
+	// cwd-based discovery from townRoot finds town's .beads
+	targetBd := beads.New(townRoot)
 
 	// Agents to migrate: town-level agents only
 	agentsToMigrate := []struct {

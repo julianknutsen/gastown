@@ -1503,8 +1503,7 @@ func getRigOperationalState(townRoot, rigName string) (state string, source stri
 	// Rig identity bead ID: <prefix>-rig-<name>
 	// Look for status:docked or status:parked labels
 	rigPath := filepath.Join(townRoot, rigName)
-	rigBeadsDir := beads.ResolveBeadsDir(rigPath)
-	bd := beads.NewWithBeadsDir(rigPath, rigBeadsDir)
+	bd := beads.New(rigPath) // cwd-based discovery follows redirects
 
 	// Try to find the rig identity bead
 	// Convention: <prefix>-rig-<rigName>

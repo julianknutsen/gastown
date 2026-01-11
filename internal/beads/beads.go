@@ -109,20 +109,15 @@ type SyncStatus struct {
 }
 
 // Beads wraps bd CLI operations for a working directory.
+// Uses cwd-based discovery - bd finds .beads by walking up from workDir.
 type Beads struct {
-	workDir  string
-	beadsDir string // Optional BEADS_DIR override for cross-database access
+	workDir string
 }
 
 // New creates a new Beads wrapper for the given directory.
+// bd uses cwd-based discovery and routes.jsonl for cross-database routing.
 func New(workDir string) *Beads {
 	return &Beads{workDir: workDir}
-}
-
-// NewWithBeadsDir creates a Beads wrapper with an explicit BEADS_DIR.
-// This is needed when running from a polecat worktree but accessing town-level beads.
-func NewWithBeadsDir(workDir, beadsDir string) *Beads {
-	return &Beads{workDir: workDir, beadsDir: beadsDir}
 }
 
 // run executes a bd command and returns stdout.
@@ -132,11 +127,6 @@ func (b *Beads) run(args ...string) ([]byte, error) {
 	fullArgs := append([]string{"--no-daemon"}, args...)
 	cmd := exec.Command("bd", fullArgs...) //nolint:gosec // G204: bd is a trusted internal tool
 	cmd.Dir = b.workDir
-
-	// Set BEADS_DIR if specified (enables cross-database access)
-	if b.beadsDir != "" {
-		cmd.Env = append(os.Environ(), "BEADS_DIR="+b.beadsDir)
-	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -239,8 +239,7 @@ func getConfigKeys(townRoot string, r *rig.Rig) []string {
 		prefix = r.Config.Prefix
 	}
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, r.Name)
-	beadsDir := beads.ResolveBeadsDir(r.Path)
-	bd := beads.NewWithBeadsDir(townRoot, beadsDir)
+	bd := beads.New(r.Path) // cwd-based discovery uses routes.jsonl
 	if issue, err := bd.Show(rigBeadID); err == nil {
 		for _, label := range issue.Labels {
 			// Labels are in format "key:value"
@@ -271,8 +270,7 @@ func setBeadLabel(townRoot string, r *rig.Rig, key, value string) error {
 	}
 
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, r.Name)
-	beadsDir := beads.ResolveBeadsDir(r.Path)
-	bd := beads.NewWithBeadsDir(townRoot, beadsDir)
+	bd := beads.New(r.Path) // cwd-based discovery uses routes.jsonl for prefixed operations
 
 	// Check if bead exists
 	issue, err := bd.Show(rigBeadID)

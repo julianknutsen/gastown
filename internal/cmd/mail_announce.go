@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -176,8 +175,6 @@ type announceMessage struct {
 
 // listAnnounceMessages lists messages from an announce channel.
 func listAnnounceMessages(townRoot, channelName string) ([]announceMessage, error) {
-	beadsDir := filepath.Join(townRoot, ".beads")
-
 	// Query for messages with label announce_channel:<channel>
 	// Messages are stored with this label when sent via sendToAnnounce()
 	args := []string{"list",
@@ -189,7 +186,7 @@ func listAnnounceMessages(townRoot, channelName string) ([]announceMessage, erro
 	}
 
 	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	cmd.Dir = townRoot // Run from town root for cwd-based discovery
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

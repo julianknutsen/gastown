@@ -190,7 +190,6 @@ func (m *Manager) Start(foreground bool) error {
 		Role:          "refinery",
 		Rig:           m.rig.Name,
 		TownRoot:      townRoot,
-		BeadsDir:      beads.ResolveBeadsDir(m.rig.Path),
 		BeadsNoDaemon: true,
 	})
 

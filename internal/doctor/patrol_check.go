@@ -240,7 +240,7 @@ func NewPatrolNotStuckCheck() *PatrolNotStuckCheck {
 // loadStuckThreshold loads the stuck threshold from the Deacon's role bead.
 // Returns the default if no config exists.
 func loadStuckThreshold(townRoot string) time.Duration {
-	bd := beads.NewWithBeadsDir(townRoot, beads.ResolveBeadsDir(townRoot))
+	bd := beads.New(townRoot) // cwd-based discovery from townRoot
 	roleConfig, err := bd.GetRoleConfig(beads.RoleBeadIDTown("deacon"))
 	if err != nil || roleConfig == nil || roleConfig.StuckThreshold == "" {
 		return DefaultStuckThreshold

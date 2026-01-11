@@ -143,6 +143,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	d.Register(doctor.NewThemeCheck())
 	d.Register(doctor.NewCrashReportCheck())
 	d.Register(doctor.NewEnvVarsCheck())
+	d.Register(doctor.NewShellBeadsDirCheck())
 
 	// Patrol system checks
 	d.Register(doctor.NewPatrolMoleculesExistCheck())

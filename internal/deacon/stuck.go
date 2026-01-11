@@ -43,8 +43,8 @@ func DefaultStuckConfig() *StuckConfig {
 func LoadStuckConfig(townRoot string) *StuckConfig {
 	config := DefaultStuckConfig()
 
-	// Load from hq-deacon-role bead
-	bd := beads.NewWithBeadsDir(townRoot, beads.ResolveBeadsDir(townRoot))
+	// Load from hq-deacon-role bead (cwd-based discovery from townRoot)
+	bd := beads.New(townRoot)
 	roleConfig, err := bd.GetRoleConfig(beads.RoleBeadIDTown("deacon"))
 	if err != nil || roleConfig == nil {
 		return config

@@ -27,8 +27,8 @@ var (
 // Mailbox manages messages for an identity via beads.
 type Mailbox struct {
 	identity string // beads identity (e.g., "gastown/polecats/Toast")
-	workDir  string // directory to run bd commands in
-	beadsDir string // explicit .beads directory path (set via BEADS_DIR)
+	workDir  string // directory containing .beads (for cwd-based discovery)
+	beadsDir string // resolved .beads directory path (for archive path)
 	path     string // for legacy JSONL mode (crew workers)
 	legacy   bool   // true = use JSONL files, false = use beads
 }
@@ -187,7 +187,8 @@ func (m *Mailbox) queryMessages(beadsDir, filterFlag, filterValue, status string
 		"--json",
 	}
 
-	stdout, err := runBdCommand(args, m.workDir, beadsDir)
+	// Run from workDir - bd uses cwd-based discovery and follows redirects
+	stdout, err := runBdCommand(args, m.workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +285,8 @@ func (m *Mailbox) getBeads(id string) (*Message, error) {
 func (m *Mailbox) getFromDir(id, beadsDir string) (*Message, error) {
 	args := []string{"show", id, "--json"}
 
-	stdout, err := runBdCommand(args, m.workDir, beadsDir)
+	// Run from workDir - bd uses cwd-based discovery and follows redirects
+	stdout, err := runBdCommand(args, m.workDir)
 	if err != nil {
 		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
 			return nil, ErrMessageNotFound
@@ -339,7 +341,8 @@ func (m *Mailbox) closeInDir(id, beadsDir string) error {
 		args = append(args, "--session="+sessionID)
 	}
 
-	_, err := runBdCommand(args, m.workDir, beadsDir)
+	// Run from workDir - bd uses cwd-based discovery and follows redirects
+	_, err := runBdCommand(args, m.workDir)
 	if err != nil {
 		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
 			return ErrMessageNotFound
@@ -437,7 +440,8 @@ func (m *Mailbox) MarkUnread(id string) error {
 func (m *Mailbox) markUnreadBeads(id string) error {
 	args := []string{"reopen", id}
 
-	_, err := runBdCommand(args, m.workDir, m.beadsDir)
+	// Run from workDir - bd uses cwd-based discovery and follows redirects
+	_, err := runBdCommand(args, m.workDir)
 	if err != nil {
 		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
 			return ErrMessageNotFound
@@ -827,7 +831,8 @@ func (m *Mailbox) ListByThread(threadID string) ([]*Message, error) {
 func (m *Mailbox) listByThreadBeads(threadID string) ([]*Message, error) {
 	args := []string{"message", "thread", threadID, "--json"}
 
-	stdout, err := runBdCommand(args, m.workDir, m.beadsDir, "BD_IDENTITY="+m.identity)
+	// Run from workDir - bd uses cwd-based discovery and follows redirects
+	stdout, err := runBdCommand(args, m.workDir, "BD_IDENTITY="+m.identity)
 	if err != nil {
 		return nil, err
 	}

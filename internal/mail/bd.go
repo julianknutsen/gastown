@@ -35,17 +35,17 @@ func (e *bdError) ContainsError(substr string) bool {
 }
 
 // runBdCommand executes a bd command with proper environment setup.
-// workDir is the directory to run the command in.
-// beadsDir is the BEADS_DIR environment variable value.
+// workDir is the directory to run the command in - bd uses cwd-based discovery
+// to find .beads (following redirect files if present).
 // extraEnv contains additional environment variables to set (e.g., "BD_IDENTITY=...").
 // Returns stdout bytes on success, or a *bdError on failure.
-func runBdCommand(args []string, workDir, beadsDir string, extraEnv ...string) ([]byte, error) {
+func runBdCommand(args []string, workDir string, extraEnv ...string) ([]byte, error) {
 	cmd := exec.Command("bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
 	cmd.Dir = workDir
 
-	env := append(cmd.Environ(), "BEADS_DIR="+beadsDir)
-	env = append(env, extraEnv...)
-	cmd.Env = env
+	if len(extraEnv) > 0 {
+		cmd.Env = append(cmd.Environ(), extraEnv...)
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
@@ -145,7 +144,6 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 			Rig:              r.Name,
 			AgentName:        name,
 			TownRoot:         townRoot,
-			BeadsDir:         beads.ResolveBeadsDir(r.Path),
 			RuntimeConfigDir: claudeConfigDir,
 			BeadsNoDaemon:    true,
 		})

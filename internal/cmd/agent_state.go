@@ -216,9 +216,9 @@ func modifyAgentState(agentBead, beadsDir string, hasIncr bool) error {
 		args = append(args, "--set-labels=")
 	}
 
-	// Execute bd update
+	// Execute bd update - uses cwd-based discovery + routes.jsonl for prefixed IDs
 	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	cmd.Dir = beadsDir // Run from beads directory for cwd-based discovery
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -261,8 +261,9 @@ func getAgentLabels(agentBead, beadsDir string) (map[string]string, error) {
 func getAllAgentLabels(agentBead, beadsDir string) ([]string, error) {
 	args := []string{"show", agentBead, "--json"}
 
+	// Uses cwd-based discovery + routes.jsonl for prefixed IDs
 	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	cmd.Dir = beadsDir // Run from beads directory for cwd-based discovery
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

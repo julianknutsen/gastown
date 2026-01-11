@@ -854,10 +854,9 @@ func (d *Daemon) restartPolecatSession(rigName, polecatName, sessionName string)
 	envVars := config.AgentEnvSimple("polecat", rigName, polecatName)
 
 	// Add polecat-specific beads configuration
-	// Use ResolveBeadsDir to follow redirects for repos with tracked beads
+	// Note: BEADS_DIR is NOT set - use cwd-based discovery instead.
+	// The polecat runs from rigPath which has .beads (possibly with redirects).
 	rigPath := filepath.Join(d.config.TownRoot, rigName)
-	beadsDir := beads.ResolveBeadsDir(rigPath)
-	envVars["BEADS_DIR"] = beadsDir
 	envVars["BEADS_NO_DAEMON"] = "1"
 	envVars["BEADS_AGENT_NAME"] = fmt.Sprintf("%s/%s", rigName, polecatName)
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -142,8 +141,6 @@ func matchWorkerPattern(pattern, caller string) bool {
 // listQueueMessages lists unclaimed messages in a queue.
 func listQueueMessages(townRoot, queueAssignee string) ([]queueMessage, error) {
 	// Use bd list to find messages with assignee=queue:<name> and status=open
-	beadsDir := filepath.Join(townRoot, ".beads")
-
 	args := []string{"list",
 		"--assignee", queueAssignee,
 		"--status", "open",
@@ -154,7 +151,7 @@ func listQueueMessages(townRoot, queueAssignee string) ([]queueMessage, error) {
 	}
 
 	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	cmd.Dir = townRoot // Run from town root for cwd-based discovery
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -218,18 +215,14 @@ func listQueueMessages(townRoot, queueAssignee string) ([]queueMessage, error) {
 
 // claimMessage claims a message by setting assignee and status.
 func claimMessage(townRoot, messageID, claimant string) error {
-	beadsDir := filepath.Join(townRoot, ".beads")
-
 	args := []string{"update", messageID,
 		"--assignee", claimant,
 		"--status", "in_progress",
 	}
 
 	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(),
-		"BEADS_DIR="+beadsDir,
-		"BD_ACTOR="+claimant,
-	)
+	cmd.Dir = townRoot // Run from town root for cwd-based discovery
+	cmd.Env = append(os.Environ(), "BD_ACTOR="+claimant)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -301,12 +294,10 @@ type messageInfo struct {
 
 // getMessageInfo retrieves information about a message.
 func getMessageInfo(townRoot, messageID string) (*messageInfo, error) {
-	beadsDir := filepath.Join(townRoot, ".beads")
-
 	args := []string{"show", messageID, "--json"}
 
 	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	cmd.Dir = townRoot // Run from town root for cwd-based discovery
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -361,18 +352,14 @@ func getMessageInfo(townRoot, messageID string) (*messageInfo, error) {
 
 // releaseMessage releases a claimed message back to its queue.
 func releaseMessage(townRoot, messageID, queueAssignee, actor string) error {
-	beadsDir := filepath.Join(townRoot, ".beads")
-
 	args := []string{"update", messageID,
 		"--assignee", queueAssignee,
 		"--status", "open",
 	}
 
 	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(),
-		"BEADS_DIR="+beadsDir,
-		"BD_ACTOR="+actor,
-	)
+	cmd.Dir = townRoot // Run from town root for cwd-based discovery
+	cmd.Env = append(os.Environ(), "BD_ACTOR="+actor)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

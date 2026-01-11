@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
@@ -595,8 +596,7 @@ func sendHandoffMail(subject, message string) (string, error) {
 	}
 
 	cmd := exec.Command("bd", args...)
-	cmd.Dir = townRoot // Run from town root for town-level beads
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+filepath.Join(townRoot, ".beads"))
+	cmd.Dir = townRoot // Run from town root for cwd-based discovery
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
@@ -615,13 +615,13 @@ func sendHandoffMail(subject, message string) (string, error) {
 		return "", fmt.Errorf("bd create did not return bead ID")
 	}
 
-	// Auto-hook the created mail bead
-	hookCmd := exec.Command("bd", "update", beadID, "--status=hooked", "--assignee="+agentID)
-	hookCmd.Dir = townRoot
-	hookCmd.Env = append(os.Environ(), "BEADS_DIR="+filepath.Join(townRoot, ".beads"))
-	hookCmd.Stderr = os.Stderr
-
-	if err := hookCmd.Run(); err != nil {
+	// Auto-hook the created mail bead using interface (cwd-based discovery from townRoot)
+	bd := beads.New(townRoot)
+	hookedStatus := "hooked"
+	if err := bd.Update(beadID, beads.UpdateOptions{
+		Status:   &hookedStatus,
+		Assignee: &agentID,
+	}); err != nil {
 		// Non-fatal: mail was created, just couldn't hook
 		style.PrintWarning("created mail %s but failed to auto-hook: %v", beadID, err)
 		return beadID, nil
@@ -666,9 +666,11 @@ func looksLikeBeadID(s string) bool {
 
 // hookBeadForHandoff attaches a bead to the current agent's hook.
 func hookBeadForHandoff(beadID string) error {
+	// Use beads interface with cwd-based discovery
+	bd := beads.New(".")
+
 	// Verify the bead exists first
-	verifyCmd := exec.Command("bd", "show", beadID, "--json")
-	if err := verifyCmd.Run(); err != nil {
+	if _, err := bd.Show(beadID); err != nil {
 		return fmt.Errorf("bead '%s' not found", beadID)
 	}
 
@@ -685,10 +687,12 @@ func hookBeadForHandoff(beadID string) error {
 		return nil
 	}
 
-	// Pin the bead using bd update (discovery-based approach)
-	pinCmd := exec.Command("bd", "update", beadID, "--status=pinned", "--assignee="+agentID)
-	pinCmd.Stderr = os.Stderr
-	if err := pinCmd.Run(); err != nil {
+	// Pin the bead using interface (cwd-based discovery)
+	pinnedStatus := "pinned"
+	if err := bd.Update(beadID, beads.UpdateOptions{
+		Status:   &pinnedStatus,
+		Assignee: &agentID,
+	}); err != nil {
 		return fmt.Errorf("pinning bead: %w", err)
 	}
 

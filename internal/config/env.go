@@ -25,10 +25,6 @@ type AgentEnvConfig struct {
 	// Sets GT_ROOT environment variable.
 	TownRoot string
 
-	// BeadsDir is the resolved BEADS_DIR path.
-	// Callers should use beads.ResolveBeadsDir() to compute this.
-	BeadsDir string
-
 	// RuntimeConfigDir is the optional CLAUDE_CONFIG_DIR path
 	RuntimeConfigDir string
 
@@ -82,7 +78,8 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 	}
 
 	env["GT_ROOT"] = cfg.TownRoot
-	env["BEADS_DIR"] = cfg.BeadsDir
+	// Note: BEADS_DIR is NOT set globally. Use cwd-based discovery instead.
+	// Commands that need explicit BEADS_DIR (e.g., agent_state.go) set it directly.
 
 	// Set BEADS_AGENT_NAME for polecat/crew (uses same format as BD_ACTOR)
 	if cfg.Role == "polecat" || cfg.Role == "crew" {

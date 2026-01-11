@@ -24,23 +24,9 @@ func findMailWorkDir() (string, error) {
 // findLocalBeadsDir finds the nearest .beads directory by walking up from CWD.
 // Used for project work (molecules, issue creation) that uses clone beads.
 //
-// Priority:
-//  1. BEADS_DIR environment variable (set by session manager for polecats)
-//  2. Walk up from CWD looking for .beads directory
-//
-// Polecats use redirect-based beads access, so their worktree doesn't have a full
-// .beads directory. The session manager sets BEADS_DIR to the correct location.
+// Uses cwd-based discovery: walks up from CWD looking for .beads directory.
+// Polecats use redirect-based beads access via .beads/redirect files.
 func findLocalBeadsDir() (string, error) {
-	// Check BEADS_DIR environment variable first (set by session manager for polecats).
-	// This is important for polecats that use redirect-based beads access.
-	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
-		// BEADS_DIR points directly to the .beads directory, return its parent
-		if _, err := os.Stat(beadsDir); err == nil {
-			return filepath.Dir(beadsDir), nil
-		}
-	}
-
-	// Fallback: walk up from CWD
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
