@@ -12,6 +12,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -238,6 +239,57 @@ func createTrackedBeadsRepo(t *testing.T, path, prefix string) {
 	cmd.CombinedOutput()
 }
 
+// createTrackedBeadsRepoWithIssues creates a git repo with .beads/ tracked that contains existing issues.
+// This simulates a clone of a repo that has tracked beads with issues exported to issues.jsonl.
+// The beads.db is NOT included (gitignored), so prefix must be detected from issues.jsonl.
+func createTrackedBeadsRepoWithIssues(t *testing.T, path, prefix string, numIssues int) {
+	t.Helper()
+
+	// First create basic repo
+	createBareGitRepo(t, path)
+
+	// Initialize beads
+	beadsDir := filepath.Join(path, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+
+	// Run bd init
+	cmd := exec.Command("bd", "--no-daemon", "init", "--prefix", prefix)
+	cmd.Dir = path
+	cmd.Env = filterOutBeadsDir(os.Environ())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bd init failed: %v\nOutput: %s", err, output)
+	}
+
+	// Create issues
+	for i := 1; i <= numIssues; i++ {
+		cmd = exec.Command("bd", "--no-daemon", "-q", "create",
+			"--type", "task", "--title", fmt.Sprintf("Test issue %d", i))
+		cmd.Dir = path
+		cmd.Env = filterOutBeadsDir(os.Environ())
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("bd create issue %d failed: %v\nOutput: %s", i, err, output)
+		}
+	}
+
+	// Add .beads to git (simulating tracked beads)
+	cmd = exec.Command("git", "add", ".beads")
+	cmd.Dir = path
+	cmd.CombinedOutput()
+
+	cmd = exec.Command("git", "commit", "-m", "Add beads with issues")
+	cmd.Dir = path
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@test.com")
+	cmd.CombinedOutput()
+
+	// Remove beads.db to simulate what a clone would look like
+	// (beads.db is gitignored, so cloned repos don't have it)
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	os.Remove(dbPath)
+}
+
 // testTownAgentRouting tests bd operations from town-level agent directories
 func testTownAgentRouting(t *testing.T, townRoot string) {
 	// Debug: show routes.jsonl content
@@ -325,7 +377,6 @@ func testTrackedRigRouting(t *testing.T, townRoot string) {
 	trrigPath := filepath.Join(townRoot, "trrig")
 
 	t.Run("CreateOwnPrefixBead", func(t *testing.T) {
-		t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
 		// GitHub Issue #72: Tracked repo should use configured prefix, not directory name
 		// https://github.com/steveyegge/gastown/issues/72
 		//
@@ -356,7 +407,6 @@ func testTrackedRigRouting(t *testing.T, townRoot string) {
 	})
 
 	t.Run("FromMayorRigDir", func(t *testing.T) {
-		t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
 		// GitHub Issue #72: Tracked repo should use configured prefix
 		// https://github.com/steveyegge/gastown/issues/72
 
@@ -372,7 +422,6 @@ func testTrackedRigRouting(t *testing.T, townRoot string) {
 	})
 
 	t.Run("FromCrewWorktree", func(t *testing.T) {
-		t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
 		// GitHub Issue #72: Tracked repo should use configured prefix
 		// https://github.com/steveyegge/gastown/issues/72
 
@@ -393,10 +442,6 @@ func testTrackedRigRouting(t *testing.T, townRoot string) {
 
 // testCrossRigRouting tests reading beads across rigs via routes.jsonl
 func testCrossRigRouting(t *testing.T, townRoot string) {
-	// This test requires both tracked and untracked rigs to work.
-	// Tracked rig requires Bug 2 fix (bd init after clone).
-	t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
-
 	unrigPath := filepath.Join(townRoot, "unrig")
 	trrigPath := filepath.Join(townRoot, "trrig")
 
@@ -446,7 +491,6 @@ func testWorktreeRedirects(t *testing.T, townRoot string) {
 	})
 
 	t.Run("CrewSharesTrackedDb", func(t *testing.T) {
-		t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
 		trrigPath := filepath.Join(townRoot, "trrig")
 		crewDir := filepath.Join(trrigPath, "crew", "max")
 
@@ -655,7 +699,6 @@ func testDefaultPrefixBehavior(t *testing.T, townRoot string) {
 	})
 
 	t.Run("CreateFromTrackedRigUsesConfiguredPrefix", func(t *testing.T) {
-		t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
 		// GitHub Issue #72: Tracked rig should use configured prefix
 		// https://github.com/steveyegge/gastown/issues/72
 		//
@@ -675,10 +718,6 @@ func testDefaultPrefixBehavior(t *testing.T, townRoot string) {
 // database, not from other databases. This is important for agents that expect
 // to see only their own work.
 func testListIsolation(t *testing.T, townRoot string) {
-	// This test requires both tracked and untracked rigs to work.
-	// Tracked rig requires Bug 2 fix (bd init after clone).
-	t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
-
 	// Create unique beads in each location
 	deaconDir := filepath.Join(townRoot, "deacon")
 	unrigPath := filepath.Join(townRoot, "unrig")
@@ -759,16 +798,17 @@ func testExistingPrefixDetection(t *testing.T, gtBinary string) {
 		// GitHub Issue #72: gt rig add should detect existing prefix from tracked beads
 		// https://github.com/steveyegge/gastown/issues/72
 		//
-		// Currently FAILS: gt generates auto-abbreviated prefix instead of using existing one.
-		t.Skip("SKIP: Reproduces https://github.com/steveyegge/gastown/issues/72 - gt rig add should detect existing prefix")
+		// This tests that when a tracked beads repo has existing issues in issues.jsonl,
+		// gt rig add can detect the prefix from those issues WITHOUT --prefix flag.
 
 		townRoot := filepath.Join(tmpDir, "town-prefix-test")
 		reposDir := filepath.Join(tmpDir, "repos")
 		os.MkdirAll(reposDir, 0755)
 
-		// Create a repo with existing beads prefix "existing-prefix"
+		// Create a repo with existing beads prefix "existing-prefix" AND issues
+		// This creates issues.jsonl with issues like "existing-prefix-1", etc.
 		existingRepo := filepath.Join(reposDir, "existing-repo")
-		createTrackedBeadsRepo(t, existingRepo, "existing-prefix")
+		createTrackedBeadsRepoWithIssues(t, existingRepo, "existing-prefix", 3)
 
 		// Install town
 		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "prefix-test")
@@ -778,7 +818,7 @@ func testExistingPrefixDetection(t *testing.T, gtBinary string) {
 			t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
 		}
 
-		// Add rig WITHOUT specifying --prefix - should detect "existing-prefix"
+		// Add rig WITHOUT specifying --prefix - should detect "existing-prefix" from issues.jsonl
 		cmd = exec.Command(gtBinary, "rig", "add", "myrig", existingRepo)
 		cmd.Dir = townRoot
 		cmd.Env = filterOutBeadsDir(os.Environ())
@@ -793,13 +833,76 @@ func testExistingPrefixDetection(t *testing.T, gtBinary string) {
 			t.Fatalf("read routes.jsonl: %v", err)
 		}
 
-		if !strings.Contains(string(routesContent), `"prefix":"existing-prefix"`) {
-			t.Errorf("routes.jsonl should contain existing-prefix, got:\n%s", routesContent)
+		if !strings.Contains(string(routesContent), `"prefix":"existing-prefix-"`) {
+			t.Errorf("routes.jsonl should contain existing-prefix-, got:\n%s", routesContent)
+		}
+	})
+
+	t.Run("TrackedRepoWithNoIssuesRequiresPrefix", func(t *testing.T) {
+		// Regression test: When a tracked beads repo has NO issues (fresh init),
+		// gt rig add must use the --prefix flag since there's nothing to detect from.
+
+		townRoot := filepath.Join(tmpDir, "town-no-issues")
+		reposDir := filepath.Join(tmpDir, "repos-no-issues")
+		os.MkdirAll(reposDir, 0755)
+
+		// Create a tracked beads repo with NO issues (just bd init)
+		emptyRepo := filepath.Join(reposDir, "empty-repo")
+		createTrackedBeadsRepo(t, emptyRepo, "empty-prefix")
+		// Remove the db to simulate a clone
+		os.Remove(filepath.Join(emptyRepo, ".beads", "beads.db"))
+
+		// Install town
+		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "no-issues-test")
+		cmd.Env = filterOutBeadsDir(os.Environ())
+		cmd.Env = append(cmd.Env, "HOME="+tmpDir)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
+		}
+
+		// Add rig WITH --prefix since we can't detect from empty issues.jsonl
+		cmd = exec.Command(gtBinary, "rig", "add", "emptyrig", emptyRepo, "--prefix", "empty-prefix")
+		cmd.Dir = townRoot
+		cmd.Env = filterOutBeadsDir(os.Environ())
+		cmd.Env = append(cmd.Env, "HOME="+tmpDir)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("gt rig add with --prefix failed: %v\nOutput: %s", err, output)
+		}
+
+		// Verify routes.jsonl has the prefix
+		routesContent, err := os.ReadFile(filepath.Join(townRoot, ".beads", "routes.jsonl"))
+		if err != nil {
+			t.Fatalf("read routes.jsonl: %v", err)
+		}
+
+		if !strings.Contains(string(routesContent), `"prefix":"empty-prefix-"`) {
+			t.Errorf("routes.jsonl should contain empty-prefix-, got:\n%s", routesContent)
+		}
+
+		// Verify bd operations work with the configured prefix
+		rigPath := filepath.Join(townRoot, "emptyrig")
+		cmd = exec.Command("bd", "--no-daemon", "--json", "-q", "create",
+			"--type", "task", "--title", "test-from-empty-repo")
+		cmd.Dir = rigPath
+		cmd.Env = filterOutBeadsDir(os.Environ())
+		output, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("bd create failed: %v", err)
+		}
+
+		var result struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(output, &result); err != nil {
+			t.Fatalf("parse output: %v", err)
+		}
+
+		if !strings.HasPrefix(result.ID, "empty-prefix-") {
+			t.Errorf("expected empty-prefix- prefix, got %s", result.ID)
 		}
 	})
 
 	t.Run("TrackedRepoUsesCorrectPrefixForOperations", func(t *testing.T) {
-		t.Skip("Requires fix: tracked beads must run bd init to create database after clone")
 		// Related to GitHub Issue #72: After cloning tracked beads, operations should
 		// use the correct prefix from config, not directory name.
 		// https://github.com/steveyegge/gastown/issues/72
