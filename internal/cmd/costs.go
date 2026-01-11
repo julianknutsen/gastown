@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (
@@ -354,6 +355,13 @@ type EventListItem struct {
 
 // querySessionEvents queries beads for session.ended events and converts them to CostEntry.
 func querySessionEvents() ([]CostEntry, error) {
+	// Discover town root for cwd-based bd discovery
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		// Not in a Gas Town workspace - return empty list
+		return nil, nil
+	}
+
 	// Step 1: Get list of event IDs
 	listArgs := []string{
 		"list",
@@ -364,6 +372,7 @@ func querySessionEvents() ([]CostEntry, error) {
 	}
 
 	listCmd := exec.Command("bd", listArgs...)
+	listCmd.Dir = townRoot // Run from town root for cwd-based discovery
 	listOutput, err := listCmd.Output()
 	if err != nil {
 		// If bd fails (e.g., no beads database), return empty list
@@ -387,6 +396,7 @@ func querySessionEvents() ([]CostEntry, error) {
 	}
 
 	showCmd := exec.Command("bd", showArgs...)
+	showCmd.Dir = townRoot // Run from town root for cwd-based discovery
 	showOutput, err := showCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("showing events: %w", err)
