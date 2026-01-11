@@ -14,14 +14,14 @@ import (
 
 // PatrolConfig holds role-specific patrol configuration.
 type PatrolConfig struct {
-	RoleName      string   // "deacon", "witness", "refinery"
-	PatrolMolName string   // "mol-deacon-patrol", etc.
-	BeadsDir      string   // where to look for beads
-	Assignee      string   // agent identity for pinning
-	HeaderEmoji   string   // display emoji
-	HeaderTitle   string   // "Patrol Status", etc.
-	WorkLoopSteps []string // role-specific instructions
-	CheckInProgress bool   // whether to check in_progress status first (witness/refinery do, deacon doesn't)
+	RoleName        string   // "deacon", "witness", "refinery"
+	PatrolMolName   string   // "mol-deacon-patrol", etc.
+	WorkDir         string   // working directory for bd commands (cwd-based discovery)
+	Assignee        string   // agent identity for pinning
+	HeaderEmoji     string   // display emoji
+	HeaderTitle     string   // "Patrol Status", etc.
+	WorkLoopSteps   []string // role-specific instructions
+	CheckInProgress bool     // whether to check in_progress status first (witness/refinery do, deacon doesn't)
 }
 
 // findActivePatrol finds an active patrol molecule for the role.
@@ -30,7 +30,7 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 	// Check for in-progress patrol first (if configured)
 	if cfg.CheckInProgress {
 		cmdList := exec.Command("bd", "--no-daemon", "list", "--status=in_progress", "--type=epic")
-		cmdList.Dir = cfg.BeadsDir
+		cmdList.Dir = cfg.WorkDir
 		var stdoutList, stderrList bytes.Buffer
 		cmdList.Stdout = &stdoutList
 		cmdList.Stderr = &stderrList
@@ -54,7 +54,7 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 
 	// Check for open patrols with open children (active wisp)
 	cmdOpen := exec.Command("bd", "--no-daemon", "list", "--status=open", "--type=epic")
-	cmdOpen.Dir = cfg.BeadsDir
+	cmdOpen.Dir = cfg.WorkDir
 	var stdoutOpen, stderrOpen bytes.Buffer
 	cmdOpen.Stdout = &stdoutOpen
 	cmdOpen.Stderr = &stderrOpen
@@ -72,7 +72,7 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 					molID := parts[0]
 					// Check if this molecule has open children
 					cmdShow := exec.Command("bd", "--no-daemon", "show", molID)
-					cmdShow.Dir = cfg.BeadsDir
+					cmdShow.Dir = cfg.WorkDir
 					var stdoutShow, stderrShow bytes.Buffer
 					cmdShow.Stdout = &stdoutShow
 					cmdShow.Stderr = &stderrShow
@@ -104,7 +104,7 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 	// Find the proto ID for the patrol molecule
 	cmdCatalog := exec.Command("bd", "--no-daemon", "mol", "catalog")
-	cmdCatalog.Dir = cfg.BeadsDir
+	cmdCatalog.Dir = cfg.WorkDir
 	var stdoutCatalog, stderrCatalog bytes.Buffer
 	cmdCatalog.Stdout = &stdoutCatalog
 	cmdCatalog.Stderr = &stderrCatalog
@@ -137,7 +137,7 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 
 	// Create the patrol wisp
 	cmdSpawn := exec.Command("bd", "--no-daemon", "mol", "wisp", "create", protoID, "--actor", cfg.RoleName)
-	cmdSpawn.Dir = cfg.BeadsDir
+	cmdSpawn.Dir = cfg.WorkDir
 	var stdoutSpawn, stderrSpawn bytes.Buffer
 	cmdSpawn.Stdout = &stdoutSpawn
 	cmdSpawn.Stderr = &stderrSpawn
@@ -167,7 +167,7 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 
 	// Hook the wisp to the agent so gt mol status sees it
 	cmdPin := exec.Command("bd", "--no-daemon", "update", patrolID, "--status=hooked", "--assignee="+cfg.Assignee)
-	cmdPin.Dir = cfg.BeadsDir
+	cmdPin.Dir = cfg.WorkDir
 	if err := cmdPin.Run(); err != nil {
 		return patrolID, fmt.Errorf("created wisp %s but failed to hook", patrolID)
 	}

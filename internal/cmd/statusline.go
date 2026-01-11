@@ -108,8 +108,8 @@ func runWorkerStatusLine(t *tmux.Tmux, session, rigName, polecat, crew, issue st
 	// Priority 1: Check for hooked work (use rig beads)
 	hookedWork := ""
 	if identity != "" && rigName != "" && townRoot != "" {
-		rigBeadsDir := filepath.Join(townRoot, rigName, "mayor", "rig")
-		hookedWork = getHookedWork(identity, 40, rigBeadsDir)
+		rigWorkDir := filepath.Join(townRoot, rigName, "mayor", "rig")
+		hookedWork = getHookedWork(identity, 40, rigWorkDir)
 	}
 
 	// Priority 2: Fall back to GT_ISSUE env var or in_progress beads
@@ -401,8 +401,8 @@ func runWitnessStatusLine(t *tmux.Tmux, rigName string) error {
 	// Priority 1: Check for hooked work (rig beads for witness)
 	hookedWork := ""
 	if townRoot != "" && rigName != "" {
-		rigBeadsDir := filepath.Join(townRoot, rigName, "mayor", "rig")
-		hookedWork = getHookedWork(identity, 30, rigBeadsDir)
+		rigWorkDir := filepath.Join(townRoot, rigName, "mayor", "rig")
+		hookedWork = getHookedWork(identity, 30, rigWorkDir)
 	}
 	if hookedWork != "" {
 		parts = append(parts, fmt.Sprintf("🪝 %s", hookedWork))
@@ -492,8 +492,8 @@ func runRefineryStatusLine(t *tmux.Tmux, rigName string) error {
 	// Priority 1: Check for hooked work (rig beads for refinery)
 	hookedWork := ""
 	if townRoot != "" && rigName != "" {
-		rigBeadsDir := filepath.Join(townRoot, rigName, "mayor", "rig")
-		hookedWork = getHookedWork(identity, 25, rigBeadsDir)
+		rigWorkDir := filepath.Join(townRoot, rigName, "mayor", "rig")
+		hookedWork = getHookedWork(identity, 25, rigWorkDir)
 	}
 	if hookedWork != "" {
 		parts = append(parts, fmt.Sprintf("🪝 %s", hookedWork))
@@ -581,19 +581,19 @@ func getMailPreviewWithRoot(identity string, maxLen int, townRoot string) (int, 
 
 // getHookedWork returns a truncated title of the hooked bead for an agent.
 // Returns empty string if nothing is hooked.
-// beadsDir should be the directory containing .beads (for rig-level) or
-// empty to use the town root (for town-level roles).
-func getHookedWork(identity string, maxLen int, beadsDir string) string {
-	// If no beadsDir specified, use town root
-	if beadsDir == "" {
+// workDir is the working directory for cwd-based discovery (bd finds .beads from here).
+// Pass empty string to use the town root for town-level roles.
+func getHookedWork(identity string, maxLen int, workDir string) string {
+	// If no workDir specified, use town root
+	if workDir == "" {
 		var err error
-		beadsDir, err = findMailWorkDir()
+		workDir, err = findMailWorkDir()
 		if err != nil {
 			return ""
 		}
 	}
 
-	b := beads.New(beadsDir)
+	b := beads.New(workDir)
 
 	// Query for hooked beads assigned to this agent
 	hookedBeads, err := b.List(beads.ListOptions{

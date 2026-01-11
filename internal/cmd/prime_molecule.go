@@ -240,7 +240,7 @@ func outputDeaconPatrolContext(ctx RoleContext) {
 	cfg := PatrolConfig{
 		RoleName:        "deacon",
 		PatrolMolName:   "mol-deacon-patrol",
-		BeadsDir:        ctx.TownRoot, // Town-level role uses town root beads
+		WorkDir:         ctx.TownRoot, // Town-level role uses town root for cwd-based discovery
 		Assignee:        "deacon",
 		HeaderEmoji:     "🔄",
 		HeaderTitle:     "Patrol Status (Wisp-based)",
@@ -262,7 +262,7 @@ func outputWitnessPatrolContext(ctx RoleContext) {
 	cfg := PatrolConfig{
 		RoleName:        "witness",
 		PatrolMolName:   "mol-witness-patrol",
-		BeadsDir:        ctx.WorkDir,
+		WorkDir:         ctx.WorkDir,
 		Assignee:        ctx.Rig + "/witness",
 		HeaderEmoji:     constants.EmojiWitness,
 		HeaderTitle:     "Witness Patrol Status",
@@ -285,7 +285,7 @@ func outputRefineryPatrolContext(ctx RoleContext) {
 	cfg := PatrolConfig{
 		RoleName:        "refinery",
 		PatrolMolName:   "mol-refinery-patrol",
-		BeadsDir:        ctx.WorkDir,
+		WorkDir:         ctx.WorkDir,
 		Assignee:        ctx.Rig + "/refinery",
 		HeaderEmoji:     "🔧",
 		HeaderTitle:     "Refinery Patrol Status",
