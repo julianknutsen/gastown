@@ -42,7 +42,8 @@ type ConvoyState struct {
 
 // FetchConvoys retrieves convoy status from town-level beads
 func FetchConvoys(townRoot string) (*ConvoyState, error) {
-	townBeads := filepath.Join(townRoot, ".beads")
+	// townBeadsDir is the resolved .beads path (for direct file access like beads.db)
+	townBeadsDir := filepath.Join(townRoot, ".beads")
 
 	state := &ConvoyState{
 		InProgress: make([]Convoy, 0),
@@ -50,8 +51,8 @@ func FetchConvoys(townRoot string) (*ConvoyState, error) {
 		LastUpdate: time.Now(),
 	}
 
-	// Fetch open convoys
-	openConvoys, err := listConvoys(townBeads, "open")
+	// Fetch open convoys - run bd from townRoot (cwd-based discovery)
+	openConvoys, err := listConvoys(townRoot, "open")
 	if err != nil {
 		// Not a fatal error - just return empty state
 		return state, nil
@@ -59,16 +60,16 @@ func FetchConvoys(townRoot string) (*ConvoyState, error) {
 
 	for _, c := range openConvoys {
 		// Get detailed status for each convoy
-		convoy := enrichConvoy(townBeads, c)
+		convoy := enrichConvoy(townBeadsDir, c)
 		state.InProgress = append(state.InProgress, convoy)
 	}
 
 	// Fetch recently closed convoys (landed in last 24h)
-	closedConvoys, err := listConvoys(townBeads, "closed")
+	closedConvoys, err := listConvoys(townRoot, "closed")
 	if err == nil {
 		cutoff := time.Now().Add(-24 * time.Hour)
 		for _, c := range closedConvoys {
-			convoy := enrichConvoy(townBeads, c)
+			convoy := enrichConvoy(townBeadsDir, c)
 			if !convoy.ClosedAt.IsZero() && convoy.ClosedAt.After(cutoff) {
 				state.Landed = append(state.Landed, convoy)
 			}
@@ -87,14 +88,15 @@ func FetchConvoys(townRoot string) (*ConvoyState, error) {
 }
 
 // listConvoys returns convoys with the given status
-func listConvoys(beadsDir, status string) ([]convoyListItem, error) {
+func listConvoys(workDir, status string) ([]convoyListItem, error) {
 	listArgs := []string{"list", "--type=convoy", "--status=" + status, "--json"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), convoySubprocessTimeout)
 	defer cancel()
 
+	// Run bd from workDir - uses cwd-based discovery to find .beads
 	cmd := exec.CommandContext(ctx, "bd", listArgs...) //nolint:gosec // G204: args are constructed internally
-	cmd.Dir = beadsDir
+	cmd.Dir = workDir
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 
@@ -118,7 +120,8 @@ type convoyListItem struct {
 	ClosedAt  string `json:"closed_at,omitempty"`
 }
 
-// enrichConvoy adds tracked issue counts to a convoy
+// enrichConvoy adds tracked issue counts to a convoy.
+// beadsDir is the resolved .beads directory path (for direct file access).
 func enrichConvoy(beadsDir string, item convoyListItem) Convoy {
 	convoy := Convoy{
 		ID:     item.ID,

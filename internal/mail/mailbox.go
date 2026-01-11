@@ -84,7 +84,7 @@ func (m *Mailbox) List() ([]*Message, error) {
 func (m *Mailbox) listBeads() ([]*Message, error) {
 	// Single query to beads - returns both persistent and wisp messages
 	// Wisps are stored in same DB with wisp=true flag, filtered from JSONL export
-	messages, err := m.listFromDir(m.beadsDir)
+	messages, err := m.listFromDir()
 	if err != nil {
 		return nil, err
 	}
@@ -97,11 +97,11 @@ func (m *Mailbox) listBeads() ([]*Message, error) {
 	return messages, nil
 }
 
-// listFromDir queries messages from a beads directory.
+// listFromDir queries messages from beads.
 // Returns messages where identity is the assignee OR a CC recipient.
 // Includes both open and hooked messages (hooked = auto-assigned handoff mail).
 // If all queries fail, returns the last error encountered.
-func (m *Mailbox) listFromDir(beadsDir string) ([]*Message, error) {
+func (m *Mailbox) listFromDir() ([]*Message, error) {
 	seen := make(map[string]bool)
 	var messages []*Message
 	var lastErr error
@@ -113,7 +113,7 @@ func (m *Mailbox) listFromDir(beadsDir string) ([]*Message, error) {
 	// Query for each identity variant in both open and hooked statuses
 	for _, identity := range identities {
 		for _, status := range []string{"open", "hooked"} {
-			msgs, err := m.queryMessages(beadsDir, "--assignee", identity, status)
+			msgs, err := m.queryMessages("--assignee", identity, status)
 			if err != nil {
 				lastErr = err
 			} else {
@@ -130,7 +130,7 @@ func (m *Mailbox) listFromDir(beadsDir string) ([]*Message, error) {
 
 	// Query for CC'd messages (open only)
 	for _, identity := range identities {
-		ccMsgs, err := m.queryMessages(beadsDir, "--label", "cc:"+identity, "open")
+		ccMsgs, err := m.queryMessages("--label", "cc:"+identity, "open")
 		if err != nil {
 			lastErr = err
 		} else {
@@ -169,7 +169,7 @@ func (m *Mailbox) identityVariants() []string {
 }
 
 // queryMessages runs a bd list query with the given filter flag and value.
-func (m *Mailbox) queryMessages(beadsDir, filterFlag, filterValue, status string) ([]*Message, error) {
+func (m *Mailbox) queryMessages(filterFlag, filterValue, status string) ([]*Message, error) {
 	args := []string{"list",
 		"--type", "message",
 		filterFlag, filterValue,
@@ -267,12 +267,6 @@ func (m *Mailbox) Get(id string) (*Message, error) {
 }
 
 func (m *Mailbox) getBeads(id string) (*Message, error) {
-	// Single DB query - wisps and persistent messages in same store
-	return m.getFromDir(id, m.beadsDir)
-}
-
-// getFromDir retrieves a message from a beads directory.
-func (m *Mailbox) getFromDir(id, beadsDir string) (*Message, error) {
 	args := []string{"show", id, "--json"}
 
 	// Run from workDir - bd uses cwd-based discovery and follows redirects
@@ -319,12 +313,6 @@ func (m *Mailbox) MarkRead(id string) error {
 }
 
 func (m *Mailbox) markReadBeads(id string) error {
-	// Single DB - wisps and persistent messages in same store
-	return m.closeInDir(id, m.beadsDir)
-}
-
-// closeInDir closes a message in a specific beads directory.
-func (m *Mailbox) closeInDir(id, beadsDir string) error {
 	args := []string{"close", id}
 	// Pass session ID for work attribution if available
 	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
@@ -379,7 +367,8 @@ func (m *Mailbox) markReadOnlyBeads(id string) error {
 	// Add "read" label to mark as read without closing
 	args := []string{"label", "add", id, "read"}
 
-	_, err := runBdCommand(args, m.workDir, m.beadsDir)
+	// Run from workDir - bd uses cwd-based discovery and follows redirects
+	_, err := runBdCommand(args, m.workDir)
 	if err != nil {
 		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
 			return ErrMessageNotFound
@@ -404,7 +393,8 @@ func (m *Mailbox) markUnreadOnlyBeads(id string) error {
 	// Remove "read" label to mark as unread
 	args := []string{"label", "remove", id, "read"}
 
-	_, err := runBdCommand(args, m.workDir, m.beadsDir)
+	// Run from workDir - bd uses cwd-based discovery and follows redirects
+	_, err := runBdCommand(args, m.workDir)
 	if err != nil {
 		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
 			return ErrMessageNotFound

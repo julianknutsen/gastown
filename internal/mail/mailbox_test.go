@@ -374,16 +374,6 @@ func TestMailboxPersistence(t *testing.T) {
 	}
 }
 
-func TestNewMailboxWithBeadsDir(t *testing.T) {
-	m := NewMailboxWithBeadsDir("gastown/Toast", "/work/dir", "/custom/.beads")
-	if m.identity != "gastown/Toast" {
-		t.Errorf("identity = %q, want 'gastown/Toast'", m.identity)
-	}
-	if m.beadsDir != "/custom/.beads" {
-		t.Errorf("beadsDir = %q, want '/custom/.beads'", m.beadsDir)
-	}
-}
-
 func TestMailboxLegacyMultipleOperations(t *testing.T) {
 	tmpDir := t.TempDir()
 	m := NewMailbox(tmpDir)
