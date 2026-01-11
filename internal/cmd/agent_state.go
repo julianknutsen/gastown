@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -92,15 +91,10 @@ type agentStateResult struct {
 func runAgentState(cmd *cobra.Command, args []string) error {
 	agentBead := args[0]
 
-	// Find beads directory
+	// Get working directory for cwd-based beads discovery
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
-	}
-
-	// Validate we're in a beads workspace
-	if beads.ResolveBeadsDir(cwd) == "" {
-		return fmt.Errorf("not in a beads workspace")
 	}
 
 	// Determine operation mode

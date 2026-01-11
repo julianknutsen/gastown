@@ -56,7 +56,7 @@ func runCrewAdd(cmd *cobra.Command, args []string) error {
 	crewGit := git.NewGit(r.Path)
 	crewMgr := crew.NewManager(r, crewGit)
 
-	bd := beads.New(beads.ResolveBeadsDir(r.Path))
+	bd := beads.New(r.Path)
 
 	// Track results
 	var created []string

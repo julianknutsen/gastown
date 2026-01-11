@@ -174,8 +174,8 @@ func runDone(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
 		}
 
-		// Initialize beads
-		bd := beads.New(beads.ResolveBeadsDir(cwd))
+		// Initialize beads - bd uses cwd-based discovery and follows redirects
+		bd := beads.New(cwd)
 
 		// Determine target branch (auto-detect integration branch if applicable)
 		target := defaultBranch
@@ -271,7 +271,7 @@ func runDone(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s\n", style.Dim.Render("Witness will dispatch new polecat when gate closes."))
 
 		// Register this polecat as a waiter on the gate
-		bd := beads.New(beads.ResolveBeadsDir(cwd))
+		bd := beads.New(cwd)
 		if err := bd.AddGateWaiter(doneGate, sender); err != nil {
 			style.PrintWarning("could not register as gate waiter: %v", err)
 		} else {
@@ -461,7 +461,7 @@ func getDispatcherFromBead(cwd, issueID string) string {
 		return ""
 	}
 
-	bd := beads.New(beads.ResolveBeadsDir(cwd))
+	bd := beads.New(cwd)
 	issue, err := bd.Show(issueID)
 	if err != nil {
 		return ""

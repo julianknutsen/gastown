@@ -51,11 +51,9 @@ type Manager struct {
 
 // NewManager creates a new polecat manager.
 func NewManager(r *rig.Rig, g *git.Git) *Manager {
-	// Use the resolved beads directory to find where bd commands should run.
-	// For tracked beads: rig/.beads/redirect -> mayor/rig/.beads, so use mayor/rig
-	// For local beads: rig/.beads is the database, so use rig root
-	resolvedBeads := beads.ResolveBeadsDir(r.Path)
-	beadsPath := filepath.Dir(resolvedBeads) // Get the directory containing .beads
+	// bd uses cwd-based discovery and follows redirects automatically.
+	// Just pass the rig path - bd will find .beads and follow any redirect.
+	beadsPath := r.Path
 
 	// Try to load rig settings for namepool config
 	settingsPath := filepath.Join(r.Path, "settings", "config.json")
