@@ -244,3 +244,40 @@ func IsAgentSessionBead(beadID string) bool {
 		return false
 	}
 }
+
+// Role classification helpers for GetAgent API
+
+// IsTownLevelRole returns true if the role is a town-level agent (no rig).
+func IsTownLevelRole(role string) bool {
+	switch role {
+	case "mayor", "deacon":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsRigSingletonRole returns true if the role is a rig-level singleton (no name).
+func IsRigSingletonRole(role string) bool {
+	switch role {
+	case "witness", "refinery":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsNamedRole returns true if the role requires a worker name.
+func IsNamedRole(role string) bool {
+	switch role {
+	case "crew", "polecat":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsValidAgentRole returns true if the role is a known agent role type.
+func IsValidAgentRole(role string) bool {
+	return IsTownLevelRole(role) || IsRigSingletonRole(role) || IsNamedRole(role)
+}

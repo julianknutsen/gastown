@@ -83,6 +83,28 @@ func (b *Beads) GetRoleConfig(roleBeadID string) (*RoleConfig, error) {
 	return ParseRoleConfig(issue.Description), nil
 }
 
+// GetRoleConfigByType retrieves a role configuration by role type.
+// Valid role types: mayor, deacon, dog, witness, refinery, polecat, crew.
+// Returns nil, nil if the role bead doesn't exist.
+func (b *Beads) GetRoleConfigByType(roleType string) (*RoleConfig, error) {
+	if roleType == "" {
+		return nil, fmt.Errorf("role type cannot be empty")
+	}
+	if !IsValidAgentRole(roleType) && roleType != "dog" {
+		return nil, fmt.Errorf("invalid role type %q (valid: mayor, deacon, dog, witness, refinery, polecat, crew)", roleType)
+	}
+
+	roleBeadID := RoleBeadIDTown(roleType)
+	issue, err := b.Show(roleBeadID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return ParseRoleConfig(issue.Description), nil
+}
+
 // HasLabel checks if an issue has a specific label.
 func HasLabel(issue *Issue, label string) bool {
 	for _, l := range issue.Labels {

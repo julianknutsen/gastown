@@ -15,8 +15,8 @@ func TestNew(t *testing.T) {
 	if b == nil {
 		t.Fatal("New returned nil")
 	}
-	if b.workDir != "/some/path" {
-		t.Errorf("workDir = %q, want /some/path", b.workDir)
+	if b.townRoot != "/some/path" {
+		t.Errorf("townRoot = %q, want /some/path", b.townRoot)
 	}
 }
 

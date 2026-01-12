@@ -3,7 +3,6 @@ package beads
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -124,9 +123,11 @@ func ParseAgentFields(description string) *AgentFields {
 	return fields
 }
 
-// CreateAgentBead creates an agent bead for tracking agent lifecycle.
+// CreateAgentBead creates an agent bead with an explicit ID.
+// For new code using ForRig() context, prefer CreateRigAgent() which auto-generates the ID.
+// For ForTown() context, prefer CreateTownAgent().
+//
 // The ID format is: <prefix>-<rig>-<role>-<name> (e.g., gt-gastown-polecat-Toast)
-// Use AgentBeadID() helper to generate correct IDs.
 // The created_by field is populated from BD_ACTOR env var for provenance tracking.
 //
 // NOTE: This method extracts the prefix from the ID and passes --prefix to bd
@@ -225,6 +226,61 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 
 	// Return the updated bead
 	return b.Show(id)
+}
+
+// CreateRigAgent creates a rig-level agent bead with auto-generated ID.
+// Requires ForRig() context - returns error if used with New() or ForTown().
+//
+// ID format: {prefix}-{rigName}-{roleType}-{name}
+// Example: ForRig(rigPath, "gastown", townRoot).CreateRigAgent("polecat", "Toast", "Polecat Toast", fields)
+// Creates: gt-gastown-polecat-Toast
+//
+// For singleton agents (witness, refinery), pass empty name and it will be omitted from the ID.
+func (b *Beads) CreateRigAgent(roleType, name, title string, fields *AgentFields) (*Issue, error) {
+	if !b.IsRig() {
+		return nil, fmt.Errorf("CreateRigAgent requires rig context (got rigPrefix=%q, rigName=%q)", b.rigPrefix, b.rigName)
+	}
+
+	var id string
+	if name == "" {
+		// Singleton agent: {prefix}-{rigName}-{roleType}
+		id = fmt.Sprintf("%s-%s-%s", b.rigPrefix, b.rigName, roleType)
+	} else {
+		// Named agent: {prefix}-{rigName}-{roleType}-{name}
+		id = fmt.Sprintf("%s-%s-%s-%s", b.rigPrefix, b.rigName, roleType, name)
+	}
+
+	return b.CreateAgentBead(id, title, fields)
+}
+
+// CreateOrReopenRigAgentBead creates or reopens a rig-level agent bead.
+// Requires ForRig() context. See CreateRigAgent for ID format.
+// This handles re-spawning where a tombstone exists from a previous agent.
+func (b *Beads) CreateOrReopenRigAgentBead(roleType, name, title string, fields *AgentFields) (*Issue, error) {
+	if !b.IsRig() {
+		return nil, fmt.Errorf("CreateOrReopenRigAgentBead requires rig context (got rigPrefix=%q, rigName=%q)", b.rigPrefix, b.rigName)
+	}
+
+	var id string
+	if name == "" {
+		id = fmt.Sprintf("%s-%s-%s", b.rigPrefix, b.rigName, roleType)
+	} else {
+		id = fmt.Sprintf("%s-%s-%s-%s", b.rigPrefix, b.rigName, roleType, name)
+	}
+
+	return b.CreateOrReopenAgentBead(id, title, fields)
+}
+
+// CreateTownAgent creates a town-level agent bead (mayor, deacon).
+// Can be called on any Beads instance (town operations are always available).
+//
+// ID format: {TownBeadsPrefix}-{roleType}
+// Example: New(townRoot).CreateTownAgent("deacon", "Deacon agent", fields)
+// Creates: hq-deacon
+func (b *Beads) CreateTownAgent(roleType, title string, fields *AgentFields) (*Issue, error) {
+	// All Beads instances can do town operations, no context check needed
+	id := fmt.Sprintf("%s-%s", TownBeadsPrefix, roleType)
+	return b.CreateAgentBead(id, title, fields)
 }
 
 // UpdateAgentState updates the agent_state field in an agent bead.
@@ -396,13 +452,10 @@ func (b *Beads) DeleteAgentBead(id string) error {
 }
 
 // GetAgentBead retrieves an agent bead by ID.
-// Returns nil if not found.
+// Returns ErrNotFound if the bead doesn't exist.
 func (b *Beads) GetAgentBead(id string) (*Issue, *AgentFields, error) {
 	issue, err := b.Show(id)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, nil, nil
-		}
 		return nil, nil, err
 	}
 
@@ -433,4 +486,60 @@ func (b *Beads) ListAgentBeads() (map[string]*Issue, error) {
 	}
 
 	return result, nil
+}
+
+// GetAgent retrieves an agent bead using the roleType and optional name.
+// The roleType determines the ID format:
+//   - Town-level (mayor, deacon): hq-{roleType}
+//   - Rig singletons (witness, refinery): {prefix}-{rigName}-{roleType}
+//   - Rig named (polecat, crew): {prefix}-{rigName}-{roleType}-{name}
+//
+// Returns (nil, nil, nil) if the agent doesn't exist.
+// Returns an error for invalid roleType, wrong context, or mismatched name usage.
+func (b *Beads) GetAgent(roleType string, name ...string) (*Issue, *AgentFields, error) {
+	hasName := len(name) > 0 && name[0] != ""
+	nameVal := ""
+	if hasName {
+		nameVal = name[0]
+	}
+
+	// Validate role type
+	if !IsValidAgentRole(roleType) {
+		return nil, nil, fmt.Errorf("invalid agent role %q (valid: mayor, deacon, witness, refinery, crew, polecat)", roleType)
+	}
+
+	// Town-level roles (mayor, deacon)
+	if IsTownLevelRole(roleType) {
+		if hasName {
+			return nil, nil, fmt.Errorf("town-level role %q does not take a name", roleType)
+		}
+		id := fmt.Sprintf("%s-%s", TownBeadsPrefix, roleType)
+		return b.GetAgentBead(id)
+	}
+
+	// Rig-level roles require rig context
+	if !b.IsRig() {
+		return nil, nil, fmt.Errorf("role %q requires rig context", roleType)
+	}
+
+	// Rig singleton roles (witness, refinery)
+	if IsRigSingletonRole(roleType) {
+		if hasName {
+			return nil, nil, fmt.Errorf("singleton role %q does not take a name", roleType)
+		}
+		id := fmt.Sprintf("%s-%s-%s", b.rigPrefix, b.rigName, roleType)
+		return b.GetAgentBead(id)
+	}
+
+	// Named roles (polecat, crew)
+	if IsNamedRole(roleType) {
+		if !hasName {
+			return nil, nil, fmt.Errorf("role %q requires name", roleType)
+		}
+		id := fmt.Sprintf("%s-%s-%s-%s", b.rigPrefix, b.rigName, roleType, nameVal)
+		return b.GetAgentBead(id)
+	}
+
+	// Should not reach here given IsValidAgentRole check above
+	return nil, nil, fmt.Errorf("unknown role %q", roleType)
 }

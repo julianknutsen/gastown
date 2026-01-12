@@ -11,6 +11,7 @@
 package cmd
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -70,6 +71,30 @@ func TestBeadsInterface(t *testing.T) {
 	})
 	t.Run("ExistingPrefixDetection", func(t *testing.T) {
 		testExistingPrefixDetection(t, gtBinary)
+	})
+	t.Run("ForRigConstructor", func(t *testing.T) {
+		testForRigConstructor(t, townRoot)
+	})
+	t.Run("ForTownConstructor", func(t *testing.T) {
+		testForTownConstructor(t, townRoot)
+	})
+	t.Run("ForRigCreateAgentBead", func(t *testing.T) {
+		testForRigCreateAgentBead(t, townRoot)
+	})
+	t.Run("ForRigWrongContext", func(t *testing.T) {
+		testForRigWrongContext(t, townRoot)
+	})
+	t.Run("ForTownCreateAgent", func(t *testing.T) {
+		testForTownCreateAgent(t, townRoot)
+	})
+	t.Run("TownOpsFromAnyContext", func(t *testing.T) {
+		testTownOpsFromAnyContext(t, townRoot)
+	})
+	t.Run("ForTownCreateConvoy", func(t *testing.T) {
+		testForTownCreateConvoy(t, townRoot)
+	})
+	t.Run("CreateNoIDFromRigContext", func(t *testing.T) {
+		testCreateNoIDFromRigContext(t, townRoot)
 	})
 }
 
@@ -550,39 +575,40 @@ func testCrossRigWriteRouting(t *testing.T, townRoot string) {
 }
 
 // testBeadsInterfaceCreateWithIDRouting tests that beads.CreateWithID routes correctly
-// via routes.jsonl. This verifies the fix for the --id routing bug.
+// using the workDir workaround for the bd --prefix+--id bug.
 func testBeadsInterfaceCreateWithIDRouting(t *testing.T, townRoot string) {
 	unrigPath := filepath.Join(townRoot, "unrig")
-	deaconDir := filepath.Join(townRoot, "deacon")
 
-	t.Run("CreateWithIDInTownFromUnrig", func(t *testing.T) {
-		// From unrig directory, use beads interface to create issue with hq- prefix ID
-		// This tests that CreateWithID extracts the prefix and passes --prefix to bd
-		db := beads.New(unrigPath)
+	t.Run("CreateWithIDInTownFromRigContext", func(t *testing.T) {
+		// From rig context, use beads interface to create issue with hq- prefix ID
+		// This tests that Create with explicit ID uses workDir based on prefix
+		// to work around the bd bug where --prefix+--id ignores the ID.
+		db := beads.New(townRoot, unrigPath)
 
 		customID := fmt.Sprintf("hq-test-%s", generateShortTestID())
-		issue, err := db.CreateWithID(customID, beads.CreateOptions{
-			Title: "Interface routing test",
+		issue, err := db.Create(beads.CreateOptions{
+			ID:    customID,
+			Title: "Interface routing test from rig",
 			Type:  "task",
 		})
 		if err != nil {
-			t.Fatalf("CreateWithID failed: %v", err)
+			t.Fatalf("Create with ID failed: %v", err)
 		}
 
 		if issue.ID != customID {
 			t.Errorf("Expected ID %q, got %q", customID, issue.ID)
 		}
 
-		// Verify the issue was created in town beads (accessible from deacon)
-		townDB := beads.New(deaconDir)
+		// Verify the issue was created in town beads
+		townDB := beads.New(townRoot)
 		found, err := townDB.Show(customID)
 		if err != nil {
 			t.Fatalf("Show from town failed: %v", err)
 		}
 		if found == nil {
-			t.Fatal("Issue not found in town beads - CreateWithID routing failed")
+			t.Fatal("Issue not found in town beads - Create routing failed")
 		}
-		t.Logf("Successfully created %s in town beads from unrig via beads.CreateWithID", customID)
+		t.Logf("Successfully created %s in town beads from rig context via beads.Create with ID", customID)
 	})
 }
 
@@ -1123,4 +1149,258 @@ func testExistingPrefixDetection(t *testing.T, gtBinary string) {
 		// issues with a specific prefix. More complex to set up.
 		t.Log("TODO: Implement sync branch prefix detection test")
 	})
+}
+
+// testForRigConstructor tests the ForRig constructor and helper methods.
+func testForRigConstructor(t *testing.T, townRoot string) {
+	rigPath := filepath.Join(townRoot, "unrig")
+
+	bd := beads.ForRig(rigPath, "unrig", townRoot)
+
+	if bd.RigPrefix() != "ur" {
+		t.Errorf("RigPrefix() = %q, want %q", bd.RigPrefix(), "ur")
+	}
+	if bd.RigName() != "unrig" {
+		t.Errorf("RigName() = %q, want %q", bd.RigName(), "unrig")
+	}
+	if !bd.IsBound() {
+		t.Error("IsBound() = false, want true")
+	}
+	if !bd.IsRig() {
+		t.Error("IsRig() = false, want true")
+	}
+	// With new API, IsTown() always returns true (all instances can do town ops)
+	if !bd.IsTown() {
+		t.Error("IsTown() = false, want true (all instances can do town ops)")
+	}
+}
+
+// testForTownConstructor tests the ForTown constructor and helper methods.
+func testForTownConstructor(t *testing.T, townRoot string) {
+	bd := beads.ForTown(townRoot)
+
+	// ForTown has no rig context, so RigPrefix is empty
+	if bd.RigPrefix() != "" {
+		t.Errorf("RigPrefix() = %q, want empty for ForTown", bd.RigPrefix())
+	}
+	if bd.RigName() != "" {
+		t.Errorf("RigName() = %q, want empty", bd.RigName())
+	}
+	// IsBound returns false for town-only (no rigPath)
+	if bd.IsBound() {
+		t.Error("IsBound() = true, want false for town-only")
+	}
+	if bd.IsRig() {
+		t.Error("IsRig() = true, want false")
+	}
+	if !bd.IsTown() {
+		t.Error("IsTown() = false, want true")
+	}
+}
+
+// testForRigCreateAgentBead tests creating agent beads with ForRig context.
+func testForRigCreateAgentBead(t *testing.T, townRoot string) {
+	rigPath := filepath.Join(townRoot, "unrig")
+	bd := beads.ForRig(rigPath, "unrig", townRoot)
+
+	// Test creating a named agent (like a polecat)
+	fields := &beads.AgentFields{
+		RoleType:   "polecat",
+		Rig:        "unrig",
+		AgentState: "spawning",
+	}
+	issue, err := bd.CreateRigAgent("polecat", "TestCat", "Test Polecat Agent", fields)
+	if err != nil {
+		t.Fatalf("CreateRigAgent failed: %v", err)
+	}
+
+	// Verify ID format: {prefix}-{rigName}-{roleType}-{name}
+	expectedID := "ur-unrig-polecat-TestCat"
+	if issue.ID != expectedID {
+		t.Errorf("ID = %q, want %q", issue.ID, expectedID)
+	}
+
+	// Verify it was created in the correct database
+	found, err := bd.Show(issue.ID)
+	if err != nil {
+		t.Fatalf("Show failed: %v", err)
+	}
+	if found.ID != expectedID {
+		t.Errorf("Show returned ID = %q, want %q", found.ID, expectedID)
+	}
+}
+
+// testForRigWrongContext tests that rig operations fail without rig context.
+func testForRigWrongContext(t *testing.T, townRoot string) {
+	// Try with ForTown context - should fail (no rig context)
+	bd := beads.ForTown(townRoot)
+
+	fields := &beads.AgentFields{
+		RoleType:   "polecat",
+		Rig:        "unrig",
+		AgentState: "spawning",
+	}
+	_, err := bd.CreateRigAgent("polecat", "TestCatWrong", "Test Agent", fields)
+	if err == nil {
+		t.Error("CreateRigAgent with ForTown() should fail, but it succeeded")
+	}
+	if !strings.Contains(err.Error(), "rig context") {
+		t.Errorf("Error should mention rig context, got: %v", err)
+	}
+
+	// Try with New() town-only context - should fail
+	bd2 := beads.New(townRoot)
+	_, err = bd2.CreateRigAgent("polecat", "TestCatWrong2", "Test Agent", fields)
+	if err == nil {
+		t.Error("CreateRigAgent with New(townRoot) should fail, but it succeeded")
+	}
+}
+
+// testForTownCreateAgent tests town-level operations with ForTown context.
+// Verifies:
+// 1. The context is correctly bound to town
+// 2. ForTown can list town beads (role beads created by gt install)
+//
+// Note: Earlier tests may modify town beads, so we check for role beads
+// which are stable rather than agent beads which may be deleted/recreated.
+func testForTownCreateAgent(t *testing.T, townRoot string) {
+	bd := beads.ForTown(townRoot)
+
+	// Verify the context is correctly bound
+	if !bd.IsTown() {
+		t.Error("IsTown() = false, want true for ForTown context")
+	}
+	// ForTown has no rig context, so RigPrefix() is empty
+	if bd.RigPrefix() != "" {
+		t.Errorf("RigPrefix() = %q, want empty for ForTown context", bd.RigPrefix())
+	}
+	if bd.IsRig() {
+		t.Error("IsRig() = true, want false for ForTown context")
+	}
+
+	// Verify we can list town beads - should find role beads from gt install
+	issues, err := bd.List(beads.ListOptions{Status: "all", Priority: -1})
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	// Find any hq- prefixed bead to verify we're reading from town beads
+	var foundTownBead bool
+	for _, issue := range issues {
+		if strings.HasPrefix(issue.ID, beads.TownBeadsPrefix+"-") {
+			foundTownBead = true
+			t.Logf("Successfully found town bead via ForTown context: %s", issue.ID)
+			break
+		}
+	}
+	if !foundTownBead {
+		t.Errorf("Could not find any hq- prefixed bead in town beads list (found %d beads)", len(issues))
+	}
+}
+
+// testTownOpsFromAnyContext tests that town operations work from any context.
+// With the simplified API, all instances can do town operations.
+// We use CreateTownConvoy instead of CreateTownAgent because agent IDs have
+// strict validation in bd that rejects non-standard role names.
+func testTownOpsFromAnyContext(t *testing.T, townRoot string) {
+	rigPath := filepath.Join(townRoot, "unrig")
+
+	// Test with New(townRoot, rigPath) - should succeed
+	bd := beads.New(townRoot, rigPath)
+
+	convoyFields := &beads.ConvoyFields{
+		Notify: "test-any-context@example.com",
+	}
+	issue, err := bd.CreateTownConvoy("Convoy from Rig Context", 3, convoyFields)
+	if err != nil {
+		t.Errorf("CreateTownConvoy from rig context should succeed: %v", err)
+	} else {
+		// Verify the bead was created in town beads with hq- prefix
+		if !strings.HasPrefix(issue.ID, beads.TownBeadsPrefix+"-cv-") {
+			t.Errorf("Town convoy ID should have hq-cv- prefix, got %s", issue.ID)
+		}
+		t.Logf("Successfully created town convoy %s from rig context", issue.ID)
+	}
+
+	// Test with New(townRoot) - should also succeed
+	bd2 := beads.New(townRoot)
+	issue2, err := bd2.CreateTownConvoy("Convoy from Town Context", 2, convoyFields)
+	if err != nil {
+		t.Errorf("CreateTownConvoy from town context should succeed: %v", err)
+	} else {
+		if !strings.HasPrefix(issue2.ID, beads.TownBeadsPrefix+"-cv-") {
+			t.Errorf("Town convoy ID should have hq-cv- prefix, got %s", issue2.ID)
+		}
+	}
+}
+
+// testForTownCreateConvoy tests creating convoy beads with ForTown context.
+func testForTownCreateConvoy(t *testing.T, townRoot string) {
+	bd := beads.ForTown(townRoot)
+
+	fields := &beads.ConvoyFields{
+		Notify:   "test@example.com",
+		Molecule: "mol-123",
+	}
+	issue, err := bd.CreateTownConvoy("Test Convoy", 5, fields)
+	if err != nil {
+		t.Fatalf("CreateTownConvoy failed: %v", err)
+	}
+
+	// Verify ID format: {TownBeadsPrefix}-cv-{random}
+	if !strings.HasPrefix(issue.ID, beads.TownBeadsPrefix+"-cv-") {
+		t.Errorf("ID = %q, should start with %q", issue.ID, beads.TownBeadsPrefix+"-cv-")
+	}
+
+	// Verify it was created in town beads
+	found, err := bd.Show(issue.ID)
+	if err != nil {
+		t.Fatalf("Show failed: %v", err)
+	}
+	if found.Title != "Test Convoy" {
+		t.Errorf("Title = %q, want %q", found.Title, "Test Convoy")
+	}
+}
+
+// testCreateNoIDFromRigContext tests that Create() without explicit ID from rig context
+// creates a bead in the town database (with hq- prefix) using the default workDir (townRoot).
+// This verifies that the workDir for Create without a specific ID defaults to townRoot,
+// enabling town operations from any context.
+func testCreateNoIDFromRigContext(t *testing.T, townRoot string) {
+	rigPath := filepath.Join(townRoot, "unrig")
+
+	// Create a Beads instance with rig context
+	bd := beads.New(townRoot, rigPath)
+
+	// Verify we have rig context
+	if !bd.IsRig() {
+		t.Fatal("Expected IsRig() = true for New(townRoot, rigPath)")
+	}
+
+	// Create a bead without explicit ID - should use townRoot and get hq- prefix
+	// This tests the "loose" behavior where Create without ID uses townRoot
+	issue, err := bd.Create(beads.CreateOptions{
+		Title: "Test bead from rig context without ID",
+		Type:  "task",
+	})
+	if err != nil {
+		t.Fatalf("Create without ID from rig context failed: %v", err)
+	}
+
+	// Verify the bead was created with hq- prefix (town beads)
+	if !strings.HasPrefix(issue.ID, beads.TownBeadsPrefix+"-") {
+		t.Errorf("Create without ID should use town prefix, got ID = %s", issue.ID)
+	}
+
+	// Verify the bead is readable from town context
+	townBD := beads.New(townRoot)
+	found, err := townBD.Show(issue.ID)
+	if err != nil {
+		t.Fatalf("Show from town context failed: %v", err)
+	}
+	if found.ID != issue.ID {
+		t.Errorf("Show returned different ID: got %s, want %s", found.ID, issue.ID)
+	}
+
+	t.Logf("Successfully created %s in town beads from rig context without explicit ID", issue.ID)
 }

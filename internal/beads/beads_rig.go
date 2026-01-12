@@ -70,9 +70,10 @@ func ParseRigFields(description string) *RigFields {
 	return fields
 }
 
-// CreateRigBead creates a rig identity bead for tracking rig metadata.
+// CreateRigBead creates a rig identity bead with an explicit ID.
+// For new code using ForRig() context, prefer CreateRigIdentityBead() which auto-generates the ID.
+//
 // The ID format is: <prefix>-rig-<name> (e.g., gt-rig-gastown)
-// Use RigBeadID() helper to generate correct IDs.
 // The created_by field is populated from BD_ACTOR env var for provenance tracking.
 //
 // NOTE: This method extracts the prefix from the ID and passes --prefix to bd
@@ -88,6 +89,21 @@ func (b *Beads) CreateRigBead(id, title string, fields *RigFields) (*Issue, erro
 	})
 }
 
+// CreateRigIdentityBead creates the rig identity bead with auto-generated ID.
+// Requires ForRig() context - returns error if used with New() or ForTown().
+//
+// ID format: {prefix}-rig-{rigName}
+// Example: ForRig(rigPath, "gastown", townRoot).CreateRigIdentityBead(fields)
+// Creates: gt-rig-gastown with title "gastown"
+func (b *Beads) CreateRigIdentityBead(fields *RigFields) (*Issue, error) {
+	if !b.IsRig() {
+		return nil, fmt.Errorf("CreateRigIdentityBead requires rig context (got rigPrefix=%q, rigName=%q)", b.rigPrefix, b.rigName)
+	}
+
+	id := fmt.Sprintf("%s-rig-%s", b.rigPrefix, b.rigName)
+	return b.CreateRigBead(id, b.rigName, fields)
+}
+
 // RigBeadIDWithPrefix generates a rig identity bead ID using the specified prefix.
 // Format: <prefix>-rig-<name> (e.g., gt-rig-gastown)
 func RigBeadIDWithPrefix(prefix, name string) string {
@@ -98,4 +114,26 @@ func RigBeadIDWithPrefix(prefix, name string) string {
 // For non-gastown rigs, use RigBeadIDWithPrefix with the rig's configured prefix.
 func RigBeadID(name string) string {
 	return RigBeadIDWithPrefix("gt", name)
+}
+
+// GetRigIdentity retrieves the rig identity bead for the current rig context.
+// Requires rig context - returns error if used with town-only context.
+// Returns ErrNotFound if the identity bead doesn't exist.
+func (b *Beads) GetRigIdentity() (*Issue, *RigFields, error) {
+	if !b.IsRig() {
+		return nil, nil, fmt.Errorf("GetRigIdentity requires rig context")
+	}
+
+	id := fmt.Sprintf("%s-rig-%s", b.rigPrefix, b.rigName)
+	issue, err := b.Show(id)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if !HasLabel(issue, "gt:rig") {
+		return nil, nil, fmt.Errorf("bead %s is not a rig identity bead (missing gt:rig label)", id)
+	}
+
+	fields := ParseRigFields(issue.Description)
+	return issue, fields, nil
 }

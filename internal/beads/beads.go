@@ -111,25 +111,82 @@ type SyncStatus struct {
 	Conflicts []string
 }
 
-// Beads wraps bd CLI operations for a working directory.
-// Uses cwd-based discovery - bd finds .beads by walking up from workDir.
+// Beads wraps bd CLI operations with context for town and/or rig operations.
+//
+// Create with New(townRoot) for town-only operations, or New(townRoot, rigPath)
+// for both town and rig operations. All fields are computed at initialization.
+//
+// Example:
+//
+//	bd := beads.New(townRoot)              // Town-only: can create convoys, town agents
+//	bd := beads.New(townRoot, rigPath)     // Full: can also create rig agents, rig beads
 type Beads struct {
-	workDir string
+	workDir   string // Working directory for bd commands (equals townRoot, for backwards compat)
+	townRoot  string // Town root directory (for town operations)
+	rigPath   string // Rig directory (empty for town-only)
+	rigName   string // Rig name derived from rigPath (empty for town-only)
+	rigPrefix string // Rig prefix from routes.jsonl (empty for town-only)
 }
 
-// New creates a new Beads wrapper for the given directory.
-// bd uses cwd-based discovery and routes.jsonl for cross-database routing.
-func New(workDir string) *Beads {
-	return &Beads{workDir: workDir}
+// New creates a Beads instance for the given town.
+// If rigPath is provided, rig operations are also available.
+//
+// Example:
+//
+//	bd := beads.New(townRoot)              // Town-only
+//	bd := beads.New(townRoot, rigPath)     // Town + rig
+//	bd.CreateTownConvoy(...)               // Always available
+//	bd.CreateRigAgent(...)             // Only if rigPath provided
+func New(townRoot string, rigPath ...string) *Beads {
+	b := &Beads{workDir: townRoot, townRoot: townRoot}
+	if len(rigPath) > 0 && rigPath[0] != "" {
+		b.rigPath = rigPath[0]
+		b.rigName = filepath.Base(rigPath[0])
+		b.rigPrefix = GetPrefixForRig(townRoot, b.rigName)
+	}
+	return b
 }
 
-// run executes a bd command and returns stdout.
+// TownRoot returns the town root directory.
+func (b *Beads) TownRoot() string { return b.townRoot }
+
+// RigPath returns the rig directory, or empty for town-only context.
+func (b *Beads) RigPath() string { return b.rigPath }
+
+// RigName returns the rig name, or empty for town-only context.
+func (b *Beads) RigName() string { return b.rigName }
+
+// RigPrefix returns the rig prefix (without hyphen), or empty for town-only.
+func (b *Beads) RigPrefix() string { return b.rigPrefix }
+
+// IsTown returns true - all instances can do town operations.
+func (b *Beads) IsTown() bool { return true }
+
+// IsRig returns true if rig operations are available (rigPath was provided).
+func (b *Beads) IsRig() bool { return b.rigPath != "" }
+
+// run executes a bd command from townRoot and returns stdout.
+// For rig-specific operations, use runRig() instead.
 func (b *Beads) run(args ...string) ([]byte, error) {
+	return b.runAt(b.townRoot, args...)
+}
+
+// runRig executes a bd command from rigPath and returns stdout.
+// Panics if rigPath is not set.
+func (b *Beads) runRig(args ...string) ([]byte, error) {
+	if b.rigPath == "" {
+		panic("runRig called without rig context")
+	}
+	return b.runAt(b.rigPath, args...)
+}
+
+// runAt executes a bd command from the specified directory.
+func (b *Beads) runAt(workDir string, args ...string) ([]byte, error) {
 	// Use --no-daemon for faster read operations (avoids daemon IPC overhead)
 	// The daemon is primarily useful for write coalescing, not reads
 	fullArgs := append([]string{"--no-daemon"}, args...)
 	cmd := exec.Command("bd", fullArgs...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Dir = b.workDir
+	cmd.Dir = workDir
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -143,9 +200,8 @@ func (b *Beads) run(args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-// Run executes a bd command and returns stdout.
-// This is a public wrapper around the internal run method for cases where
-// callers need to run arbitrary bd commands.
+// Run executes a bd command from townRoot and returns stdout.
+// This is a public wrapper for cases where callers need arbitrary bd commands.
 func (b *Beads) Run(args ...string) ([]byte, error) {
 	return b.run(args...)
 }
@@ -293,6 +349,11 @@ func (b *Beads) Show(id string) (*Issue, error) {
 		return nil, err
 	}
 
+	// bd show returns empty output for non-existent beads (exit 0)
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil, ErrNotFound
+	}
+
 	// bd show --json returns an array with one element
 	var issues []*Issue
 	if err := json.Unmarshal(out, &issues); err != nil {
@@ -353,19 +414,39 @@ func (b *Beads) Blocked() ([]*Issue, error) {
 // If opts.Actor is empty, it defaults to the BD_ACTOR environment variable.
 // This ensures created_by is populated for issue provenance tracking.
 //
-// If opts.ID is set, the issue is created with that specific ID and routing
-// is enabled via prefix extraction (see CreateWithID for details).
+// If opts.ID is set, the working directory is determined by the ID prefix:
+// - Town prefix (hq-): uses townRoot
+// - Rig prefix: uses rigPath (requires rig context)
 func (b *Beads) Create(opts CreateOptions) (*Issue, error) {
 	args := []string{"create", "--json"}
 
-	// Add explicit ID if specified (enables routing)
+	// Determine workDir based on ID prefix.
+	//
+	// BD BUG WORKAROUND: When both --prefix and --id are passed to bd create,
+	// bd ignores the explicit ID and generates a new one. To work around this,
+	// we set cmd.Dir (via runAt) to target the correct database directly instead
+	// of using --prefix for routing. The workDir determines which beads database
+	// bd discovers, so we set it to townRoot for hq- prefix or rigPath for rig prefix.
+	//
+	// Without an explicit ID, we default to townRoot so that Create() from any
+	// context creates in the town database (enabling convoy creation from rigs).
+	workDir := b.townRoot
 	if opts.ID != "" {
 		args = append(args, "--id="+opts.ID)
-		// Add --prefix from ID for routing (validates consistency if already specified)
-		var err error
-		args, err = addPrefixForRouting(args, opts.ID)
-		if err != nil {
-			return nil, err
+
+		idPrefix := extractPrefix(opts.ID)
+		if idPrefix == TownBeadsPrefix {
+			// Town operation - use townRoot
+			workDir = b.townRoot
+		} else if idPrefix != "" && b.IsRig() && idPrefix == b.rigPrefix {
+			// Rig operation - use rigPath
+			workDir = b.rigPath
+		} else if idPrefix != "" && !b.IsRig() {
+			// ID has rig prefix but no rig context
+			return nil, fmt.Errorf("ID %q has rig prefix %q but no rig context provided", opts.ID, idPrefix)
+		} else if idPrefix != "" && idPrefix != b.rigPrefix {
+			// ID prefix doesn't match our rig
+			return nil, fmt.Errorf("ID prefix mismatch: ID %q has prefix %q but rig has %q", opts.ID, idPrefix, b.rigPrefix)
 		}
 	}
 
@@ -402,7 +483,7 @@ func (b *Beads) Create(opts CreateOptions) (*Issue, error) {
 		args = append(args, "--actor="+actor)
 	}
 
-	out, err := b.run(args...)
+	out, err := b.runAt(workDir, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -618,10 +699,10 @@ func (b *Beads) Stats() (string, error) {
 	return string(out), nil
 }
 
-// IsBeadsRepo checks if the working directory is a beads repository.
+// IsBeadsRepo checks if the town root is a beads repository.
 // ZFC: Check file existence directly instead of parsing bd errors.
 func (b *Beads) IsBeadsRepo() bool {
-	beadsDir := ResolveBeadsDir(b.workDir)
+	beadsDir := ResolveBeadsDir(b.townRoot)
 	info, err := os.Stat(beadsDir)
 	return err == nil && info.IsDir()
 }
