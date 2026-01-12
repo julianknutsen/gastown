@@ -448,12 +448,14 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 	m.namePool.Release(name)
 	_ = m.namePool.Save()
 
-	// Delete agent bead (non-fatal: may not exist or beads may not be available)
+	// Close agent bead (non-fatal: may not exist or beads may not be available)
+	// NOTE: We use CloseAndClearAgentBead instead of DeleteAgentBead because bd delete --hard
+	// creates tombstones that cannot be reopened. See docs/reviews/BD_TOMBSTONE_BUG_REPORT.md.
 	agentID := m.agentBeadID(name)
-	if err := m.beads.DeleteAgentBead(agentID); err != nil {
+	if err := m.beads.CloseAndClearAgentBead(agentID, "polecat removed"); err != nil {
 		// Only log if not "not found" - it's ok if it doesn't exist
 		if !errors.Is(err, beads.ErrNotFound) {
-			fmt.Printf("Warning: could not delete agent bead %s: %v\n", agentID, err)
+			fmt.Printf("Warning: could not close agent bead %s: %v\n", agentID, err)
 		}
 	}
 
@@ -531,11 +533,13 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 		}
 	}
 
-	// Delete old agent bead before recreation (non-fatal)
+	// Close old agent bead before recreation (non-fatal)
+	// NOTE: We use CloseAndClearAgentBead instead of DeleteAgentBead because bd delete --hard
+	// creates tombstones that cannot be reopened. See docs/reviews/BD_TOMBSTONE_BUG_REPORT.md.
 	agentID := m.agentBeadID(name)
-	if err := m.beads.DeleteAgentBead(agentID); err != nil {
+	if err := m.beads.CloseAndClearAgentBead(agentID, "polecat repair"); err != nil {
 		if !errors.Is(err, beads.ErrNotFound) {
-			fmt.Printf("Warning: could not delete old agent bead %s: %v\n", agentID, err)
+			fmt.Printf("Warning: could not close old agent bead %s: %v\n", agentID, err)
 		}
 	}
 
