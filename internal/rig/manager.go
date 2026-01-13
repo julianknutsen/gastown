@@ -512,11 +512,9 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		fmt.Printf("  Warning: Could not copy overlay files to refinery: %v\n", err)
 	}
 
-	// Create refinery hooks for patrol triggering (at refinery/ level, not rig/)
-	runtimeConfig := config.ResolveRoleAgentConfig("refinery", m.townRoot, rigPath)
-	if err := m.createPatrolHooks(refineryPath, runtimeConfig); err != nil {
-		fmt.Printf("  Warning: Could not create refinery hooks: %v\n", err)
-	}
+	// NOTE: Claude settings are installed by the agent at startup, not here.
+	// Claude Code does NOT traverse parent directories for settings.json.
+	// See: https://github.com/anthropics/claude-code/issues/12962
 
 	// Create empty crew directory with README (crew members added via gt crew add)
 	crewPath := filepath.Join(rigPath, "crew")
