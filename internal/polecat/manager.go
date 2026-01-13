@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -47,10 +48,11 @@ type Manager struct {
 	git      *git.Git
 	beads    *beads.Beads
 	namePool *NamePool
+	tmux     *tmux.Tmux
 }
 
 // NewManager creates a new polecat manager.
-func NewManager(r *rig.Rig, g *git.Git) *Manager {
+func NewManager(r *rig.Rig, g *git.Git, t *tmux.Tmux) *Manager {
 	// Use the resolved beads directory to find where bd commands should run.
 	// For tracked beads: rig/.beads/redirect -> mayor/rig/.beads, so use mayor/rig
 	// For local beads: rig/.beads is the database, so use rig root
@@ -82,6 +84,7 @@ func NewManager(r *rig.Rig, g *git.Git) *Manager {
 		git:      g,
 		beads:    beads.NewWithBeadsDir(beadsPath, resolvedBeads),
 		namePool: pool,
+		tmux:     t,
 	}
 }
 
@@ -620,21 +623,70 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	}, nil
 }
 
-// ReconcilePool derives pool InUse state from existing polecat directories.
-// This implements ZFC: InUse is discovered from filesystem, not tracked separately.
+// ReconcilePool derives pool InUse state from existing polecat directories and active sessions.
+// This implements ZFC: InUse is discovered from filesystem and tmux, not tracked separately.
 // Called before each allocation to ensure InUse reflects reality.
+//
+// In addition to directory checks, this also:
+// - Kills orphaned tmux sessions (sessions without directories are broken)
 func (m *Manager) ReconcilePool() {
+	// Get polecats with existing directories
 	polecats, err := m.List()
 	if err != nil {
 		return
 	}
 
-	var names []string
+	var namesWithDirs []string
 	for _, p := range polecats {
-		names = append(names, p.Name)
+		namesWithDirs = append(namesWithDirs, p.Name)
 	}
 
-	m.namePool.Reconcile(names)
+	// Get names with tmux sessions
+	var namesWithSessions []string
+	if m.tmux != nil {
+		poolNames := m.namePool.getNames()
+		for _, name := range poolNames {
+			sessionName := fmt.Sprintf("gt-%s-%s", m.rig.Name, name)
+			hasSession, _ := m.tmux.HasSession(sessionName)
+			if hasSession {
+				namesWithSessions = append(namesWithSessions, name)
+			}
+		}
+	}
+
+	m.ReconcilePoolWith(namesWithDirs, namesWithSessions)
+
+	// Prune any stale git worktree entries (handles manually deleted directories)
+	if repoGit, err := m.repoBase(); err == nil {
+		_ = repoGit.WorktreePrune()
+	}
+}
+
+// ReconcilePoolWith reconciles the name pool given lists of names from different sources.
+// This is the testable core of ReconcilePool.
+//
+// - namesWithDirs: names that have existing worktree directories (in use)
+// - namesWithSessions: names that have tmux sessions
+//
+// Names with sessions but no directories are orphans and their sessions are killed.
+// Only namesWithDirs are marked as in-use for allocation.
+func (m *Manager) ReconcilePoolWith(namesWithDirs, namesWithSessions []string) {
+	dirSet := make(map[string]bool)
+	for _, name := range namesWithDirs {
+		dirSet[name] = true
+	}
+
+	// Kill orphaned sessions (session exists but no directory)
+	if m.tmux != nil {
+		for _, name := range namesWithSessions {
+			if !dirSet[name] {
+				sessionName := fmt.Sprintf("gt-%s-%s", m.rig.Name, name)
+				_ = m.tmux.KillSession(sessionName)
+			}
+		}
+	}
+
+	m.namePool.Reconcile(namesWithDirs)
 	// Note: No Save() needed - InUse is transient state, only OverflowNext is persisted
 }
 

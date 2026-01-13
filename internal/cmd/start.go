@@ -682,7 +682,7 @@ func cleanupPolecats(townRoot string) {
 
 	for _, r := range rigs {
 		polecatGit := git.NewGit(r.Path)
-		polecatMgr := polecat.NewManager(r, polecatGit)
+		polecatMgr := polecat.NewManager(r, polecatGit, nil) // nil tmux: just listing, not allocating
 
 		polecats, err := polecatMgr.List()
 		if err != nil {
