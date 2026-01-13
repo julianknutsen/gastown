@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -38,12 +39,51 @@ Examples:
 var (
 	orphansDays int
 	orphansAll  bool
+
+	// Kill command flags
+	orphansKillDryRun bool
+	orphansKillDays   int
+	orphansKillAll    bool
+	orphansKillForce  bool
 )
+
+var orphansKillCmd = &cobra.Command{
+	Use:   "kill",
+	Short: "Remove orphaned commits permanently",
+	Long: `Remove orphaned commits by running git garbage collection.
+
+This command finds orphaned commits and then runs 'git gc --prune=now'
+to permanently delete unreachable objects from the repository.
+
+WARNING: This operation is irreversible. Once commits are pruned,
+they cannot be recovered.
+
+The command will:
+1. Find orphaned commits (same as 'gt orphans')
+2. Show what will be removed
+3. Ask for confirmation (unless --force)
+4. Run git gc --prune=now
+
+Examples:
+  gt orphans kill              # Kill orphans from last 7 days (default)
+  gt orphans kill --days=14    # Kill orphans from last 2 weeks
+  gt orphans kill --all        # Kill all orphans
+  gt orphans kill --dry-run    # Preview without deleting
+  gt orphans kill --force      # Skip confirmation prompt`,
+	RunE: runOrphansKill,
+}
 
 func init() {
 	orphansCmd.Flags().IntVar(&orphansDays, "days", 7, "Show orphans from last N days")
 	orphansCmd.Flags().BoolVar(&orphansAll, "all", false, "Show all orphans (no date filter)")
 
+	// Kill command flags
+	orphansKillCmd.Flags().BoolVar(&orphansKillDryRun, "dry-run", false, "Preview without deleting")
+	orphansKillCmd.Flags().IntVar(&orphansKillDays, "days", 7, "Kill orphans from last N days")
+	orphansKillCmd.Flags().BoolVar(&orphansKillAll, "all", false, "Kill all orphans (no date filter)")
+	orphansKillCmd.Flags().BoolVar(&orphansKillForce, "force", false, "Skip confirmation prompt")
+
+	orphansCmd.AddCommand(orphansKillCmd)
 	rootCmd.AddCommand(orphansCmd)
 }
 
@@ -242,4 +282,78 @@ func formatAge(t time.Time) string {
 		return "1 day ago"
 	}
 	return fmt.Sprintf("%d days ago", days)
+}
+
+// runOrphansKill removes orphaned commits by running git gc
+func runOrphansKill(cmd *cobra.Command, args []string) error {
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	rigName, r, err := findCurrentRig(townRoot)
+	if err != nil {
+		return fmt.Errorf("determining rig: %w", err)
+	}
+
+	mayorPath := r.Path + "/mayor/rig"
+	fmt.Printf("Scanning for orphaned commits in %s...\n\n", rigName)
+
+	orphans, err := findOrphanCommits(mayorPath)
+	if err != nil {
+		return fmt.Errorf("finding orphans: %w", err)
+	}
+
+	if len(orphans) == 0 {
+		fmt.Printf("%s No orphaned commits found\n", style.Bold.Render("✓"))
+		return nil
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -orphansKillDays)
+	var filtered []OrphanCommit
+	for _, o := range orphans {
+		if orphansKillAll || o.Date.After(cutoff) {
+			filtered = append(filtered, o)
+		}
+	}
+
+	if len(filtered) == 0 {
+		fmt.Printf("%s No orphaned commits in the last %d days\n", style.Bold.Render("✓"), orphansKillDays)
+		fmt.Printf("%s Use --days=N or --all to target older orphans\n", style.Dim.Render("Hint:"))
+		return nil
+	}
+
+	fmt.Printf("%s Found %d orphaned commit(s) to remove:\n\n", style.Warning.Render("⚠"), len(filtered))
+	for _, o := range filtered {
+		fmt.Printf("  %s %s\n", style.Bold.Render(o.SHA[:8]), o.Subject)
+		fmt.Printf("    %s by %s\n\n", style.Dim.Render(formatAge(o.Date)), o.Author)
+	}
+
+	if orphansKillDryRun {
+		fmt.Printf("%s Dry run - no changes made\n", style.Dim.Render("ℹ"))
+		return nil
+	}
+
+	if !orphansKillForce {
+		fmt.Printf("%s\n", style.Warning.Render("WARNING: This operation is irreversible!"))
+		fmt.Printf("Remove %d orphaned commit(s)? [y/N] ", len(filtered))
+		var response string
+		fmt.Scanln(&response)
+		if strings.ToLower(strings.TrimSpace(response)) != "y" {
+			fmt.Printf("%s Cancelled\n", style.Dim.Render("ℹ"))
+			return nil
+		}
+	}
+
+	fmt.Printf("\nRunning git gc --prune=now...\n")
+	gcCmd := exec.Command("git", "gc", "--prune=now")
+	gcCmd.Dir = mayorPath
+	gcCmd.Stdout = os.Stdout
+	gcCmd.Stderr = os.Stderr
+	if err := gcCmd.Run(); err != nil {
+		return fmt.Errorf("git gc failed: %w", err)
+	}
+
+	fmt.Printf("\n%s Removed %d orphaned commit(s)\n", style.Bold.Render("✓"), len(filtered))
+	return nil
 }
