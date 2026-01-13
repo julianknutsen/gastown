@@ -237,13 +237,41 @@ func runDone(cmd *cobra.Command, args []string) error {
 		if branch == defaultBranch || branch == "master" {
 			return fmt.Errorf("cannot submit %s/master branch to merge queue", defaultBranch)
 		}
-		// Check that branch has commits ahead of default branch (prevents submitting stale branches)
-		aheadCount, err := g.CommitsAhead(defaultBranch, branch)
+
+		// CRITICAL: Verify work exists before completing (hq-xthqf)
+		// Polecats calling gt done without commits results in lost work.
+		// We MUST check for:
+		// 1. Working directory availability (can't verify git state without it)
+		// 2. Uncommitted changes (work that would be lost)
+		// 3. Unique commits compared to origin (ensures branch was pushed with actual work)
+
+		// Block if working directory not available - can't verify git state
+		if !cwdAvailable {
+			return fmt.Errorf("cannot complete: working directory not available (worktree deleted?)\nUse --status DEFERRED to exit without completing")
+		}
+
+		// Block if there are uncommitted changes (would be lost on completion)
+		workStatus, err := g.CheckUncommittedWork()
 		if err != nil {
-			return fmt.Errorf("checking commits ahead of %s: %w", defaultBranch, err)
+			return fmt.Errorf("checking git status: %w", err)
+		}
+		if workStatus.HasUncommittedChanges {
+			return fmt.Errorf("cannot complete: uncommitted changes would be lost\nCommit your changes first, or use --status DEFERRED to exit without completing\nUncommitted: %s", workStatus.String())
+		}
+
+		// Check that branch has commits ahead of origin/default (not local default)
+		// This ensures we compare against the remote, not a potentially stale local copy
+		originDefault := "origin/" + defaultBranch
+		aheadCount, err := g.CommitsAhead(originDefault, "HEAD")
+		if err != nil {
+			// Fallback to local branch comparison if origin not available
+			aheadCount, err = g.CommitsAhead(defaultBranch, branch)
+			if err != nil {
+				return fmt.Errorf("checking commits ahead of %s: %w", defaultBranch, err)
+			}
 		}
 		if aheadCount == 0 {
-			return fmt.Errorf("branch '%s' has 0 commits ahead of %s; nothing to merge", branch, defaultBranch)
+			return fmt.Errorf("branch '%s' has 0 commits ahead of %s; nothing to merge\nMake and commit changes first, or use --status DEFERRED to exit without completing", branch, originDefault)
 		}
 
 		if issueID == "" {
