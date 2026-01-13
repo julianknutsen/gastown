@@ -273,6 +273,39 @@ func getAllDescendants(pid string) []string {
 	return result
 }
 
+// KillSessionWithProcesses explicitly kills all processes in a session before terminating it.
+// This prevents orphaned processes that can occur when Claude catches/ignores SIGHUP.
+// The kill sequence is:
+// 1. Get the pane's PID
+// 2. Send SIGTERM to the process group (all children)
+// 3. Wait 100ms for graceful exit
+// 4. Send SIGKILL if processes still alive
+// 5. Kill the tmux session
+func (t *Tmux) KillSessionWithProcesses(name string) error {
+	// Get the pane PID
+	pid, err := t.GetPanePID(name)
+	if err != nil {
+		// Session might not exist or be in bad state, try direct kill
+		return t.KillSession(name)
+	}
+
+	if pid != "" {
+		// Send SIGTERM to process group (all children of the pane process)
+		termCmd := exec.Command("pkill", "-TERM", "-P", pid)
+		_ = termCmd.Run() // Ignore errors - process might already be dead
+
+		// Wait for graceful termination
+		time.Sleep(100 * time.Millisecond)
+
+		// Send SIGKILL to any survivors
+		killCmd := exec.Command("pkill", "-KILL", "-P", pid)
+		_ = killCmd.Run() // Ignore errors - process might already be dead
+	}
+
+	// Now kill the tmux session
+	return t.KillSession(name)
+}
+
 // KillServer terminates the entire tmux server and all sessions.
 func (t *Tmux) KillServer() error {
 	_, err := t.run("kill-server")
