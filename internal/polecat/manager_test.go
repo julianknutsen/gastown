@@ -328,14 +328,18 @@ func TestAddWithOptions_HasAgentsMD(t *testing.T) {
 		t.Fatalf("git commit: %v", err)
 	}
 
-	// AddWithOptions needs origin/main to exist. Add self as origin and fetch.
+	// AddWithOptions needs origin/main to exist. Add self as origin and create tracking ref.
 	cmd = exec.Command("git", "remote", "add", "origin", mayorRig)
 	cmd.Dir = mayorRig
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git remote add: %v\n%s", err, out)
 	}
-	if err := mayorGit.Fetch("origin"); err != nil {
-		t.Fatalf("git fetch: %v", err)
+	// When using a local directory as remote, fetch doesn't create tracking branches.
+	// Create origin/main manually since AddWithOptions expects origin/main by default.
+	cmd = exec.Command("git", "update-ref", "refs/remotes/origin/main", "HEAD")
+	cmd.Dir = mayorRig
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git update-ref: %v\n%s", err, out)
 	}
 
 	// Create rig pointing to root
@@ -399,14 +403,18 @@ func TestAddWithOptions_AgentsMDFallback(t *testing.T) {
 		t.Fatalf("git commit: %v", err)
 	}
 
-	// AddWithOptions needs origin/main to exist. Add self as origin and fetch.
+	// AddWithOptions needs origin/main to exist. Add self as origin and create tracking ref.
 	cmd = exec.Command("git", "remote", "add", "origin", mayorRig)
 	cmd.Dir = mayorRig
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git remote add: %v\n%s", err, out)
 	}
-	if err := mayorGit.Fetch("origin"); err != nil {
-		t.Fatalf("git fetch: %v", err)
+	// When using a local directory as remote, fetch doesn't create tracking branches.
+	// Create origin/main manually since AddWithOptions expects origin/main by default.
+	cmd = exec.Command("git", "update-ref", "refs/remotes/origin/main", "HEAD")
+	cmd.Dir = mayorRig
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git update-ref: %v\n%s", err, out)
 	}
 
 	// Now create AGENTS.md in mayor/rig (but NOT committed to git)
