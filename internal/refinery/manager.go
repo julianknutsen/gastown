@@ -15,7 +15,6 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/mrqueue"
 	"github.com/steveyegge/gastown/internal/rig"
 )
 
@@ -200,7 +199,7 @@ func (m *Manager) calculateIssueScore(issue *beads.Issue, now time.Time) float64
 	}
 
 	// Build score input
-	input := mrqueue.ScoreInput{
+	input := ScoreInput{
 		Priority:    issue.Priority,
 		MRCreatedAt: mrCreatedAt,
 		Now:         now,
@@ -218,7 +217,7 @@ func (m *Manager) calculateIssueScore(issue *beads.Issue, now time.Time) float64
 		}
 	}
 
-	return mrqueue.ScoreMRWithDefaults(input)
+	return ScoreMRWithDefaults(input)
 }
 
 // issueToMR converts a beads issue to a MergeRequest.
