@@ -32,6 +32,8 @@ var (
 	dogDispatchRig    string
 	dogDispatchCreate bool
 	dogDispatchDog    string
+	dogDispatchJSON   bool
+	dogDispatchDryRun bool
 )
 
 var dogCmd = &cobra.Command{
@@ -155,21 +157,20 @@ uses this during patrol cycles to dispatch plugins with open gates.
 
 The command:
 1. Finds the plugin definition (plugin.md)
-2. Creates a mail work unit with plugin instructions
-3. Hooks the mail to an idle dog
+2. Assigns work to an idle dog (marks as working)
+3. Sends mail with plugin instructions to the dog
 4. Returns immediately (non-blocking)
+
+The dog discovers the work via its mail inbox and executes the plugin
+instructions. On completion, the dog sends DOG_DONE mail to deacon/.
 
 Examples:
   gt dog dispatch --plugin rebuild-gt
   gt dog dispatch --plugin rebuild-gt --rig gastown
   gt dog dispatch --plugin rebuild-gt --dog alpha
   gt dog dispatch --plugin rebuild-gt --create
-
-Flags:
-  --plugin  Plugin name (required)
-  --rig     Limit search to specific rig's plugins
-  --dog     Dispatch to specific dog (otherwise picks idle)
-  --create  Create a dog if none idle`,
+  gt dog dispatch --plugin rebuild-gt --dry-run
+  gt dog dispatch --plugin rebuild-gt --json`,
 	RunE: runDogDispatch,
 }
 
@@ -192,6 +193,8 @@ func init() {
 	dogDispatchCmd.Flags().StringVar(&dogDispatchRig, "rig", "", "Limit plugin search to specific rig")
 	dogDispatchCmd.Flags().StringVar(&dogDispatchDog, "dog", "", "Dispatch to specific dog (default: any idle)")
 	dogDispatchCmd.Flags().BoolVar(&dogDispatchCreate, "create", false, "Create a dog if none idle")
+	dogDispatchCmd.Flags().BoolVar(&dogDispatchJSON, "json", false, "Output as JSON")
+	dogDispatchCmd.Flags().BoolVarP(&dogDispatchDryRun, "dry-run", "n", false, "Show what would be done without doing it")
 	_ = dogDispatchCmd.MarkFlagRequired("plugin")
 
 	// Add subcommands
@@ -664,18 +667,12 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("finding plugin: %w", err)
 	}
 
-	fmt.Printf("%s Found plugin: %s\n", style.Bold.Render("✓"), p.Name)
-	if p.RigName != "" {
-		fmt.Printf("  Location: %s/plugins/%s\n", p.RigName, p.Name)
-	} else {
-		fmt.Printf("  Location: plugins/%s (town-level)\n", p.Name)
-	}
-
 	// Get dog manager (reuse rigsConfig from above)
 	mgr := dog.NewManager(townRoot, rigsConfig)
 
 	// Find target dog
 	var targetDog *dog.Dog
+	var dogCreated bool
 	if dogDispatchDog != "" {
 		// Specific dog requested
 		targetDog, err = mgr.Get(dogDispatchDog)
@@ -694,19 +691,27 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 
 		if targetDog == nil {
 			if dogDispatchCreate {
-				// Create a new dog
-				newName := generateDogNameForDispatch(mgr)
-				targetDog, err = mgr.Add(newName)
-				if err != nil {
-					return fmt.Errorf("creating dog %s: %w", newName, err)
-				}
-				fmt.Printf("%s Created dog %s (pool was empty)\n", style.Bold.Render("✓"), newName)
+				// Create a new dog (reuse generateDogName from sling_dog.go)
+				newName := generateDogName(mgr)
+				if dogDispatchDryRun {
+					targetDog = &dog.Dog{Name: newName, State: dog.StateIdle}
+					dogCreated = true
+				} else {
+					targetDog, err = mgr.Add(newName)
+					if err != nil {
+						return fmt.Errorf("creating dog %s: %w", newName, err)
+					}
+					dogCreated = true
 
-				// Create agent bead for the dog
-				b := beads.New(townRoot)
-				location := filepath.Join("deacon", "dogs", newName)
-				if _, err := b.CreateDogAgentBead(newName, location); err != nil {
-					fmt.Printf("  Warning: could not create agent bead: %v\n", err)
+					// Create agent bead for the dog
+					b := beads.New(townRoot)
+					location := filepath.Join("deacon", "dogs", newName)
+					if _, beadErr := b.CreateDogAgentBead(newName, location); beadErr != nil {
+						// Non-fatal warning
+						if !dogDispatchJSON {
+							fmt.Printf("  Warning: could not create agent bead: %v\n", beadErr)
+						}
+					}
 				}
 			} else {
 				return fmt.Errorf("no idle dogs available (use --create to add one)")
@@ -714,14 +719,48 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf("%s Dispatching to dog: %s\n", style.Bold.Render("🐕"), targetDog.Name)
+	// Prepare dispatch result for JSON output
+	workDesc := fmt.Sprintf("plugin:%s", p.Name)
+	result := dogDispatchResult{
+		Plugin:     p.Name,
+		PluginPath: p.Path,
+		Dog:        targetDog.Name,
+		DogCreated: dogCreated,
+		Work:       workDesc,
+		DryRun:     dogDispatchDryRun,
+	}
+	if p.RigName != "" {
+		result.PluginRig = p.RigName
+	}
 
-	// Create mail message with plugin instructions
+	// Dry-run mode: show what would happen and exit
+	if dogDispatchDryRun {
+		if dogDispatchJSON {
+			return json.NewEncoder(os.Stdout).Encode(result)
+		}
+		fmt.Printf("Dry run - would dispatch:\n")
+		fmt.Printf("  Plugin: %s\n", p.Name)
+		if p.RigName != "" {
+			fmt.Printf("  Location: %s/plugins/%s\n", p.RigName, p.Name)
+		} else {
+			fmt.Printf("  Location: plugins/%s (town-level)\n", p.Name)
+		}
+		fmt.Printf("  Dog: %s%s\n", targetDog.Name, ifStr(dogCreated, " (would create)", ""))
+		fmt.Printf("  Work: %s\n", workDesc)
+		return nil
+	}
+
+	// Assign work FIRST (before sending mail) to prevent race condition
+	// If this fails, we haven't sent any mail yet
+	if err := mgr.AssignWork(targetDog.Name, workDesc); err != nil {
+		return fmt.Errorf("assigning work to dog: %w", err)
+	}
+
+	// Create and send mail message with plugin instructions
 	dogAddress := fmt.Sprintf("deacon/dogs/%s", targetDog.Name)
 	subject := fmt.Sprintf("Plugin: %s", p.Name)
 	body := formatPluginMailBody(p)
 
-	// Send mail to dog via router
 	router := mail.NewRouterWithTownRoot(townRoot, townRoot)
 	msg := &mail.Message{
 		From:      "deacon/",
@@ -732,15 +771,31 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := router.Send(msg); err != nil {
+		// Rollback: clear work assignment since mail failed
+		if clearErr := mgr.ClearWork(targetDog.Name); clearErr != nil {
+			// Log rollback failure but return original error
+			if !dogDispatchJSON {
+				fmt.Printf("  Warning: rollback failed: %v\n", clearErr)
+			}
+		}
 		return fmt.Errorf("sending plugin mail to dog: %w", err)
 	}
 
-	// Assign work to dog (updates state to working)
-	workDesc := fmt.Sprintf("plugin:%s", p.Name)
-	if err := mgr.AssignWork(targetDog.Name, workDesc); err != nil {
-		return fmt.Errorf("assigning work to dog: %w", err)
+	// Success - output result
+	if dogDispatchJSON {
+		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 
+	fmt.Printf("%s Found plugin: %s\n", style.Bold.Render("✓"), p.Name)
+	if p.RigName != "" {
+		fmt.Printf("  Location: %s/plugins/%s\n", p.RigName, p.Name)
+	} else {
+		fmt.Printf("  Location: plugins/%s (town-level)\n", p.Name)
+	}
+	if dogCreated {
+		fmt.Printf("%s Created dog %s (pool was empty)\n", style.Bold.Render("✓"), targetDog.Name)
+	}
+	fmt.Printf("%s Dispatching to dog: %s\n", style.Bold.Render("🐕"), targetDog.Name)
 	fmt.Printf("%s Plugin dispatched (non-blocking)\n", style.Bold.Render("✓"))
 	fmt.Printf("  Dog: %s\n", targetDog.Name)
 	fmt.Printf("  Work: %s\n", workDesc)
@@ -748,31 +803,23 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// generateDogNameForDispatch creates a unique dog name for pool expansion.
-func generateDogNameForDispatch(mgr *dog.Manager) string {
-	names := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"}
+// dogDispatchResult is the JSON output for gt dog dispatch.
+type dogDispatchResult struct {
+	Plugin     string `json:"plugin"`
+	PluginRig  string `json:"plugin_rig,omitempty"`
+	PluginPath string `json:"plugin_path"`
+	Dog        string `json:"dog"`
+	DogCreated bool   `json:"dog_created,omitempty"`
+	Work       string `json:"work"`
+	DryRun     bool   `json:"dry_run,omitempty"`
+}
 
-	dogs, _ := mgr.List()
-	existing := make(map[string]bool)
-	for _, d := range dogs {
-		existing[d.Name] = true
+// ifStr returns ifTrue if cond is true, otherwise ifFalse.
+func ifStr(cond bool, ifTrue, ifFalse string) string {
+	if cond {
+		return ifTrue
 	}
-
-	for _, name := range names {
-		if !existing[name] {
-			return name
-		}
-	}
-
-	// Fallback: numbered dogs
-	for i := 1; i <= 100; i++ {
-		name := fmt.Sprintf("dog%d", i)
-		if !existing[name] {
-			return name
-		}
-	}
-
-	return fmt.Sprintf("dog%d", len(dogs)+1)
+	return ifFalse
 }
 
 // formatPluginMailBody formats the plugin as instructions for the dog.
