@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/townlog"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -383,26 +385,38 @@ func runDone(cmd *cobra.Command, args []string) error {
 	// Update agent bead state (ZFC: self-report completion)
 	updateAgentStateOnDone(cwd, townRoot, exitType, issueID)
 
-	// Self-cleaning: Nuke our own sandbox before exiting (if we're a polecat)
+	// Self-cleaning: Nuke our own sandbox and session (if we're a polecat)
 	// This is the self-cleaning model - polecats clean up after themselves
-	selfNukeAttempted := false
+	// "done means gone" - both worktree and session are terminated
+	selfCleanAttempted := false
 	if exitType == ExitCompleted {
 		if roleInfo, err := GetRoleWithContext(cwd, townRoot); err == nil && roleInfo.Role == RolePolecat {
-			selfNukeAttempted = true
+			selfCleanAttempted = true
+
+			// Step 1: Nuke the worktree
 			if err := selfNukePolecat(roleInfo, townRoot); err != nil {
 				// Non-fatal: Witness will clean up if we fail
-				style.PrintWarning("self-nuke failed: %v (Witness will clean up)", err)
+				style.PrintWarning("worktree nuke failed: %v (Witness will clean up)", err)
 			} else {
-				fmt.Printf("%s Sandbox nuked\n", style.Bold.Render("✓"))
+				fmt.Printf("%s Worktree nuked\n", style.Bold.Render("✓"))
 			}
+
+			// Step 2: Kill our own session (this terminates Claude and the shell)
+			// This is the last thing we do - the process will be killed when tmux session dies
+			fmt.Printf("%s Terminating session (done means gone)\n", style.Bold.Render("→"))
+			if err := selfKillSession(townRoot, roleInfo); err != nil {
+				// If session kill fails, fall through to os.Exit
+				style.PrintWarning("session kill failed: %v", err)
+			}
+			// If selfKillSession succeeds, we won't reach here (process killed by tmux)
 		}
 	}
 
-	// Always exit session - polecats don't stay alive after completion
+	// Fallback exit for non-polecats or if self-clean failed
 	fmt.Println()
-	fmt.Printf("%s Session exiting (done means gone)\n", style.Bold.Render("→"))
-	if !selfNukeAttempted {
-		fmt.Printf("  Witness will handle worktree cleanup.\n")
+	fmt.Printf("%s Session exiting\n", style.Bold.Render("→"))
+	if !selfCleanAttempted {
+		fmt.Printf("  Witness will handle cleanup.\n")
 	}
 	fmt.Printf("  Goodbye!\n")
 	os.Exit(0)
@@ -579,6 +593,54 @@ func selfNukePolecat(roleInfo RoleInfo, _ string) error {
 	// The branch is pushed, MR is created, we're clean
 	if err := mgr.RemoveWithOptions(roleInfo.Polecat, true, true); err != nil {
 		return fmt.Errorf("removing worktree: %w", err)
+	}
+
+	return nil
+}
+
+// selfKillSession terminates the polecat's own tmux session after logging the event.
+// This completes the self-cleaning model: "done means gone" - both worktree and session.
+//
+// The polecat determines its session from environment variables:
+// - GT_RIG: the rig name
+// - GT_POLECAT: the polecat name
+// Session name format: gt-<rig>-<polecat>
+func selfKillSession(townRoot string, roleInfo RoleInfo) error {
+	// Get session info from environment (set at session startup)
+	rigName := os.Getenv("GT_RIG")
+	polecatName := os.Getenv("GT_POLECAT")
+
+	// Fall back to roleInfo if env vars not set (shouldn't happen but be safe)
+	if rigName == "" {
+		rigName = roleInfo.Rig
+	}
+	if polecatName == "" {
+		polecatName = roleInfo.Polecat
+	}
+
+	if rigName == "" || polecatName == "" {
+		return fmt.Errorf("cannot determine session: rig=%q, polecat=%q", rigName, polecatName)
+	}
+
+	sessionName := fmt.Sprintf("gt-%s-%s", rigName, polecatName)
+	agentID := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
+
+	// Log to townlog (human-readable audit log)
+	if townRoot != "" {
+		logger := townlog.NewLogger(townRoot)
+		_ = logger.Log(townlog.EventKill, agentID, "self-clean: done means gone")
+	}
+
+	// Log to events (JSON audit log with structured payload)
+	_ = events.LogFeed(events.TypeSessionDeath, agentID,
+		events.SessionDeathPayload(sessionName, agentID, "self-clean: done means gone", "gt done"))
+
+	// Kill our own tmux session
+	// This will terminate Claude and the shell, completing the self-cleaning cycle.
+	// We use exec.Command instead of the tmux package to avoid import cycles.
+	cmd := exec.Command("tmux", "kill-session", "-t", sessionName) //nolint:gosec // G204: sessionName is derived from env vars, not user input
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("killing session %s: %w", sessionName, err)
 	}
 
 	return nil
