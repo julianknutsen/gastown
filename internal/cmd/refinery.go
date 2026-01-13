@@ -18,8 +18,9 @@ import (
 
 // Refinery command flags
 var (
-	refineryStatusJSON bool
-	refineryQueueJSON  bool
+	refineryStatusJSON    bool
+	refineryQueueJSON     bool
+	refineryAgentOverride string
 )
 
 var refineryCmd = &cobra.Command{
@@ -207,6 +208,15 @@ Examples:
 var refineryBlockedJSON bool
 
 func init() {
+	// Start flags
+	refineryStartCmd.Flags().StringVar(&refineryAgentOverride, "agent", "", "Agent alias to run the Refinery with (overrides town default)")
+
+	// Attach flags
+	refineryAttachCmd.Flags().StringVar(&refineryAgentOverride, "agent", "", "Agent alias to run the Refinery with (overrides town default)")
+
+	// Restart flags
+	refineryRestartCmd.Flags().StringVar(&refineryAgentOverride, "agent", "", "Agent alias to run the Refinery with (overrides town default)")
+
 	// Status flags
 	refineryStatusCmd.Flags().BoolVar(&refineryStatusJSON, "json", false, "Output as JSON")
 
@@ -287,8 +297,11 @@ func runRefineryStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Resolve agent name
+	// Resolve agent name (use override if specified)
 	agentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+	if refineryAgentOverride != "" {
+		agentName = refineryAgentOverride
+	}
 
 	fmt.Printf("Starting refinery for %s...\n", rigName)
 
@@ -510,6 +523,9 @@ func runRefineryAttach(cmd *cobra.Command, args []string) error {
 		// Auto-start if not running
 		fmt.Printf("Refinery not running for %s, starting...\n", rigName)
 		agentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+		if refineryAgentOverride != "" {
+			agentName = refineryAgentOverride
+		}
 		if _, err := factory.Start(townRoot, refineryID, agentName); err != nil {
 			return fmt.Errorf("starting refinery: %w", err)
 		}
@@ -538,8 +554,13 @@ func runRefineryRestart(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Restarting refinery for %s...\n", rigName)
 
-	// Resolve agent name and use factory.Start() with KillExisting
+	// Resolve agent name (use override if specified)
 	agentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+	if refineryAgentOverride != "" {
+		agentName = refineryAgentOverride
+	}
+
+	// Use factory.Start() with KillExisting
 	refineryID := agent.RefineryAddress(rigName)
 	opts := []factory.StartOption{factory.WithKillExisting()}
 	if _, err := factory.Start(townRoot, refineryID, agentName, opts...); err != nil {
