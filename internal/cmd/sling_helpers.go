@@ -224,6 +224,11 @@ func injectStartPrompt(townRoot string, id agent.AgentID, beadID, subject, args 
 		return fmt.Errorf("no agent to nudge")
 	}
 
+	// Skip nudge during tests to prevent agent self-interruption
+	if os.Getenv("GT_TEST_NO_NUDGE") != "" {
+		return nil
+	}
+
 	// Build the prompt to inject
 	var prompt string
 	if args != "" {
