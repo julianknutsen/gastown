@@ -177,7 +177,8 @@ func runPolecatIdentityAdd(cmd *cobra.Command, args []string) error {
 	// Generate name if not provided
 	if polecatName == "" {
 		polecatGit := git.NewGit(r.Path)
-		mgr := polecat.NewManager(r, polecatGit)
+		t := tmux.NewTmux()
+		mgr := polecat.NewManager(r, polecatGit, t)
 		polecatName, err = mgr.AllocateName()
 		if err != nil {
 			return fmt.Errorf("generating polecat name: %w", err)
@@ -250,7 +251,7 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 
 		// Check if worktree exists
 		worktreeExists := false
-		mgr := polecat.NewManager(r, nil)
+		mgr := polecat.NewManager(r, nil, t)
 		if p, err := mgr.Get(name); err == nil && p != nil {
 			worktreeExists = true
 		}
@@ -362,7 +363,7 @@ func runPolecatIdentityShow(cmd *cobra.Command, args []string) error {
 	// Check worktree and session
 	t := tmux.NewTmux()
 	polecatMgr := polecat.NewSessionManager(t, r)
-	mgr := polecat.NewManager(r, nil)
+	mgr := polecat.NewManager(r, nil, t)
 
 	worktreeExists := false
 	if p, err := mgr.Get(polecatName); err == nil && p != nil {

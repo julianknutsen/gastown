@@ -144,6 +144,8 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	sessionID := m.SessionName(polecat)
 
 	// Check if session already exists
+	// Note: Orphan sessions are cleaned up by ReconcilePool during AllocateName,
+	// so by this point, any existing session should be legitimately in use.
 	running, err := m.tmux.HasSession(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)

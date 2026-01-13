@@ -228,10 +228,11 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 		}
 	}
 
+	// Clear any existing hook slot (handles stale state from previous lifecycle)
+	_, _ = b.run("slot", "clear", id, "hook")
+
 	// Set the hook slot if specified
 	if fields != nil && fields.HookBead != "" {
-		// Clear any existing hook first, then set new one
-		_, _ = b.run("slot", "clear", id, "hook")
 		if _, err := b.run("slot", "set", id, "hook", fields.HookBead); err != nil {
 			// Non-fatal: warn but continue
 			fmt.Printf("Warning: could not set hook slot: %v\n", err)
