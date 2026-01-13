@@ -330,7 +330,7 @@ gt mail inbox
 gt mail read <msg-id>
 
 # Mark as read
-gt mail ack <msg-id>
+gt mail mark-read <msg-id>
 ```
 
 ### In Patrol Formulas
