@@ -17,8 +17,12 @@ import (
 
 // Plugin command flags
 var (
-	pluginListJSON bool
-	pluginShowJSON bool
+	pluginListJSON    bool
+	pluginShowJSON    bool
+	pluginRunForce    bool
+	pluginRunDryRun   bool
+	pluginHistoryJSON bool
+	pluginHistoryLimit int
 )
 
 var pluginCmd = &cobra.Command{
@@ -78,6 +82,37 @@ Examples:
 	RunE: runPluginShow,
 }
 
+var pluginRunCmd = &cobra.Command{
+	Use:   "run <name>",
+	Short: "Manually trigger plugin execution",
+	Long: `Manually trigger a plugin to run.
+
+By default, checks if the gate would allow execution and informs you
+if it wouldn't. Use --force to bypass gate checks.
+
+Examples:
+  gt plugin run rebuild-gt              # Run if gate allows
+  gt plugin run rebuild-gt --force      # Bypass gate check
+  gt plugin run rebuild-gt --dry-run    # Show what would happen`,
+	Args: cobra.ExactArgs(1),
+	RunE: runPluginRun,
+}
+
+var pluginHistoryCmd = &cobra.Command{
+	Use:   "history <name>",
+	Short: "Show plugin execution history",
+	Long: `Show recent execution history for a plugin.
+
+Queries ephemeral beads (wisps) that record plugin runs.
+
+Examples:
+  gt plugin history rebuild-gt
+  gt plugin history rebuild-gt --json
+  gt plugin history rebuild-gt --limit 20`,
+	Args: cobra.ExactArgs(1),
+	RunE: runPluginHistory,
+}
+
 func init() {
 	// List subcommand flags
 	pluginListCmd.Flags().BoolVar(&pluginListJSON, "json", false, "Output as JSON")
@@ -85,9 +120,19 @@ func init() {
 	// Show subcommand flags
 	pluginShowCmd.Flags().BoolVar(&pluginShowJSON, "json", false, "Output as JSON")
 
+	// Run subcommand flags
+	pluginRunCmd.Flags().BoolVar(&pluginRunForce, "force", false, "Bypass gate check")
+	pluginRunCmd.Flags().BoolVar(&pluginRunDryRun, "dry-run", false, "Show what would happen without executing")
+
+	// History subcommand flags
+	pluginHistoryCmd.Flags().BoolVar(&pluginHistoryJSON, "json", false, "Output as JSON")
+	pluginHistoryCmd.Flags().IntVar(&pluginHistoryLimit, "limit", 10, "Maximum number of runs to show")
+
 	// Add subcommands
 	pluginCmd.AddCommand(pluginListCmd)
 	pluginCmd.AddCommand(pluginShowCmd)
+	pluginCmd.AddCommand(pluginRunCmd)
+	pluginCmd.AddCommand(pluginHistoryCmd)
 
 	rootCmd.AddCommand(pluginCmd)
 }
@@ -320,6 +365,142 @@ func outputPluginShowText(p *plugin.Plugin) error {
 		if len(lines) > 10 {
 			fmt.Printf("  %s\n", style.Dim.Render(fmt.Sprintf("... (%d more lines)", len(lines)-10)))
 		}
+	}
+
+	return nil
+}
+
+func runPluginRun(cmd *cobra.Command, args []string) error {
+	name := args[0]
+
+	scanner, townRoot, err := getPluginScanner()
+	if err != nil {
+		return err
+	}
+
+	p, err := scanner.GetPlugin(name)
+	if err != nil {
+		return err
+	}
+
+	// Check gate status for cooldown gates
+	gateOpen := true
+	gateReason := ""
+	if p.Gate != nil && p.Gate.Type == plugin.GateCooldown && !pluginRunForce {
+		recorder := plugin.NewRecorder(townRoot)
+		duration := p.Gate.Duration
+		if duration == "" {
+			duration = "1h" // default
+		}
+		count, err := recorder.CountRunsSince(p.Name, duration)
+		if err != nil {
+			// Log warning but continue
+			fmt.Fprintf(os.Stderr, "Warning: checking gate status: %v\n", err)
+		} else if count > 0 {
+			gateOpen = false
+			gateReason = fmt.Sprintf("ran %d time(s) within %s cooldown", count, duration)
+		}
+	}
+
+	if pluginRunDryRun {
+		fmt.Printf("%s Dry run for plugin: %s\n", style.Bold.Render("Plugin:"), p.Name)
+		fmt.Printf("%s %s\n", style.Bold.Render("Location:"), p.Path)
+		if p.Gate != nil {
+			fmt.Printf("%s %s\n", style.Bold.Render("Gate type:"), p.Gate.Type)
+		}
+		if !gateOpen {
+			fmt.Printf("%s %s (use --force to override)\n", style.Warning.Render("Gate closed:"), gateReason)
+		} else {
+			fmt.Printf("%s Would execute plugin instructions\n", style.Success.Render("Gate open:"))
+		}
+		return nil
+	}
+
+	if !gateOpen && !pluginRunForce {
+		fmt.Printf("%s Gate closed: %s\n", style.Warning.Render("⚠"), gateReason)
+		fmt.Printf("  Use --force to bypass gate check\n")
+		return nil
+	}
+
+	// Execute the plugin
+	// For manual runs, we print the instructions for the agent/user to execute
+	// Automatic execution via dogs is handled by gt-n08ix.2
+	fmt.Printf("%s Running plugin: %s\n", style.Success.Render("●"), p.Name)
+	if pluginRunForce && !gateOpen {
+		fmt.Printf("  %s\n", style.Dim.Render("(gate bypassed with --force)"))
+	}
+	fmt.Println()
+	fmt.Printf("%s\n", style.Bold.Render("Instructions:"))
+	fmt.Println(p.Instructions)
+
+	// Record the run
+	recorder := plugin.NewRecorder(townRoot)
+	beadID, err := recorder.RecordRun(plugin.PluginRunRecord{
+		PluginName: p.Name,
+		RigName:    p.RigName,
+		Result:     plugin.ResultSuccess, // Manual runs are marked success
+		Body:       "Manual run via gt plugin run",
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to record run: %v\n", err)
+	} else {
+		fmt.Printf("\n%s Recorded run: %s\n", style.Dim.Render("●"), beadID)
+	}
+
+	return nil
+}
+
+func runPluginHistory(cmd *cobra.Command, args []string) error {
+	name := args[0]
+
+	_, townRoot, err := getPluginScanner()
+	if err != nil {
+		return err
+	}
+
+	recorder := plugin.NewRecorder(townRoot)
+	runs, err := recorder.GetRunsSince(name, "")
+	if err != nil {
+		return fmt.Errorf("querying history: %w", err)
+	}
+
+	if runs == nil {
+		runs = []*plugin.PluginRunBead{}
+	}
+
+	// Apply limit
+	if pluginHistoryLimit > 0 && len(runs) > pluginHistoryLimit {
+		runs = runs[:pluginHistoryLimit]
+	}
+
+	if pluginHistoryJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(runs)
+	}
+
+	if len(runs) == 0 {
+		fmt.Printf("%s No execution history for plugin: %s\n", style.Dim.Render("○"), name)
+		return nil
+	}
+
+	fmt.Printf("%s Execution history for %s (%d runs)\n\n", style.Success.Render("●"), name, len(runs))
+
+	for _, run := range runs {
+		resultStyle := style.Success
+		resultIcon := "✓"
+		if run.Result == plugin.ResultFailure {
+			resultStyle = style.Error
+			resultIcon = "✗"
+		} else if run.Result == plugin.ResultSkipped {
+			resultStyle = style.Dim
+			resultIcon = "○"
+		}
+
+		fmt.Printf("  %s %s  %s\n",
+			resultStyle.Render(resultIcon),
+			run.CreatedAt.Format("2006-01-02 15:04"),
+			style.Dim.Render(run.ID))
 	}
 
 	return nil

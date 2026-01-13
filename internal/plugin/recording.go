@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -119,8 +120,8 @@ func (r *Recorder) GetRunsSince(pluginName string, since string) ([]*PluginRunBe
 func (r *Recorder) queryRuns(pluginName string, limit int, since string) ([]*PluginRunBead, error) {
 	args := []string{
 		"list",
-		"--ephemeral",
 		"--json",
+		"--all", // Include closed beads too
 		"-l", "type:plugin-run",
 		"-l", fmt.Sprintf("plugin:%s", pluginName),
 	}
@@ -128,7 +129,13 @@ func (r *Recorder) queryRuns(pluginName string, limit int, since string) ([]*Plu
 		args = append(args, fmt.Sprintf("--limit=%d", limit))
 	}
 	if since != "" {
-		args = append(args, "--since="+since)
+		// Convert duration like "1h" to created-after format
+		// bd supports relative dates with - prefix (e.g., -1h, -24h)
+		sinceArg := since
+		if !strings.HasPrefix(since, "-") {
+			sinceArg = "-" + since
+		}
+		args = append(args, "--created-after="+sinceArg)
 	}
 
 	cmd := exec.Command("bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
