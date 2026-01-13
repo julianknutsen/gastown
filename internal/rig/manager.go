@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -436,12 +437,10 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		}
 	}
 
-	// Create mayor CLAUDE.md (preserves existing from cloned repo)
-	if created, err := m.createRoleCLAUDEmd(mayorRigPath, "mayor", opts.Name, ""); err != nil {
-		return nil, fmt.Errorf("creating mayor CLAUDE.md: %w", err)
-	} else if !created {
-		fmt.Printf("   ✓ Preserved existing mayor/rig/CLAUDE.md\n")
-	}
+	// NOTE: We do NOT create CLAUDE.md/AGENTS.md for per-rig mayor.
+	// The per-rig <rig>/mayor/rig/ is just a source repo clone for beads operations.
+	// The actual mayor agent lives at town level (<root>/mayor/) and gets its
+	// CLAUDE.md from gt install.
 
 	// Initialize beads at rig level BEFORE creating worktrees.
 	// This ensures rig/.beads exists so worktree redirects can point to it.
@@ -476,11 +475,11 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	if err := beads.SetupRedirect(m.townRoot, refineryRigPath); err != nil {
 		fmt.Printf("  Warning: Could not set up refinery beads redirect: %v\n", err)
 	}
-	// Create refinery CLAUDE.md (preserves existing from cloned repo)
-	if created, err := m.createRoleCLAUDEmd(refineryRigPath, "refinery", opts.Name, ""); err != nil {
+	// Create refinery CLAUDE.md at agent level (refinery/, not refinery/rig/)
+	// This is a minimal bootstrap pointer - full context comes from gt prime
+	refineryPath := filepath.Dir(refineryRigPath)
+	if err := m.createAgentInstructionsMD(refineryPath, "refinery", opts.Name); err != nil {
 		return nil, fmt.Errorf("creating refinery CLAUDE.md: %w", err)
-	} else if !created {
-		fmt.Printf("   ✓ Preserved existing refinery/rig/CLAUDE.md\n")
 	}
 	// Copy overlay files from .runtime/overlay/ to refinery root.
 	// This allows services to have .env and other config files at their root.
@@ -488,8 +487,8 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		// Non-fatal - log warning but continue
 		fmt.Printf("  Warning: Could not copy overlay files to refinery: %v\n", err)
 	}
+
 	// Create refinery hooks for patrol triggering (at refinery/ level, not rig/)
-	refineryPath := filepath.Dir(refineryRigPath)
 	runtimeConfig := config.ResolveRoleAgentConfig("refinery", m.townRoot, rigPath)
 	if err := m.createPatrolHooks(refineryPath, runtimeConfig); err != nil {
 		fmt.Printf("  Warning: Could not create refinery hooks: %v\n", err)
@@ -522,6 +521,10 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	if err := os.WriteFile(readmePath, []byte(readmeContent), 0644); err != nil {
 		return nil, fmt.Errorf("creating crew README: %w", err)
 	}
+	// Create crew CLAUDE.md/AGENTS.md at parent level (for all crew worktrees)
+	if err := m.createAgentInstructionsMD(crewPath, "crew", opts.Name); err != nil {
+		return nil, fmt.Errorf("creating crew CLAUDE.md: %w", err)
+	}
 
 	// Create witness directory (no clone needed)
 	witnessPath := filepath.Join(rigPath, "witness")
@@ -532,11 +535,19 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	if err := m.createPatrolHooks(witnessPath, runtimeConfig); err != nil {
 		fmt.Printf("  Warning: Could not create witness hooks: %v\n", err)
 	}
+	// Create witness CLAUDE.md/AGENTS.md at agent level
+	if err := m.createAgentInstructionsMD(witnessPath, "witness", opts.Name); err != nil {
+		return nil, fmt.Errorf("creating witness CLAUDE.md: %w", err)
+	}
 
 	// Create polecats directory (empty)
 	polecatsPath := filepath.Join(rigPath, "polecats")
 	if err := os.MkdirAll(polecatsPath, 0755); err != nil {
 		return nil, fmt.Errorf("creating polecats dir: %w", err)
+	}
+	// Create polecats CLAUDE.md/AGENTS.md at parent level (for all polecat worktrees)
+	if err := m.createAgentInstructionsMD(polecatsPath, "polecats", opts.Name); err != nil {
+		return nil, fmt.Errorf("creating polecats CLAUDE.md: %w", err)
 	}
 
 	// Install runtime settings for all agent directories.
@@ -1116,86 +1127,21 @@ func (m *Manager) ListRigNames() []string {
 	return names
 }
 
-// createRoleCLAUDEmd creates a minimal bootstrap pointer CLAUDE.md file.
+// createAgentInstructionsMD creates a minimal bootstrap pointer CLAUDE.md file.
 // Full context is injected ephemerally by `gt prime` at session start.
 // This keeps on-disk files small (<30 lines) per the priming architecture.
-//
-// Returns (created bool, error) - created is false if file already exists.
-// Existing files are preserved to respect user customizations from cloned repos.
-func (m *Manager) createRoleCLAUDEmd(workspacePath string, role string, rigName string, workerName string) (bool, error) {
-	claudePath := filepath.Join(workspacePath, "CLAUDE.md")
+func (m *Manager) createAgentInstructionsMD(agentPath string, role string, rigName string) error {
+	bootstrap := agent.GenerateBootstrap(role, rigName)
 
-	// Check if file already exists - preserve existing from cloned repo
-	if _, err := os.Stat(claudePath); err == nil {
-		return false, nil // File exists, preserve it
-	} else if !os.IsNotExist(err) {
-		return false, err // Unexpected error
+	claudePath := filepath.Join(agentPath, "CLAUDE.md")
+	if err := os.WriteFile(claudePath, []byte(bootstrap), 0644); err != nil {
+		return err
 	}
 
-	// Create role-specific bootstrap pointer
-	var bootstrap string
-	switch role {
-	case "mayor":
-		bootstrap = `# Mayor Context (` + rigName + `)
-
-> **Recovery**: Run ` + "`" + cli.Name() + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + cli.Name() + " prime`" + ` at session start.
-`
-	case "refinery":
-		bootstrap = `# Refinery Context (` + rigName + `)
-
-> **Recovery**: Run ` + "`" + cli.Name() + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + cli.Name() + " prime`" + ` at session start.
-
-## Quick Reference
-
-- Check MQ: ` + "`" + cli.Name() + " mq list`" + `
-- Process next: ` + "`" + cli.Name() + " mq process`" + `
-`
-	case "crew":
-		name := workerName
-		if name == "" {
-			name = "worker"
-		}
-		bootstrap = `# Crew Context (` + rigName + `/` + name + `)
-
-> **Recovery**: Run ` + "`" + cli.Name() + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + cli.Name() + " prime`" + ` at session start.
-
-## Quick Reference
-
-- Check hook: ` + "`" + cli.Name() + " hook`" + `
-- Check mail: ` + "`" + cli.Name() + " mail inbox`" + `
-`
-	case "polecat":
-		name := workerName
-		if name == "" {
-			name = "worker"
-		}
-		bootstrap = `# Polecat Context (` + rigName + `/` + name + `)
-
-> **Recovery**: Run ` + "`" + cli.Name() + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + cli.Name() + " prime`" + ` at session start.
-
-## Quick Reference
-
-- Check hook: ` + "`" + cli.Name() + " hook`" + `
-- Report done: ` + "`" + cli.Name() + " done`" + `
-`
-	default:
-		bootstrap = `# Agent Context
-
-> **Recovery**: Run ` + "`" + cli.Name() + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + cli.Name() + " prime`" + ` at session start.
-`
-	}
-
-	return true, os.WriteFile(claudePath, []byte(bootstrap), 0644)
+	// Also create AGENTS.md with same content for multi-provider support
+	// (Codex reads AGENTS.md, Claude reads CLAUDE.md)
+	agentsPath := filepath.Join(agentPath, "AGENTS.md")
+	return os.WriteFile(agentsPath, []byte(bootstrap), 0644)
 }
 
 // createPatrolHooks creates .claude/settings.json with hooks for patrol roles.
