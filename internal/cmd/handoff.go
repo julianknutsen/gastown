@@ -442,10 +442,11 @@ func sessionWorkDir(sessionName, townRoot string) (string, error) {
 		return "", fmt.Errorf("cannot parse crew session name: %s", sessionName)
 
 	case strings.HasSuffix(sessionName, "-witness"):
-		// gt-<rig>-witness -> <townRoot>/<rig>/witness/rig
+		// gt-<rig>-witness -> <townRoot>/<rig>/witness
+		// Note: witness doesn't have a /rig worktree like refinery does
 		rig := strings.TrimPrefix(sessionName, "gt-")
 		rig = strings.TrimSuffix(rig, "-witness")
-		return fmt.Sprintf("%s/%s/witness/rig", townRoot, rig), nil
+		return fmt.Sprintf("%s/%s/witness", townRoot, rig), nil
 
 	case strings.HasSuffix(sessionName, "-refinery"):
 		// gt-<rig>-refinery -> <townRoot>/<rig>/refinery/rig
