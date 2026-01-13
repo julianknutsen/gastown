@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/steveyegge/gastown/internal/cli"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -457,12 +456,9 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		}
 	}
 
-	// Create mayor CLAUDE.md (preserves existing from cloned repo)
-	if created, err := m.createRoleCLAUDEmd(mayorRigPath, "mayor", opts.Name, ""); err != nil {
-		return nil, fmt.Errorf("creating mayor CLAUDE.md: %w", err)
-	} else if !created {
-		fmt.Printf("   ✓ Preserved existing mayor/rig/CLAUDE.md\n")
-	}
+	// NOTE: No per-directory CLAUDE.md/AGENTS.md is created for any agent.
+	// Only ~/gt/CLAUDE.md (town-root identity anchor) exists on disk.
+	// Full context is injected ephemerally by `gt prime` at session start.
 
 	// Initialize beads at rig level BEFORE creating worktrees.
 	// This ensures rig/.beads exists so worktree redirects can point to it.
@@ -507,20 +503,15 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	if err := beads.SetupRedirect(m.townRoot, refineryRigPath); err != nil {
 		fmt.Printf("  Warning: Could not set up refinery beads redirect: %v\n", err)
 	}
-	// Create refinery CLAUDE.md (preserves existing from cloned repo)
-	if created, err := m.createRoleCLAUDEmd(refineryRigPath, "refinery", opts.Name, ""); err != nil {
-		return nil, fmt.Errorf("creating refinery CLAUDE.md: %w", err)
-	} else if !created {
-		fmt.Printf("   ✓ Preserved existing refinery/rig/CLAUDE.md\n")
-	}
+	refineryPath := filepath.Dir(refineryRigPath)
 	// Copy overlay files from .runtime/overlay/ to refinery root.
 	// This allows services to have .env and other config files at their root.
 	if err := CopyOverlay(rigPath, refineryRigPath); err != nil {
 		// Non-fatal - log warning but continue
 		fmt.Printf("  Warning: Could not copy overlay files to refinery: %v\n", err)
 	}
+
 	// Create refinery hooks for patrol triggering (at refinery/ level, not rig/)
-	refineryPath := filepath.Dir(refineryRigPath)
 	runtimeConfig := config.ResolveRoleAgentConfig("refinery", m.townRoot, rigPath)
 	if err := m.createPatrolHooks(refineryPath, runtimeConfig); err != nil {
 		fmt.Printf("  Warning: Could not create refinery hooks: %v\n", err)
@@ -553,7 +544,6 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	if err := os.WriteFile(readmePath, []byte(readmeContent), 0644); err != nil {
 		return nil, fmt.Errorf("creating crew README: %w", err)
 	}
-
 	// Create witness directory (no clone needed)
 	witnessPath := filepath.Join(rigPath, "witness")
 	if err := os.MkdirAll(witnessPath, 0755); err != nil {
@@ -563,13 +553,11 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	if err := m.createPatrolHooks(witnessPath, runtimeConfig); err != nil {
 		fmt.Printf("  Warning: Could not create witness hooks: %v\n", err)
 	}
-
 	// Create polecats directory (empty)
 	polecatsPath := filepath.Join(rigPath, "polecats")
 	if err := os.MkdirAll(polecatsPath, 0755); err != nil {
 		return nil, fmt.Errorf("creating polecats dir: %w", err)
 	}
-
 	// Install runtime settings for all agent directories.
 	// Settings are placed in parent directories (not inside git repos) so Claude
 	// finds them via directory traversal without polluting source repos.
@@ -1164,111 +1152,6 @@ func (m *Manager) ListRigNames() []string {
 		names = append(names, name)
 	}
 	return names
-}
-
-// createRoleCLAUDEmd creates a minimal bootstrap pointer CLAUDE.md file.
-// Full context is injected ephemerally by `gt prime` at session start.
-// This keeps on-disk files small (<30 lines) per the priming architecture.
-//
-// Returns (created bool, error) - created is false if file already exists.
-// Existing files are preserved to respect user customizations from cloned repos.
-func (m *Manager) createRoleCLAUDEmd(workspacePath string, role string, rigName string, workerName string) (bool, error) {
-	claudePath := filepath.Join(workspacePath, "CLAUDE.md")
-
-	// Check if file already exists - preserve existing from cloned repo
-	if _, err := os.Stat(claudePath); err == nil {
-		return false, nil // File exists, preserve it
-	} else if !os.IsNotExist(err) {
-		return false, err // Unexpected error
-	}
-
-	// Create role-specific bootstrap pointer
-	c := cli.Name()
-	var bootstrap string
-	switch role {
-	case "mayor":
-		bootstrap = `# Mayor Context (` + rigName + `)
-
-> **Recovery**: Run ` + "`" + c + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + c + " prime`" + ` at session start.
-
-## Quick Reference
-
-- Dispatch work: ` + "`" + c + " sling <bead> <rig>`" + `
-- Message agent: ` + "`" + c + " nudge <target> \"msg\"`" + ` (never tmux send-keys)
-- Kill stuck agent: ` + "`" + c + " polecat nuke <rig>/<name> --force`" + `
-- Pause rig: ` + "`" + c + " rig park <rig>`" + ` (not rig stop — daemon restarts stopped rigs)
-- Resume rig: ` + "`" + c + " rig unpark <rig>`" + `
-- Disable rig: ` + "`" + c + " rig dock <rig>`" + ` (persistent, survives daemon restarts)
-- Re-enable rig: ` + "`" + c + " rig undock <rig>`" + `
-- Create issue: ` + "`bd create \"title\"`" + `
-`
-	case "refinery":
-		bootstrap = `# Refinery Context (` + rigName + `)
-
-> **Recovery**: Run ` + "`" + c + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + c + " prime`" + ` at session start.
-
-## Quick Reference
-
-- Check merge queue: ` + "`" + c + " mq list " + rigName + "`" + ` (never git branch -r | grep polecat)
-- Message polecat: ` + "`" + c + " nudge <rig>/<name> \"msg\"`" + ` (never tmux send-keys)
-- Create issue: ` + "`bd create \"title\"`" + `
-- Cycle session: ` + "`" + c + " handoff`" + `
-`
-	case "crew":
-		name := workerName
-		if name == "" {
-			name = "worker"
-		}
-		bootstrap = `# Crew Context (` + rigName + `/` + name + `)
-
-> **Recovery**: Run ` + "`" + c + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + c + " prime`" + ` at session start.
-
-## Quick Reference
-
-- Check hook: ` + "`" + c + " hook`" + `
-- Check mail: ` + "`" + c + " mail inbox`" + `
-- Message agent: ` + "`" + c + " nudge <target> \"msg\"`" + ` (never tmux send-keys)
-- Dispatch work: ` + "`" + c + " sling <bead> <rig>`" + `
-- Pause rig: ` + "`" + c + " rig park <rig>`" + ` (not rig stop — daemon restarts stopped rigs)
-- Resume rig: ` + "`" + c + " rig unpark <rig>`" + `
-- Cycle session: ` + "`" + c + " handoff`" + `
-`
-	case "polecat":
-		name := workerName
-		if name == "" {
-			name = "worker"
-		}
-		bootstrap = `# Polecat Context (` + rigName + `/` + name + `)
-
-> **Recovery**: Run ` + "`" + c + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + c + " prime`" + ` at session start.
-
-## Quick Reference
-
-- Check hook: ` + "`" + c + " hook`" + `
-- Report done: ` + "`" + c + " done`" + ` (CRITICAL — run when work complete)
-- Next step: ` + "`bd ready`" + `
-- Message agent: ` + "`" + c + " nudge <target> \"msg\"`" + ` (never tmux send-keys)
-- File new issue: ` + "`bd create \"title\"`" + `
-- Ask for help: ` + "`" + c + " mail send <rig>/witness -s \"HELP: ...\" -m \"...\"`" + `
-`
-	default:
-		bootstrap = `# Agent Context
-
-> **Recovery**: Run ` + "`" + c + " prime`" + ` after compaction, clear, or new session
-
-Full context is injected by ` + "`" + c + " prime`" + ` at session start.
-`
-	}
-
-	return true, os.WriteFile(claudePath, []byte(bootstrap), 0644)
 }
 
 // createPatrolHooks creates .claude/settings.json with hooks for patrol roles.
