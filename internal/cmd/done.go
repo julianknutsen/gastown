@@ -96,10 +96,22 @@ func runDone(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Find workspace
-	townRoot, err := workspace.FindFromCwdOrError()
+	// Find workspace with fallback for deleted worktrees (hq-3xaxy)
+	// If the polecat's worktree was deleted by Witness before gt done finishes,
+	// getcwd will fail. We fall back to GT_TOWN_ROOT env var in that case.
+	townRoot, cwd, err := workspace.FindFromCwdWithFallback()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Track if cwd is available - affects which operations we can do
+	cwdAvailable := cwd != ""
+	if !cwdAvailable {
+		style.PrintWarning("working directory deleted (worktree nuked?), using fallback paths")
+		// Try to get cwd from GT_POLECAT_PATH env var (set by session manager)
+		if polecatPath := os.Getenv("GT_POLECAT_PATH"); polecatPath != "" {
+			cwd = polecatPath // May still be gone, but we have a path to use
+		}
 	}
 
 	// Find current rig
@@ -108,43 +120,66 @@ func runDone(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Initialize git for the current directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getting current directory: %w", err)
+	// Initialize git - use cwd if available, otherwise use rig's mayor clone
+	var g *git.Git
+	if cwdAvailable {
+		g = git.NewGit(cwd)
+	} else {
+		// Fallback: use the rig's mayor clone for git operations
+		mayorClone := filepath.Join(townRoot, rigName, "mayor", "rig")
+		g = git.NewGit(mayorClone)
 	}
-	g := git.NewGit(cwd)
 
-	// Get current branch
-	branch, err := g.CurrentBranch()
-	if err != nil {
-		return fmt.Errorf("getting current branch: %w", err)
+	// Get current branch - try env var first if cwd is gone
+	var branch string
+	if !cwdAvailable {
+		// Try to get branch from GT_BRANCH env var (set by session manager)
+		branch = os.Getenv("GT_BRANCH")
+	}
+	if branch == "" {
+		var err error
+		branch, err = g.CurrentBranch()
+		if err != nil {
+			// Last resort: try to extract from polecat name (polecat/<name>-<suffix>)
+			if polecatName := os.Getenv("GT_POLECAT"); polecatName != "" {
+				branch = fmt.Sprintf("polecat/%s", polecatName)
+				style.PrintWarning("could not get branch from git, using fallback: %s", branch)
+			} else {
+				return fmt.Errorf("getting current branch: %w", err)
+			}
+		}
 	}
 
 	// Auto-detect cleanup status if not explicitly provided
 	// This prevents premature polecat cleanup by ensuring witness knows git state
 	if doneCleanupStatus == "" {
-		workStatus, err := g.CheckUncommittedWork()
-		if err != nil {
-			style.PrintWarning("could not auto-detect cleanup status: %v", err)
+		if !cwdAvailable {
+			// Can't detect git state without working directory, default to unknown
+			doneCleanupStatus = "unknown"
+			style.PrintWarning("cannot detect cleanup status - working directory deleted")
 		} else {
-			switch {
-			case workStatus.HasUncommittedChanges:
-				doneCleanupStatus = "uncommitted"
-			case workStatus.StashCount > 0:
-				doneCleanupStatus = "stash"
-			default:
-				// CheckUncommittedWork.UnpushedCommits doesn't work for branches
-				// without upstream tracking (common for polecats). Use the more
-				// robust BranchPushedToRemote which compares against origin/main.
-				pushed, unpushedCount, err := g.BranchPushedToRemote(branch, "origin")
-				if err != nil {
-					style.PrintWarning("could not check if branch is pushed: %v", err)
-					doneCleanupStatus = "unpushed" // err on side of caution
-				} else if !pushed || unpushedCount > 0 {
-					doneCleanupStatus = "unpushed"
-				} else {
-					doneCleanupStatus = "clean"
+			workStatus, err := g.CheckUncommittedWork()
+			if err != nil {
+				style.PrintWarning("could not auto-detect cleanup status: %v", err)
+			} else {
+				switch {
+				case workStatus.HasUncommittedChanges:
+					doneCleanupStatus = "uncommitted"
+				case workStatus.StashCount > 0:
+					doneCleanupStatus = "stash"
+				default:
+					// CheckUncommittedWork.UnpushedCommits doesn't work for branches
+					// without upstream tracking (common for polecats). Use the more
+					// robust BranchPushedToRemote which compares against origin/main.
+					pushed, unpushedCount, err := g.BranchPushedToRemote(branch, "origin")
+					if err != nil {
+						style.PrintWarning("could not check if branch is pushed: %v", err)
+						doneCleanupStatus = "unpushed" // err on side of caution
+					} else if !pushed || unpushedCount > 0 {
+						doneCleanupStatus = "unpushed"
+					} else {
+						doneCleanupStatus = "clean"
+					}
 				}
 			}
 		}
@@ -430,11 +465,36 @@ func runDone(cmd *cobra.Command, args []string) error {
 // intentional agent decisions that can't be observed from tmux.
 //
 // Also self-reports cleanup_status for ZFC compliance (#10).
+//
+// BUG FIX (hq-3xaxy): This function must be resilient to working directory deletion.
+// If the polecat's worktree is deleted before gt done finishes, we use env vars as fallback.
+// All errors are warnings, not failures - gt done must complete even if bead ops fail.
 func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unused but kept for future audit logging
-	// Get role context
+	// Get role context - try multiple sources for resilience
 	roleInfo, err := GetRoleWithContext(cwd, townRoot)
 	if err != nil {
-		return
+		// Fallback: try to construct role info from environment variables
+		// This handles the case where cwd is deleted but env vars are set
+		envRole := os.Getenv("GT_ROLE")
+		envRig := os.Getenv("GT_RIG")
+		envPolecat := os.Getenv("GT_POLECAT")
+
+		if envRole == "" || envRig == "" {
+			// Can't determine role, skip agent state update
+			return
+		}
+
+		// Parse role string to get Role type
+		parsedRole, _, _ := parseRoleString(envRole)
+
+		roleInfo = RoleInfo{
+			Role:     parsedRole,
+			Rig:      envRig,
+			Polecat:  envPolecat,
+			TownRoot: townRoot,
+			WorkDir:  cwd,
+			Source:   "env-fallback",
+		}
 	}
 
 	ctx := RoleContext{
@@ -451,6 +511,8 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 	}
 
 	// Use rig path for slot commands - bd slot doesn't route from town root
+	// IMPORTANT: Use the rig's directory (not polecat worktree) so bd commands
+	// work even if the polecat worktree is deleted.
 	var beadsPath string
 	switch ctx.Role {
 	case RoleMayor, RoleDeacon:
@@ -467,10 +529,14 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 	// BUG FIX (hq-i26n2): Check if agent bead exists before clearing hook.
 	// Old polecats may not have identity beads, so ClearHookBead would fail.
 	// gt done must be resilient - missing agent bead is not an error.
+	//
+	// BUG FIX (hq-3xaxy): All bead operations are non-fatal. If the agent bead
+	// is deleted by another process (e.g., Witness cleanup), we just warn.
 	agentBead, err := bd.Show(agentBeadID)
 	if err != nil {
 		// Agent bead doesn't exist - nothing to clear, that's fine
-		// This happens for polecats created before identity beads existed
+		// This happens for polecats created before identity beads existed,
+		// or if the agent bead was deleted by another process
 		return
 	}
 
@@ -479,13 +545,17 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 		// Only close if the hooked bead exists and is still in "hooked" status
 		if hookedBead, err := bd.Show(hookedBeadID); err == nil && hookedBead.Status == beads.StatusHooked {
 			if err := bd.Close(hookedBeadID); err != nil {
+				// Non-fatal: warn but continue
 				fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)
 			}
 		}
 	}
 
 	// Clear the hook (work is done) - gt-zecmc
+	// BUG FIX (hq-3xaxy): This is non-fatal - if hook clearing fails, warn and continue.
+	// The Witness will clean up any orphaned state.
 	if err := bd.ClearHookBead(agentBeadID); err != nil {
+		// Non-fatal: warn but don't fail gt done
 		fmt.Fprintf(os.Stderr, "Warning: couldn't clear agent %s hook: %v\n", agentBeadID, err)
 	}
 
