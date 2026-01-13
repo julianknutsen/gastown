@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -179,7 +178,6 @@ func (b *Boot) spawnTmux() error {
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:     "boot",
 		TownRoot: b.townRoot,
-		BeadsDir: beads.ResolveBeadsDir(b.townRoot),
 	})
 	for k, v := range envVars {
 		_ = b.tmux.SetEnvironment(SessionName, k, v)
@@ -187,7 +185,7 @@ func (b *Boot) spawnTmux() error {
 
 	// Launch Claude with environment exported inline and initial triage prompt
 	// The "gt boot triage" prompt tells Boot to immediately start triage (GUPP principle)
-	startCmd := config.BuildAgentStartupCommand("boot", "deacon-boot", "", "gt boot triage")
+	startCmd := config.BuildAgentStartupCommand("boot", "", b.townRoot, "", "gt boot triage")
 	// Wait for shell to be ready before sending keys (prevents "can't find pane" under load)
 	if err := b.tmux.WaitForShellReady(SessionName, 5*time.Second); err != nil {
 		_ = b.tmux.KillSession(SessionName)
@@ -212,7 +210,6 @@ func (b *Boot) spawnDegraded() error {
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:     "boot",
 		TownRoot: b.townRoot,
-		BeadsDir: beads.ResolveBeadsDir(b.townRoot),
 	})
 	cmd.Env = config.EnvForExecCommand(envVars)
 	cmd.Env = append(cmd.Env, "GT_DEGRADED=true")

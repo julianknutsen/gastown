@@ -176,7 +176,6 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 		Role:     "witness",
 		Rig:      m.rig.Name,
 		TownRoot: townRoot,
-		BeadsDir: beads.ResolveBeadsDir(m.rig.Path),
 	})
 	for k, v := range envVars {
 		_ = t.SetEnvironment(sessionID, k, v)
@@ -287,8 +286,7 @@ func buildWitnessStartCommand(rigPath, rigName, townRoot, agentOverride string, 
 	if roleConfig != nil && roleConfig.StartCommand != "" {
 		return beads.ExpandRolePattern(roleConfig.StartCommand, townRoot, rigName, "", "witness"), nil
 	}
-	bdActor := fmt.Sprintf("%s/witness", rigName)
-	command, err := config.BuildAgentStartupCommandWithAgentOverride("witness", bdActor, rigPath, "", agentOverride)
+	command, err := config.BuildAgentStartupCommandWithAgentOverride("witness", rigName, townRoot, rigPath, "", agentOverride)
 	if err != nil {
 		return "", fmt.Errorf("building startup command: %w", err)
 	}

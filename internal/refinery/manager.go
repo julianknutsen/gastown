@@ -174,8 +174,8 @@ func (m *Manager) Start(foreground bool) error {
 	}
 
 	// Build startup command first
-	bdActor := fmt.Sprintf("%s/refinery", m.rig.Name)
-	command := config.BuildAgentStartupCommand("refinery", bdActor, m.rig.Path, "")
+	townRoot := filepath.Dir(m.rig.Path)
+	command := config.BuildAgentStartupCommand("refinery", m.rig.Name, townRoot, m.rig.Path, "")
 
 	// Create session with command directly to avoid send-keys race condition.
 	// See: https://github.com/anthropics/gastown/issues/280
@@ -185,12 +185,10 @@ func (m *Manager) Start(foreground bool) error {
 
 	// Set environment variables (non-fatal: session works without these)
 	// Use centralized AgentEnv for consistency across all role startup paths
-	townRoot := filepath.Dir(m.rig.Path)
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:          "refinery",
 		Rig:           m.rig.Name,
 		TownRoot:      townRoot,
-		BeadsDir:      beads.ResolveBeadsDir(m.rig.Path),
 		BeadsNoDaemon: true,
 	})
 
