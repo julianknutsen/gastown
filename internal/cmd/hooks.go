@@ -23,7 +23,7 @@ var hooksCmd = &cobra.Command{
 	Short:   "List all Claude Code hooks in the workspace",
 	Long: `List all Claude Code hooks configured in the workspace.
 
-Scans for .claude/settings.json files and displays hooks by type.
+Scans for .claude/settings.local.json files and displays hooks by type.
 
 Hook types:
   SessionStart     - Runs when Claude session starts
@@ -104,15 +104,15 @@ func runHooks(cmd *cobra.Command, args []string) error {
 func discoverHooks(townRoot string) ([]HookInfo, error) {
 	var hooks []HookInfo
 
-	// Scan known locations for .claude/settings.json
-	// NOTE: Mayor settings are at ~/gt/mayor/.claude/, NOT ~/gt/.claude/
-	// Settings at town root would pollute all child workspaces.
+	// Scan known locations for .claude/settings.local.json
+	// We use settings.local.json (not settings.json) to avoid conflicts and be gitignored.
+	// See: https://github.com/anthropics/claude-code/issues/12962
 	locations := []struct {
 		path  string
 		agent string
 	}{
-		{filepath.Join(townRoot, "mayor", ".claude", "settings.json"), "mayor/"},
-		{filepath.Join(townRoot, "deacon", ".claude", "settings.json"), "deacon/"},
+		{filepath.Join(townRoot, "mayor", ".claude", "settings.local.json"), "mayor/"},
+		{filepath.Join(townRoot, "deacon", ".claude", "settings.local.json"), "deacon/"},
 	}
 
 	// Scan rigs
@@ -122,20 +122,14 @@ func discoverHooks(townRoot string) ([]HookInfo, error) {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") {
+		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "deacon" || entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 
 		rigName := entry.Name()
 		rigPath := filepath.Join(townRoot, rigName)
 
-		// Rig-level hooks
-		locations = append(locations, struct {
-			path  string
-			agent string
-		}{filepath.Join(rigPath, ".claude", "settings.json"), fmt.Sprintf("%s/rig", rigName)})
-
-		// Polecats
+		// Polecats - settings in worktree (polecats/<name>/<rigname>/)
 		polecatsDir := filepath.Join(rigPath, "polecats")
 		if polecats, err := os.ReadDir(polecatsDir); err == nil {
 			for _, p := range polecats {
@@ -143,33 +137,33 @@ func discoverHooks(townRoot string) ([]HookInfo, error) {
 					locations = append(locations, struct {
 						path  string
 						agent string
-					}{filepath.Join(polecatsDir, p.Name(), ".claude", "settings.json"), fmt.Sprintf("%s/%s", rigName, p.Name())})
+					}{filepath.Join(polecatsDir, p.Name(), rigName, ".claude", "settings.local.json"), fmt.Sprintf("%s/%s", rigName, p.Name())})
 				}
 			}
 		}
 
-		// Crew members
+		// Crew members - settings in each worker's directory (crew/<name>/)
 		crewDir := filepath.Join(rigPath, "crew")
 		if crew, err := os.ReadDir(crewDir); err == nil {
 			for _, c := range crew {
-				if c.IsDir() {
+				if c.IsDir() && !strings.HasPrefix(c.Name(), ".") {
 					locations = append(locations, struct {
 						path  string
 						agent string
-					}{filepath.Join(crewDir, c.Name(), ".claude", "settings.json"), fmt.Sprintf("%s/crew/%s", rigName, c.Name())})
+					}{filepath.Join(crewDir, c.Name(), ".claude", "settings.local.json"), fmt.Sprintf("%s/crew/%s", rigName, c.Name())})
 				}
 			}
 		}
 
-		// Witness
-		witnessPath := filepath.Join(rigPath, "witness", ".claude", "settings.json")
+		// Witness - settings in working directory (witness/rig/)
+		witnessPath := filepath.Join(rigPath, "witness", "rig", ".claude", "settings.local.json")
 		locations = append(locations, struct {
 			path  string
 			agent string
 		}{witnessPath, fmt.Sprintf("%s/witness", rigName)})
 
-		// Refinery
-		refineryPath := filepath.Join(rigPath, "refinery", ".claude", "settings.json")
+		// Refinery - settings in working directory (refinery/rig/)
+		refineryPath := filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.local.json")
 		locations = append(locations, struct {
 			path  string
 			agent string

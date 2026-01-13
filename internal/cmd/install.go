@@ -208,7 +208,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	} else if err := claude.EnsureSettingsForRole(mayorDir, "mayor"); err != nil {
 		fmt.Printf("   %s Could not create mayor settings: %v\n", style.Dim.Render("⚠"), err)
 	} else {
-		fmt.Printf("   ✓ Created mayor/.claude/settings.json\n")
+		fmt.Printf("   ✓ Created mayor/.claude/settings.local.json\n")
 	}
 
 	// Create deacon directory and settings (deacon runs from ~/gt/deacon/)
@@ -218,7 +218,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	} else if err := claude.EnsureSettingsForRole(deaconDir, "deacon"); err != nil {
 		fmt.Printf("   %s Could not create deacon settings: %v\n", style.Dim.Render("⚠"), err)
 	} else {
-		fmt.Printf("   ✓ Created deacon/.claude/settings.json\n")
+		fmt.Printf("   ✓ Created deacon/.claude/settings.local.json\n")
 	}
 
 	// Initialize git BEFORE beads so that bd can compute repository fingerprint.
