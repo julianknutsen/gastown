@@ -338,7 +338,7 @@ Full context is injected by ` + "`gt prime`" + ` at session start.
 
 - Check mail: ` + "`gt mail inbox`" + `
 - Check rigs: ` + "`gt rig list`" + `
-- Start patrol: ` + "`gt patrol start`" + `
+- Start patrol: ` + "`gt witness start`" + `
 `
 	claudePath := filepath.Join(mayorDir, "CLAUDE.md")
 	return os.WriteFile(claudePath, []byte(bootstrap), 0644)
