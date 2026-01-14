@@ -134,6 +134,70 @@ func (t *Tmux) KillSession(name string) error {
 	return err
 }
 
+// KillSessionWithProcesses explicitly kills all processes in a session before terminating it.
+// This prevents orphan processes that survive tmux kill-session due to SIGHUP being ignored.
+//
+// Process:
+// 1. Get the pane's main process PID
+// 2. Find all descendant processes recursively (not just direct children)
+// 3. Send SIGTERM to all descendants (deepest first)
+// 4. Wait 100ms for graceful shutdown
+// 5. Send SIGKILL to any remaining descendants
+// 6. Kill the tmux session
+//
+// This ensures Claude processes and all their children are properly terminated.
+func (t *Tmux) KillSessionWithProcesses(name string) error {
+	// Get the pane PID
+	pid, err := t.GetPanePID(name)
+	if err != nil {
+		// Session might not exist or be in bad state, try direct kill
+		return t.KillSession(name)
+	}
+
+	if pid != "" {
+		// Get all descendant PIDs recursively (returns deepest-first order)
+		descendants := getAllDescendants(pid)
+
+		// Send SIGTERM to all descendants (deepest first to avoid orphaning)
+		for _, dpid := range descendants {
+			_ = exec.Command("kill", "-TERM", dpid).Run()
+		}
+
+		// Wait for graceful shutdown
+		time.Sleep(100 * time.Millisecond)
+
+		// Send SIGKILL to any remaining descendants
+		for _, dpid := range descendants {
+			_ = exec.Command("kill", "-KILL", dpid).Run()
+		}
+	}
+
+	// Kill the tmux session
+	return t.KillSession(name)
+}
+
+// getAllDescendants recursively finds all descendant PIDs of a process.
+// Returns PIDs in deepest-first order so killing them doesn't orphan grandchildren.
+func getAllDescendants(pid string) []string {
+	var result []string
+
+	// Get direct children using pgrep
+	out, err := exec.Command("pgrep", "-P", pid).Output()
+	if err != nil {
+		return result
+	}
+
+	children := strings.Fields(strings.TrimSpace(string(out)))
+	for _, child := range children {
+		// First add grandchildren (recursively) - deepest first
+		result = append(result, getAllDescendants(child)...)
+		// Then add this child
+		result = append(result, child)
+	}
+
+	return result
+}
+
 // KillServer terminates the entire tmux server and all sessions.
 func (t *Tmux) KillServer() error {
 	_, err := t.run("kill-server")

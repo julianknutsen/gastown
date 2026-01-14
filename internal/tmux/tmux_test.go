@@ -527,3 +527,28 @@ func TestHasClaudeChild(t *testing.T) {
 		t.Error("hasClaudeChild should return false for nonexistent PID")
 	}
 }
+
+func TestGetAllDescendants(t *testing.T) {
+	// Test the getAllDescendants helper function
+
+	// Test with nonexistent PID - should return empty slice
+	got := getAllDescendants("999999999")
+	if len(got) != 0 {
+		t.Errorf("getAllDescendants(nonexistent) = %v, want empty slice", got)
+	}
+
+	// Test with PID 1 (init/launchd) - should find some descendants
+	// Note: We can't test exact PIDs, just that the function doesn't panic
+	// and returns reasonable results
+	descendants := getAllDescendants("1")
+	t.Logf("getAllDescendants(\"1\") found %d descendants", len(descendants))
+
+	// Verify returned PIDs are all numeric strings
+	for _, pid := range descendants {
+		for _, c := range pid {
+			if c < '0' || c > '9' {
+				t.Errorf("getAllDescendants returned non-numeric PID: %q", pid)
+			}
+		}
+	}
+}
