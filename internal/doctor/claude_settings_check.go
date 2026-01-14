@@ -266,28 +266,40 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 		}
 
 		// Check for witness settings
-		// STALE: witness/.claude/settings.json (parent directory - Claude doesn't traverse)
-		// STALE: witness/.claude/settings.local.json (parent directory)
-		// STALE: witness/rig/.claude/settings.json (old filename)
-		// CORRECT: witness/rig/.claude/settings.local.json
-		for _, staleWitnessPath := range []string{
-			filepath.Join(rigPath, "witness", ".claude", "settings.json"),
-			filepath.Join(rigPath, "witness", ".claude", "settings.local.json"),
+		// Witness working directory is witness/ (no rig subdirectory - witness doesn't clone the repo)
+		// STALE: witness/.claude/settings.json (old filename)
+		// WRONG: witness/rig/.claude/* (inside source repo if it exists)
+		// CORRECT: witness/.claude/settings.local.json
+		witnessStaleSettings := filepath.Join(rigPath, "witness", ".claude", "settings.json")
+		if fileExists(witnessStaleSettings) {
+			files = append(files, staleSettingsInfo{
+				path:          witnessStaleSettings,
+				agentType:     "witness",
+				rigName:       rigName,
+				sessionName:   fmt.Sprintf("gt-%s-witness", rigName),
+				wrongLocation: true,
+				missing:       []string{"stale settings.json (should be settings.local.json)"},
+			})
+		}
+		// Settings inside witness/rig/ are wrong (inside source repo)
+		for _, wrongWitnessPath := range []string{
 			filepath.Join(rigPath, "witness", "rig", ".claude", "settings.json"),
+			filepath.Join(rigPath, "witness", "rig", ".claude", "settings.local.json"),
 		} {
-			if fileExists(staleWitnessPath) {
+			if fileExists(wrongWitnessPath) {
 				files = append(files, staleSettingsInfo{
-					path:          staleWitnessPath,
+					path:          wrongWitnessPath,
 					agentType:     "witness",
 					rigName:       rigName,
 					sessionName:   fmt.Sprintf("gt-%s-witness", rigName),
 					wrongLocation: true,
-					missing:       []string{"stale settings (should be witness/rig/.claude/settings.local.json)"},
+					missing:       []string{"wrong location (inside source repo)"},
 				})
 			}
 		}
-		witnessCorrectSettings := filepath.Join(rigPath, "witness", "rig", ".claude", "settings.local.json")
-		witnessWorkDir := filepath.Join(rigPath, "witness", "rig")
+		// Correct location: witness/.claude/settings.local.json
+		witnessCorrectSettings := filepath.Join(rigPath, "witness", ".claude", "settings.local.json")
+		witnessWorkDir := filepath.Join(rigPath, "witness")
 		if fileExists(witnessCorrectSettings) {
 			files = append(files, staleSettingsInfo{
 				path:        witnessCorrectSettings,
@@ -297,7 +309,6 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			})
 		} else if dirExists(witnessWorkDir) {
 			// Working directory exists but settings.local.json is missing
-			// Report this even if there's a stale settings.json - user needs to know both issues
 			files = append(files, staleSettingsInfo{
 				path:        witnessCorrectSettings,
 				agentType:   "witness",
