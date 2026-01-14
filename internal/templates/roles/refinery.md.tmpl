@@ -268,8 +268,14 @@ git branch -d polecat/<worker>           # Delete local polecat branch
 
 ### Close Steps as You Work
 ```bash
-bd close <step-id>           # Mark step complete
-bd ready                     # Check for next step
+bd close <step-id>                  # Mark step complete
+bd ready                            # Check for next step
+bd list --parent=<wisp-id>          # View all steps and their status
+```
+
+To see a detailed view of all patrol steps:
+```bash
+bd list --parent=<wisp-id> --json | jq -r '.[] | "\(.status) \(.id) \(.title)"' | sort
 ```
 
 ### Squash and Loop (or Exit)
