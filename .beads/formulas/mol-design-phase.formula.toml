@@ -492,6 +492,42 @@ Output the PR URL.
 """
 
 # =============================================================================
+# POST-STEP: Exit without merge queue
+# =============================================================================
+
+[[steps]]
+id = "exit-deferred"
+title = "Exit without merge queue"
+needs = ["create-pr"]
+description = """
+Design PRs need human review before merge. Exit WITHOUT submitting to merge queue.
+
+**Important:** Design documents should be reviewed by humans before merging.
+We use `--status DEFERRED` to skip MR creation. The PR is already on GitHub.
+
+**Run gt done with DEFERRED status:**
+```bash
+gt done --status DEFERRED --cleanup-status clean
+```
+
+This will:
+1. Notify Witness of completion
+2. Clean up sandbox (worktree removal)
+3. NOT create an MR in the merge queue
+
+The GitHub PR is already created and awaits human review.
+
+**What happens next:**
+- Human reviews the design PR on GitHub
+- Human merges when satisfied (or requests changes)
+- The issue stays open with `has-design` label until implementation
+
+You are GONE after this step.
+
+**Exit criteria:** Session exited, PR awaits human review on GitHub.
+"""
+
+# =============================================================================
 # VARIABLES
 # =============================================================================
 
