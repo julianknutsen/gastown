@@ -1804,6 +1804,7 @@ func TestSetupRedirect(t *testing.T) {
 // TestAgentBeadTombstoneBug demonstrates the bd bug where `bd delete --hard --force`
 // creates tombstones instead of truly deleting records.
 //
+//
 // This test documents the bug behavior:
 // 1. Create agent bead
 // 2. Delete with --hard --force (supposed to permanently delete)
@@ -2130,10 +2131,11 @@ func TestCloseAndClearAgentBead_FieldClearing(t *testing.T) {
 		},
 	}
 
-	for i, tc := range tests {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create unique agent ID for each test case
-			agentID := fmt.Sprintf("test-testrig-%s-case-%c", tc.fields.RoleType, 'a'+i)
+			// Use tc.name for suffix to avoid hash-like patterns (e.g., single digits)
+			// that trigger bd's isLikelyHash() prefix extraction in v0.47.1+
+			agentID := fmt.Sprintf("test-testrig-%s-%s", tc.fields.RoleType, tc.name)
 
 			// Step 1: Create agent bead with specified fields
 			_, err := bd.CreateAgentBead(agentID, "Test agent", tc.fields)
@@ -2368,9 +2370,11 @@ func TestCloseAndClearAgentBead_ReasonVariations(t *testing.T) {
 		{"long_reason", "This is a very long reason that explains in detail why the agent bead was closed including multiple sentences and detailed context about the situation."},
 	}
 
-	for i, tc := range tests {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			agentID := fmt.Sprintf("test-testrig-polecat-reason-%c", 'a'+i)
+			// Use tc.name for suffix to avoid hash-like patterns (e.g., "reason0")
+			// that trigger bd's isLikelyHash() prefix extraction in v0.47.1+
+			agentID := fmt.Sprintf("test-testrig-polecat-%s", tc.name)
 
 			// Create agent bead
 			_, err := bd.CreateAgentBead(agentID, "Test agent", &AgentFields{
