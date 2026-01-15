@@ -154,8 +154,8 @@ var mailReadCmd = &cobra.Command{
 
 The message ID can be found from 'gt mail inbox'.`,
 	Aliases: []string{"show"},
-	Args: cobra.ExactArgs(1),
-	RunE: runMailRead,
+	Args:    cobra.ExactArgs(1),
+	RunE:    runMailRead,
 }
 
 var mailPeekCmd = &cobra.Command{

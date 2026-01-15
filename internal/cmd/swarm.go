@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
@@ -492,7 +493,7 @@ func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, wor
 	Title string `json:"title"`
 }) error { //nolint:unparam // error return kept for future use
 	t := tmux.NewTmux()
-	polecatSessMgr := polecat.NewSessionManager(t, r)
+	polecatSessMgr := factory.PolecatSessionManager(r, "")
 	polecatGit := git.NewGit(r.Path)
 	polecatMgr := polecat.NewManager(r, polecatGit, t)
 
@@ -525,7 +526,7 @@ func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, wor
 			fmt.Printf("  %s already running, injecting task...\n", worker)
 		} else {
 			fmt.Printf("  Starting %s...\n", worker)
-			if err := polecatSessMgr.Start(worker, polecat.SessionStartOptions{}); err != nil {
+			if err := polecatSessMgr.Start(worker); err != nil {
 				style.PrintWarning("  couldn't start %s: %v", worker, err)
 				continue
 			}

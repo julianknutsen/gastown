@@ -66,7 +66,7 @@ var daemonRunCmd = &cobra.Command{
 }
 
 var (
-	daemonLogLines int
+	daemonLogLines  int
 	daemonLogFollow bool
 )
 

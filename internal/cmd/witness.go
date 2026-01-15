@@ -7,6 +7,9 @@ import (
 	"os/exec"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/factory"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
@@ -15,7 +18,6 @@ import (
 
 // Witness command flags
 var (
-	witnessForeground    bool
 	witnessStatusJSON    bool
 	witnessAgentOverride string
 	witnessEnvOverrides  []string
@@ -114,7 +116,6 @@ Examples:
 
 func init() {
 	// Start flags
-	witnessStartCmd.Flags().BoolVar(&witnessForeground, "foreground", false, "Run in foreground (default: background)")
 	witnessStartCmd.Flags().StringVar(&witnessAgentOverride, "agent", "", "Agent alias to run the Witness with (overrides town default)")
 	witnessStartCmd.Flags().StringArrayVar(&witnessEnvOverrides, "env", nil, "Environment variable override (KEY=VALUE, can be repeated)")
 
@@ -136,39 +137,38 @@ func init() {
 }
 
 // getWitnessManager creates a witness manager for a rig.
-func getWitnessManager(rigName string) (*witness.Manager, error) {
-	_, r, err := getRig(rigName)
+// agentOverride optionally specifies a different agent alias to use.
+// envOverrides is an optional list of KEY=VALUE strings to merge with base env vars.
+func getWitnessManager(rigName string, agentOverride string, envOverrides ...string) (*witness.Manager, error) {
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return nil, err
 	}
 
-	mgr := witness.NewManager(r)
-	return mgr, nil
+	agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
+	if agentOverride != "" {
+		agentName = agentOverride
+	}
+	return factory.WitnessManager(r, townRoot, agentName, envOverrides...), nil
 }
 
 func runWitnessStart(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
-	mgr, err := getWitnessManager(rigName)
+	mgr, err := getWitnessManager(rigName, witnessAgentOverride, witnessEnvOverrides...)
 	if err != nil {
 		return err
 	}
 
 	fmt.Printf("Starting witness for %s...\n", rigName)
 
-	if err := mgr.Start(witnessForeground, witnessAgentOverride, witnessEnvOverrides); err != nil {
+	if err := mgr.Start(); err != nil {
 		if err == witness.ErrAlreadyRunning {
 			fmt.Printf("%s Witness is already running\n", style.Dim.Render("⚠"))
 			fmt.Printf("  %s\n", style.Dim.Render("Use 'gt witness attach' to connect"))
 			return nil
 		}
 		return fmt.Errorf("starting witness: %w", err)
-	}
-
-	if witnessForeground {
-		fmt.Printf("%s Note: Foreground mode no longer runs patrol loop\n", style.Dim.Render("⚠"))
-		fmt.Printf("  %s\n", style.Dim.Render("Patrol logic is now handled by mol-witness-patrol molecule"))
-		return nil
 	}
 
 	fmt.Printf("%s Witness started for %s\n", style.Bold.Render("✓"), rigName)
@@ -180,7 +180,7 @@ func runWitnessStart(cmd *cobra.Command, args []string) error {
 func runWitnessStop(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
-	mgr, err := getWitnessManager(rigName)
+	mgr, err := getWitnessManager(rigName, "")
 	if err != nil {
 		return err
 	}
@@ -188,9 +188,9 @@ func runWitnessStop(cmd *cobra.Command, args []string) error {
 	// Kill tmux session if it exists
 	t := tmux.NewTmux()
 	sessionName := witnessSessionName(rigName)
-	running, _ := t.HasSession(sessionName)
+	running, _ := t.Exists(session.SessionID(sessionName))
 	if running {
-		if err := t.KillSession(sessionName); err != nil {
+		if err := t.Stop(session.SessionID(sessionName)); err != nil {
 			style.PrintWarning("failed to kill session: %v", err)
 		}
 	}
@@ -214,7 +214,7 @@ func runWitnessStop(cmd *cobra.Command, args []string) error {
 func runWitnessStatus(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
-	mgr, err := getWitnessManager(rigName)
+	mgr, err := getWitnessManager(rigName, "")
 	if err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 	// Check actual tmux session state (more reliable than state file)
 	t := tmux.NewTmux()
 	sessionName := witnessSessionName(rigName)
-	sessionRunning, _ := t.HasSession(sessionName)
+	sessionRunning, _ := t.Exists(session.SessionID(sessionName))
 
 	// Reconcile state: tmux session is the source of truth for background mode
 	if sessionRunning && w.State != witness.StateRunning {
@@ -301,7 +301,7 @@ func runWitnessAttach(cmd *cobra.Command, args []string) error {
 	}
 
 	// Verify rig exists and get manager
-	mgr, err := getWitnessManager(rigName)
+	mgr, err := getWitnessManager(rigName, "")
 	if err != nil {
 		return err
 	}
@@ -309,7 +309,7 @@ func runWitnessAttach(cmd *cobra.Command, args []string) error {
 	sessionName := witnessSessionName(rigName)
 
 	// Ensure session exists (creates if needed)
-	if err := mgr.Start(false, "", nil); err != nil && err != witness.ErrAlreadyRunning {
+	if err := mgr.Start(); err != nil && err != witness.ErrAlreadyRunning {
 		return err
 	} else if err == nil {
 		fmt.Printf("Started witness session for %s\n", rigName)
@@ -331,7 +331,8 @@ func runWitnessAttach(cmd *cobra.Command, args []string) error {
 func runWitnessRestart(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
-	mgr, err := getWitnessManager(rigName)
+	// Use default agent for stop
+	mgr, err := getWitnessManager(rigName, "")
 	if err != nil {
 		return err
 	}
@@ -341,8 +342,14 @@ func runWitnessRestart(cmd *cobra.Command, args []string) error {
 	// Stop existing session (non-fatal: may not be running)
 	_ = mgr.Stop()
 
+	// Get new manager with override for start
+	mgr, err = getWitnessManager(rigName, witnessAgentOverride, witnessEnvOverrides...)
+	if err != nil {
+		return err
+	}
+
 	// Start fresh
-	if err := mgr.Start(false, witnessAgentOverride, witnessEnvOverrides); err != nil {
+	if err := mgr.Start(); err != nil {
 		return fmt.Errorf("starting witness: %w", err)
 	}
 

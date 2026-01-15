@@ -12,15 +12,17 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // SessionName is the tmux session name for Boot.
+// Exported from session package; aliased here for backwards compatibility.
 // Note: We use "gt-boot" instead of "hq-deacon-boot" to avoid tmux prefix
 // matching collisions. Tmux matches session names by prefix, so "hq-deacon-boot"
 // would match when checking for "hq-deacon", causing HasSession("hq-deacon")
 // to return true when only Boot is running.
-const SessionName = "gt-boot"
+const SessionName = session.BootSessionName
 
 // MarkerFileName is the lock file for Boot startup coordination.
 const MarkerFileName = ".boot-running"
@@ -81,7 +83,7 @@ func (b *Boot) IsRunning() bool {
 
 // IsSessionAlive checks if the Boot tmux session exists.
 func (b *Boot) IsSessionAlive() bool {
-	has, err := b.tmux.HasSession(SessionName)
+	has, err := b.tmux.Exists(SessionName)
 	return err == nil && has
 }
 
@@ -161,7 +163,7 @@ func (b *Boot) Spawn() error {
 func (b *Boot) spawnTmux() error {
 	// Kill any stale session first
 	if b.IsSessionAlive() {
-		_ = b.tmux.KillSession(SessionName)
+		_ = b.tmux.Stop(SessionName)
 	}
 
 	// Ensure boot directory exists (it should have CLAUDE.md with Boot context)
@@ -180,7 +182,7 @@ func (b *Boot) spawnTmux() error {
 		TownRoot: b.townRoot,
 	})
 	for k, v := range envVars {
-		_ = b.tmux.SetEnvironment(SessionName, k, v)
+		_ = b.tmux.SetEnv(SessionName, k, v)
 	}
 
 	// Launch Claude with environment exported inline and initial triage prompt
@@ -188,10 +190,10 @@ func (b *Boot) spawnTmux() error {
 	startCmd := config.BuildAgentStartupCommand("boot", "", b.townRoot, "", "gt boot triage")
 	// Wait for shell to be ready before sending keys (prevents "can't find pane" under load)
 	if err := b.tmux.WaitForShellReady(SessionName, 5*time.Second); err != nil {
-		_ = b.tmux.KillSession(SessionName)
+		_ = b.tmux.Stop(SessionName)
 		return fmt.Errorf("waiting for shell: %w", err)
 	}
-	if err := b.tmux.SendKeys(SessionName, startCmd); err != nil {
+	if err := b.tmux.Send(SessionName, startCmd); err != nil {
 		return fmt.Errorf("sending startup command: %w", err)
 	}
 

@@ -13,7 +13,7 @@ type mockSessionLister struct {
 	err      error
 }
 
-func (m *mockSessionLister) ListSessions() ([]string, error) {
+func (m *mockSessionLister) List() ([]string, error) {
 	return m.sessions, m.err
 }
 

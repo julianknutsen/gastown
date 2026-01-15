@@ -42,7 +42,7 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 			// Try to show available crew members if we can detect the rig
 			hint := "\n\nUsage: gt crew at <name>"
 			if crewRig != "" {
-				if mgr, _, mgrErr := getCrewManager(crewRig); mgrErr == nil {
+				if mgr, _, mgrErr := getCrewManager(crewRig, ""); mgrErr == nil {
 					if members, listErr := mgr.List(); listErr == nil && len(members) > 0 {
 						hint = fmt.Sprintf("\n\nAvailable crew in %s:", crewRig)
 						for _, m := range members {
@@ -64,7 +64,7 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		fmt.Printf("[DEBUG] after detection: name=%q, crewRig=%q\n", name, crewRig)
 	}
 
-	crewMgr, r, err := getCrewManager(crewRig)
+	crewMgr, r, err := getCrewManager(crewRig, "")
 	if err != nil {
 		return err
 	}
@@ -87,18 +87,9 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Resolve account for runtime config
 	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
 		return fmt.Errorf("finding town root: %w", err)
-	}
-	accountsPath := constants.MayorAccountsPath(townRoot)
-	claudeConfigDir, accountHandle, err := config.ResolveAccountConfigDir(accountsPath, crewAccount)
-	if err != nil {
-		return fmt.Errorf("resolving account: %w", err)
-	}
-	if accountHandle != "" {
-		fmt.Printf("Using account: %s\n", accountHandle)
 	}
 
 	runtimeConfig := config.LoadRuntimeConfig(r.Path)
@@ -109,11 +100,12 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 
 	// Check if session exists
 	t := tmux.NewTmux()
-	sessionID := crewSessionName(r.Name, name)
+	sessionName := crewSessionName(r.Name, name)
+	sessionID := session.SessionID(sessionName)
 	if debug {
-		fmt.Printf("[DEBUG] sessionID=%q (r.Name=%q, name=%q)\n", sessionID, r.Name, name)
+		fmt.Printf("[DEBUG] sessionID=%q (r.Name=%q, name=%q)\n", sessionName, r.Name, name)
 	}
-	hasSession, err := t.HasSession(sessionID)
+	hasSession, err := t.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
@@ -154,22 +146,21 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 
 	if !hasSession {
 		// Create new session
-		if err := t.NewSession(sessionID, worker.ClonePath); err != nil {
+		if err := t.NewSession(sessionName, worker.ClonePath); err != nil {
 			return fmt.Errorf("creating session: %w", err)
 		}
 
 		// Set environment (non-fatal: session works without these)
 		// Use centralized AgentEnv for consistency across all role startup paths
 		envVars := config.AgentEnv(config.AgentEnvConfig{
-			Role:             "crew",
-			Rig:              r.Name,
-			AgentName:        name,
-			TownRoot:         townRoot,
-			RuntimeConfigDir: claudeConfigDir,
-			BeadsNoDaemon:    true,
+			Role:          "crew",
+			Rig:           r.Name,
+			AgentName:     name,
+			TownRoot:      townRoot,
+			BeadsNoDaemon: true,
 		})
 		for k, v := range envVars {
-			_ = t.SetEnvironment(sessionID, k, v)
+			_ = t.SetEnv(sessionID, k, v)
 		}
 
 		// Apply rig-based theming (non-fatal: theming failure doesn't affect operation)
@@ -178,12 +169,12 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		_ = t.ConfigureGasTownSession(sessionID, theme, r.Name, name, "crew")
 
 		// Wait for shell to be ready after session creation
-		if err := t.WaitForShellReady(sessionID, constants.ShellReadyTimeout); err != nil {
+		if err := t.WaitForShellReady(sessionName, constants.ShellReadyTimeout); err != nil {
 			return fmt.Errorf("waiting for shell: %w", err)
 		}
 
 		// Get pane ID for respawn
-		paneID, err := t.GetPaneID(sessionID)
+		paneID, err := t.GetPaneID(sessionName)
 		if err != nil {
 			return fmt.Errorf("getting pane ID: %w", err)
 		}
@@ -205,10 +196,6 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("building startup command: %w", err)
 		}
-		// Prepend config dir env if available
-		if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && claudeConfigDir != "" {
-			startupCmd = config.PrependEnv(startupCmd, map[string]string{runtimeConfig.Session.ConfigDirEnv: claudeConfigDir})
-		}
 		if err := t.RespawnPane(paneID, startupCmd); err != nil {
 			return fmt.Errorf("starting runtime: %w", err)
 		}
@@ -223,12 +210,12 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("resolving agent: %w", err)
 		}
-		if !t.IsAgentRunning(sessionID, config.ExpectedPaneCommands(agentCfg)...) {
+		if !t.IsAgentRunning(sessionName, config.ExpectedPaneCommands(agentCfg)...) {
 			// Runtime has exited, restart it using respawn-pane
 			fmt.Printf("Runtime exited, restarting...\n")
 
 			// Get pane ID for respawn
-			paneID, err := t.GetPaneID(sessionID)
+			paneID, err := t.GetPaneID(sessionName)
 			if err != nil {
 				return fmt.Errorf("getting pane ID: %w", err)
 			}
@@ -248,10 +235,6 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("building startup command: %w", err)
 			}
-			// Prepend config dir env if available
-			if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && claudeConfigDir != "" {
-				startupCmd = config.PrependEnv(startupCmd, map[string]string{runtimeConfig.Session.ConfigDirEnv: claudeConfigDir})
-			}
 			if err := t.RespawnPane(paneID, startupCmd); err != nil {
 				return fmt.Errorf("restarting runtime: %w", err)
 			}
@@ -259,13 +242,13 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if we're already in the target session
-	if isInTmuxSession(sessionID) {
+	if isInTmuxSession(sessionName) {
 		// Check if agent is already running - don't restart if so
 		agentCfg, _, err := config.ResolveAgentConfigWithOverride(townRoot, r.Path, crewAgentOverride)
 		if err != nil {
 			return fmt.Errorf("resolving agent: %w", err)
 		}
-		if t.IsAgentRunning(sessionID, config.ExpectedPaneCommands(agentCfg)...) {
+		if t.IsAgentRunning(sessionName, config.ExpectedPaneCommands(agentCfg)...) {
 			// Agent is already running, nothing to do
 			fmt.Printf("Already in %s session with %s running.\n", name, agentCfg.Command)
 			return nil
@@ -289,7 +272,7 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		fmt.Printf("[DEBUG] tmux.IsInsideTmux()=%v\n", insideTmux)
 	}
 	if insideTmux {
-		fmt.Printf("Session %s ready. Use C-b s to switch.\n", sessionID)
+		fmt.Printf("Session %s ready. Use C-b s to switch.\n", sessionName)
 		return nil
 	}
 
@@ -300,9 +283,9 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 	}
 
 	// Attach to session - show which session we're attaching to
-	fmt.Printf("Attaching to %s...\n", sessionID)
+	fmt.Printf("Attaching to %s...\n", sessionName)
 	if debug {
-		fmt.Printf("[DEBUG] calling attachToTmuxSession(%q)\n", sessionID)
+		fmt.Printf("[DEBUG] calling attachToTmuxSession(%q)\n", sessionName)
 	}
-	return attachToTmuxSession(sessionID)
+	return attachToTmuxSession(sessionName)
 }

@@ -1,16 +1,22 @@
 package refinery
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/agent"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func setupTestManager(t *testing.T) (*Manager, string) {
+func setupTestManager(t *testing.T) (*Manager, *agent.Double, string) {
 	t.Helper()
 
 	// Create temp directory structure
@@ -25,11 +31,12 @@ func setupTestManager(t *testing.T) (*Manager, string) {
 		Path: rigPath,
 	}
 
-	return NewManager(r), rigPath
+	agents := agent.NewDouble()
+	return NewManager(r, agents, "claude"), agents, rigPath
 }
 
 func TestManager_GetMR(t *testing.T) {
-	mgr, _ := setupTestManager(t)
+	mgr, _, _ := setupTestManager(t)
 
 	// Create a test MR in the pending queue
 	mr := &MergeRequest{
@@ -68,7 +75,7 @@ func TestManager_GetMR(t *testing.T) {
 
 func TestManager_Retry(t *testing.T) {
 	t.Run("retry failed MR clears error", func(t *testing.T) {
-		mgr, _ := setupTestManager(t)
+		mgr, _, _ := setupTestManager(t)
 
 		// Create a failed MR
 		mr := &MergeRequest{
@@ -97,7 +104,7 @@ func TestManager_Retry(t *testing.T) {
 	})
 
 	t.Run("retry non-failed MR fails", func(t *testing.T) {
-		mgr, _ := setupTestManager(t)
+		mgr, _, _ := setupTestManager(t)
 
 		// Create a successful MR (no error)
 		mr := &MergeRequest{
@@ -119,7 +126,7 @@ func TestManager_Retry(t *testing.T) {
 	})
 
 	t.Run("retry nonexistent MR fails", func(t *testing.T) {
-		mgr, _ := setupTestManager(t)
+		mgr, _, _ := setupTestManager(t)
 
 		err := mgr.Retry("nonexistent", false)
 		if err != ErrMRNotFound {
@@ -129,7 +136,7 @@ func TestManager_Retry(t *testing.T) {
 }
 
 func TestManager_RegisterMR(t *testing.T) {
-	mgr, rigPath := setupTestManager(t)
+	mgr, _, rigPath := setupTestManager(t)
 
 	mr := &MergeRequest{
 		ID:           "gt-mr-new",
@@ -169,4 +176,882 @@ func TestManager_RegisterMR(t *testing.T) {
 	if saved.Worker != "Cheedo" {
 		t.Errorf("saved MR worker = %s, want Cheedo", saved.Worker)
 	}
+}
+
+// =============================================================================
+// Lifecycle Tests (Start, Stop, Status)
+// Using agent.Double for testable abstraction
+// =============================================================================
+
+func setupTestManagerForLifecycle(t *testing.T) (*Manager, *agent.Double, string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+
+	// Create required directories
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, "refinery", "rig"), 0755))
+
+	// Create minimal Claude settings
+	claudeDir := filepath.Join(rigPath, "refinery", "rig", ".claude")
+	require.NoError(t, os.MkdirAll(claudeDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(`{}`), 0644))
+
+	r := &rig.Rig{
+		Name: "testrig",
+		Path: rigPath,
+	}
+
+	agents := agent.NewDouble()
+	return NewManager(r, agents, "claude"), agents, rigPath
+}
+
+// --- Start() Tests ---
+
+func TestManager_Start_CreatesSession(t *testing.T) {
+	mgr, agents, _ := setupTestManagerForLifecycle(t)
+
+	err := mgr.Start()
+	require.NoError(t, err)
+
+	// Verify agent exists with correct name
+	agentID := agent.AgentID(mgr.SessionName())
+	assert.True(t, agents.Exists(agentID), "agent should exist after Start")
+}
+
+func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
+	mgr, agents, _ := setupTestManagerForLifecycle(t)
+
+	// Pre-create agent
+	agentID := agent.AgentID(mgr.SessionName())
+	agents.CreateAgent(agentID)
+
+	err := mgr.Start()
+
+	assert.ErrorIs(t, err, agent.ErrAlreadyRunning)
+}
+
+func TestManager_Start_UpdatesStateToRunning(t *testing.T) {
+	mgr, _, rigPath := setupTestManagerForLifecycle(t)
+
+	err := mgr.Start()
+	require.NoError(t, err)
+
+	// Verify state file
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	data, err := os.ReadFile(stateFile)
+	require.NoError(t, err, "state file should exist")
+
+	var state Refinery
+	require.NoError(t, json.Unmarshal(data, &state))
+	assert.Equal(t, StateRunning, state.State)
+	assert.NotNil(t, state.StartedAt)
+}
+
+func TestManager_Start_UsesCorrectWorkDir(t *testing.T) {
+	mgr, agents, rigPath := setupTestManagerForLifecycle(t)
+
+	err := mgr.Start()
+	require.NoError(t, err)
+
+	agentID := agent.AgentID(mgr.SessionName())
+	workDir := agents.GetWorkDir(agentID)
+
+	// Should use refinery/rig as the working directory
+	expectedWorkDir := filepath.Join(rigPath, "refinery", "rig")
+	assert.Equal(t, expectedWorkDir, workDir, "should start in refinery/rig directory")
+}
+
+func TestManager_Start_UsesCorrectCommand(t *testing.T) {
+	mgr, agents, _ := setupTestManagerForLifecycle(t)
+
+	err := mgr.Start()
+	require.NoError(t, err)
+
+	agentID := agent.AgentID(mgr.SessionName())
+	command := agents.GetCommand(agentID)
+
+	// Command should contain the agent name (claude)
+	assert.Contains(t, command, "claude", "command should include agent name")
+}
+
+// --- Stop() Tests ---
+
+func TestManager_Stop_TerminatesSession(t *testing.T) {
+	mgr, agents, _ := setupTestManagerForLifecycle(t)
+
+	_ = mgr.Start()
+	err := mgr.Stop()
+	require.NoError(t, err)
+
+	agentID := agent.AgentID(mgr.SessionName())
+	assert.False(t, agents.Exists(agentID), "agent should be gone after Stop")
+}
+
+func TestManager_Stop_WhenNotRunning_ReturnsError(t *testing.T) {
+	mgr, _, _ := setupTestManagerForLifecycle(t)
+
+	err := mgr.Stop()
+	assert.ErrorIs(t, err, ErrNotRunning)
+}
+
+func TestManager_Stop_UpdatesStateToStopped(t *testing.T) {
+	mgr, _, rigPath := setupTestManagerForLifecycle(t)
+
+	_ = mgr.Start()
+	err := mgr.Stop()
+	require.NoError(t, err)
+
+	// Verify state file
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	data, err := os.ReadFile(stateFile)
+	require.NoError(t, err)
+
+	var state Refinery
+	require.NoError(t, json.Unmarshal(data, &state))
+	assert.Equal(t, StateStopped, state.State)
+}
+
+func TestManager_Stop_StateRunningButNoSession_Succeeds(t *testing.T) {
+	mgr, _, rigPath := setupTestManagerForLifecycle(t)
+
+	// Write stale state (says running but no session)
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	staleState := Refinery{
+		RigName: "testrig",
+		State:   StateRunning,
+	}
+	data, _ := json.Marshal(staleState)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
+
+	// Stop should succeed and update state
+	err := mgr.Stop()
+	require.NoError(t, err)
+
+	// Verify state updated
+	data, _ = os.ReadFile(stateFile)
+	var state Refinery
+	_ = json.Unmarshal(data, &state)
+	assert.Equal(t, StateStopped, state.State)
+}
+
+func TestManager_Stop_StateStoppedButSessionExists_Succeeds(t *testing.T) {
+	mgr, agents, rigPath := setupTestManagerForLifecycle(t)
+
+	// Create agent manually (simulating stale session)
+	agentID := agent.AgentID(mgr.SessionName())
+	agents.CreateAgent(agentID)
+
+	// Write state that says stopped
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	staleState := Refinery{
+		RigName: "testrig",
+		State:   StateStopped,
+	}
+	data, _ := json.Marshal(staleState)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
+
+	// Stop should succeed and kill the session
+	err := mgr.Stop()
+	require.NoError(t, err)
+
+	// Agent should be gone
+	assert.False(t, agents.Exists(agentID))
+}
+
+// --- Status() Tests ---
+
+func TestManager_Status_ReturnsState(t *testing.T) {
+	mgr, _, _ := setupTestManagerForLifecycle(t)
+
+	_ = mgr.Start()
+
+	status, err := mgr.Status()
+	require.NoError(t, err)
+	assert.Equal(t, StateRunning, status.State)
+}
+
+func TestManager_Status_AfterStop_ReturnsStateStopped(t *testing.T) {
+	mgr, _, _ := setupTestManagerForLifecycle(t)
+
+	_ = mgr.Start()
+	_ = mgr.Stop()
+
+	status, err := mgr.Status()
+	require.NoError(t, err)
+	assert.Equal(t, StateStopped, status.State)
+}
+
+func TestManager_Status_WhenAgentCrashed_DetectsMismatch(t *testing.T) {
+	// Scenario: Agent starts successfully, then crashes (killed externally).
+	// Status() should detect that state=running but agent doesn't exist.
+	mgr, agents, _ := setupTestManagerForLifecycle(t)
+
+	// Start the refinery
+	require.NoError(t, mgr.Start())
+
+	// Simulate crash: kill agent directly without going through manager.Stop()
+	agentID := agent.AgentID(mgr.SessionName())
+	_ = agents.Stop(agentID, false) // Direct kill, bypasses manager state update
+
+	// Agent is dead
+	assert.False(t, agents.Exists(agentID), "agent should be dead after crash")
+
+	// Status() detects the mismatch and reports stopped
+	status, err := mgr.Status()
+	require.NoError(t, err)
+	assert.Equal(t, StateStopped, status.State, "should detect crashed agent")
+}
+
+// --- Lifecycle Integration ---
+
+func TestManager_FullLifecycle(t *testing.T) {
+	mgr, _, _ := setupTestManagerForLifecycle(t)
+
+	// Start
+	require.NoError(t, mgr.Start())
+
+	// Status shows running
+	status, _ := mgr.Status()
+	assert.Equal(t, StateRunning, status.State)
+
+	// Stop
+	require.NoError(t, mgr.Stop())
+
+	// Status shows stopped
+	status, _ = mgr.Status()
+	assert.Equal(t, StateStopped, status.State)
+
+	// Can start again
+	require.NoError(t, mgr.Start())
+}
+
+// --- SessionName() Tests ---
+
+func TestManager_SessionName_Format(t *testing.T) {
+	mgr, _, _ := setupTestManagerForLifecycle(t)
+	assert.Equal(t, "gt-testrig-refinery", mgr.SessionName())
+}
+
+func TestManager_stateFile(t *testing.T) {
+	mgr, _, rigPath := setupTestManagerForLifecycle(t)
+	expected := filepath.Join(rigPath, ".runtime", "refinery.json")
+	assert.Equal(t, expected, mgr.stateFile())
+}
+
+// =============================================================================
+// Error Path Tests (using agent.AgentsStub for error injection)
+// =============================================================================
+
+func TestManager_Start_WhenAgentStartFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, "refinery", "rig", ".claude"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.local.json"), []byte(`{}`), 0644))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+
+	// Use stub with injected error
+	stub := agent.NewAgentsStub(agent.NewDouble())
+	stub.StartErr = errors.New("agent start failed")
+
+	mgr := NewManager(r, stub, "claude")
+
+	err := mgr.Start()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "agent start failed")
+}
+
+func TestManager_Stop_WhenAgentStopFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+
+	// Create stub with stop error
+	double := agent.NewDouble()
+	stub := agent.NewAgentsStub(double)
+
+	mgr := NewManager(r, stub, "claude")
+
+	// Pre-create agent session
+	sessionName := mgr.SessionName()
+	double.CreateAgent(agent.AgentID(sessionName))
+
+	// Write running state
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	state := Refinery{RigName: "testrig", State: StateRunning}
+	data, _ := json.Marshal(state)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
+
+	// Inject stop error
+	stub.StopErr = errors.New("agent stop failed")
+
+	err := mgr.Stop()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "agent stop failed")
+}
+
+// =============================================================================
+// Utility Function Tests
+// =============================================================================
+
+func TestManager_SetOutput(t *testing.T) {
+	mgr, _, _ := setupTestManager(t)
+
+	var buf bytes.Buffer
+	mgr.SetOutput(&buf)
+
+	// Trigger output via Retry with processNow
+	mr := &MergeRequest{
+		ID:     "gt-mr-test",
+		Status: MROpen,
+		Error:  "test error",
+	}
+	_ = mgr.RegisterMR(mr)
+	_ = mgr.Retry("gt-mr-test", true) // processNow triggers output
+
+	assert.Contains(t, buf.String(), "deprecated")
+}
+
+func TestFormatAge(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		want     string
+	}{
+		{"seconds", 30 * time.Second, "30s ago"},
+		{"minutes", 5 * time.Minute, "5m ago"},
+		{"hours", 3 * time.Hour, "3h ago"},
+		{"days", 48 * time.Hour, "2d ago"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			then := time.Now().Add(-tt.duration)
+			got := formatAge(then)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestParseTime(t *testing.T) {
+	t.Run("RFC3339 format", func(t *testing.T) {
+		result := parseTime("2024-01-15T10:30:00Z")
+		assert.Equal(t, 2024, result.Year())
+		assert.Equal(t, time.January, result.Month())
+		assert.Equal(t, 15, result.Day())
+	})
+
+	t.Run("date-only format", func(t *testing.T) {
+		result := parseTime("2024-01-15")
+		assert.Equal(t, 2024, result.Year())
+		assert.Equal(t, time.January, result.Month())
+		assert.Equal(t, 15, result.Day())
+	})
+
+	t.Run("invalid format returns zero time", func(t *testing.T) {
+		result := parseTime("invalid")
+		assert.True(t, result.IsZero())
+	})
+}
+
+// =============================================================================
+// Deprecated Function Tests (still need coverage)
+// =============================================================================
+
+func TestManager_ProcessMR_ReturnsDeprecatedError(t *testing.T) {
+	mgr, _, _ := setupTestManager(t)
+
+	mr := &MergeRequest{ID: "test-mr"}
+	result := mgr.ProcessMR(mr)
+
+	assert.NotEmpty(t, result.Error)
+	assert.Contains(t, result.Error, "deprecated")
+}
+
+func TestManager_GetMergeConfig_ReturnsDefaults(t *testing.T) {
+	mgr, _, _ := setupTestManager(t)
+
+	config := mgr.getMergeConfig()
+
+	assert.True(t, config.RunTests)
+	assert.Equal(t, "go test ./...", config.TestCommand)
+	assert.True(t, config.DeleteMergedBranches)
+}
+
+func TestManager_GetMergeConfig_WithSettings(t *testing.T) {
+	mgr, _, rigPath := setupTestManager(t)
+
+	// Create settings file
+	settingsDir := filepath.Join(rigPath, "settings")
+	require.NoError(t, os.MkdirAll(settingsDir, 0755))
+
+	settings := `{
+		"merge_queue": {
+			"test_command": "npm test",
+			"run_tests": false,
+			"delete_merged_branches": false
+		}
+	}`
+	require.NoError(t, os.WriteFile(filepath.Join(settingsDir, "config.json"), []byte(settings), 0644))
+
+	config := mgr.getMergeConfig()
+
+	assert.False(t, config.RunTests)
+	assert.Equal(t, "npm test", config.TestCommand)
+	assert.False(t, config.DeleteMergedBranches)
+}
+
+// =============================================================================
+// GetMR Tests - Additional Coverage
+// =============================================================================
+
+func TestManager_GetMR_ReturnsCurrentMR(t *testing.T) {
+	mgr, _, rigPath := setupTestManager(t)
+
+	// Set current MR in state
+	currentMR := &MergeRequest{
+		ID:     "gt-mr-current",
+		Branch: "polecat/Worker/gt-xyz",
+		Worker: "Worker",
+		Status: MRInProgress,
+	}
+
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	state := Refinery{
+		RigName:   "testrig",
+		CurrentMR: currentMR,
+	}
+	data, _ := json.Marshal(state)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
+
+	found, err := mgr.GetMR("gt-mr-current")
+	require.NoError(t, err)
+	assert.Equal(t, "gt-mr-current", found.ID)
+	assert.Equal(t, MRInProgress, found.Status)
+}
+
+// =============================================================================
+// Retry Tests - Additional Coverage
+// =============================================================================
+
+func TestManager_Retry_WithProcessNow_PrintsDeprecationNotice(t *testing.T) {
+	mgr, _, _ := setupTestManager(t)
+
+	// Capture output
+	var buf bytes.Buffer
+	mgr.SetOutput(&buf)
+
+	// Create a failed MR
+	mr := &MergeRequest{
+		ID:     "gt-mr-retry",
+		Status: MROpen,
+		Error:  "previous error",
+	}
+	require.NoError(t, mgr.RegisterMR(mr))
+
+	// Retry with processNow=true
+	err := mgr.Retry("gt-mr-retry", true)
+	require.NoError(t, err)
+
+	assert.Contains(t, buf.String(), "deprecated")
+}
+
+// =============================================================================
+// FindTownRoot Tests
+// =============================================================================
+
+func TestFindTownRoot_WithMayorDir(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create mayor directory
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	require.NoError(t, os.MkdirAll(mayorDir, 0755))
+
+	// Search from a subdirectory
+	subDir := filepath.Join(tmpDir, "sub", "deep")
+	require.NoError(t, os.MkdirAll(subDir, 0755))
+
+	result := findTownRoot(subDir)
+	assert.Equal(t, tmpDir, result)
+}
+
+func TestFindTownRoot_WithWorkspaceConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create config.json with workspace type
+	configContent := `{"type": "workspace", "name": "test"}`
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.json"), []byte(configContent), 0644))
+
+	// Search from a subdirectory
+	subDir := filepath.Join(tmpDir, "sub")
+	require.NoError(t, os.MkdirAll(subDir, 0755))
+
+	result := findTownRoot(subDir)
+	assert.Equal(t, tmpDir, result)
+}
+
+func TestFindTownRoot_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// No markers - should return empty
+	result := findTownRoot(tmpDir)
+	assert.Equal(t, "", result)
+}
+
+// =============================================================================
+// Start/Stop Error Path Tests
+// =============================================================================
+
+func TestManager_Start_WhenLoadStateFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+
+	// Write invalid JSON to state file
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(r, agent.NewDouble(), "claude")
+
+	err := mgr.Start()
+	assert.Error(t, err)
+}
+
+func TestManager_Start_WhenEnsureSettingsFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+
+	// Create refinery/rig directory but make it read-only so EnsureSettingsForRole fails
+	refineryRigDir := filepath.Join(rigPath, "refinery", "rig")
+	require.NoError(t, os.MkdirAll(refineryRigDir, 0755))
+
+	// Make the directory read-only to cause EnsureSettingsForRole to fail
+	require.NoError(t, os.Chmod(refineryRigDir, 0555))
+	defer os.Chmod(refineryRigDir, 0755)
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(r, agent.NewDouble(), "claude")
+
+	err := mgr.Start()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "ensuring runtime settings")
+}
+
+func TestManager_Start_UsesLegacyMayorDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+
+	// Create mayor/rig instead of refinery/rig (legacy layout)
+	mayorRigDir := filepath.Join(rigPath, "mayor", "rig", ".claude")
+	require.NoError(t, os.MkdirAll(mayorRigDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(mayorRigDir, "settings.local.json"), []byte(`{}`), 0644))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	agents := agent.NewDouble()
+	mgr := NewManager(r, agents, "claude")
+
+	err := mgr.Start()
+	require.NoError(t, err)
+
+	// Verify it used mayor/rig as the work directory
+	agentID := agent.AgentID(mgr.SessionName())
+	workDir := agents.GetWorkDir(agentID)
+	assert.Equal(t, filepath.Join(rigPath, "mayor", "rig"), workDir)
+}
+
+func TestManager_Start_WhenSaveStateFails_CleansUpAndReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	runtimeDir := filepath.Join(rigPath, ".runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, "refinery", "rig", ".claude"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.local.json"), []byte(`{}`), 0644))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	agents := agent.NewDouble()
+	mgr := NewManager(r, agents, "claude")
+
+	// Make the runtime directory read-only to cause saveState to fail
+	require.NoError(t, os.Chmod(runtimeDir, 0555))
+	defer os.Chmod(runtimeDir, 0755) // Cleanup
+
+	err := mgr.Start()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "saving state")
+
+	// Verify agent was cleaned up after saveState failure
+	agentID := agent.AgentID(mgr.SessionName())
+	assert.False(t, agents.Exists(agentID), "agent should be cleaned up after saveState failure")
+}
+
+func TestManager_Stop_WhenLoadStateFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+
+	// Write invalid JSON to state file
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(r, agent.NewDouble(), "claude")
+
+	err := mgr.Stop()
+	assert.Error(t, err)
+}
+
+func TestManager_Stop_WhenSaveStateFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	runtimeDir := filepath.Join(rigPath, ".runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	agents := agent.NewDouble()
+	mgr := NewManager(r, agents, "claude")
+
+	// Start first (need running state)
+	sessionName := mgr.SessionName()
+	agents.CreateAgent(agent.AgentID(sessionName))
+
+	// Write running state
+	stateFile := filepath.Join(runtimeDir, "refinery.json")
+	state := Refinery{RigName: "testrig", State: StateRunning}
+	data, _ := json.Marshal(state)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
+
+	// Make the runtime directory read-only to cause saveState to fail
+	require.NoError(t, os.Chmod(runtimeDir, 0555))
+	defer os.Chmod(runtimeDir, 0755) // Cleanup
+
+	err := mgr.Stop()
+	assert.Error(t, err)
+}
+
+// =============================================================================
+// GetMR/Retry Edge Cases
+// =============================================================================
+
+func TestManager_GetMR_WhenLoadStateFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+
+	// Write invalid JSON
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	require.NoError(t, os.WriteFile(stateFile, []byte("invalid"), 0644))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(r, agent.NewDouble(), "claude")
+
+	_, err := mgr.GetMR("any-id")
+	assert.Error(t, err)
+}
+
+func TestManager_Retry_WhenLoadStateFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+
+	// Write invalid JSON
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	require.NoError(t, os.WriteFile(stateFile, []byte("invalid"), 0644))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(r, agent.NewDouble(), "claude")
+
+	err := mgr.Retry("any-id", false)
+	assert.Error(t, err)
+}
+
+func TestManager_Retry_WhenSaveStateFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	runtimeDir := filepath.Join(rigPath, ".runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(r, agent.NewDouble(), "claude")
+
+	// Create a failed MR
+	mr := &MergeRequest{
+		ID:     "gt-mr-retry-fail",
+		Status: MROpen,
+		Error:  "some error",
+	}
+	require.NoError(t, mgr.RegisterMR(mr))
+
+	// Make the runtime directory read-only
+	require.NoError(t, os.Chmod(runtimeDir, 0555))
+	defer os.Chmod(runtimeDir, 0755)
+
+	err := mgr.Retry("gt-mr-retry-fail", false)
+	assert.Error(t, err)
+}
+
+func TestManager_RegisterMR_WhenLoadStateFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+
+	// Write invalid JSON
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	require.NoError(t, os.WriteFile(stateFile, []byte("invalid"), 0644))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(r, agent.NewDouble(), "claude")
+
+	mr := &MergeRequest{ID: "test-mr"}
+	err := mgr.RegisterMR(mr)
+	assert.Error(t, err)
+}
+
+func TestManager_RegisterMR_WhenSaveStateFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	runtimeDir := filepath.Join(rigPath, ".runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(r, agent.NewDouble(), "claude")
+
+	// Initialize state first
+	_, _ = mgr.Status()
+
+	// Make the runtime directory read-only
+	require.NoError(t, os.Chmod(runtimeDir, 0555))
+	defer os.Chmod(runtimeDir, 0755)
+
+	mr := &MergeRequest{ID: "test-mr"}
+	err := mgr.RegisterMR(mr)
+	assert.Error(t, err)
+}
+
+// =============================================================================
+// calculateIssueScore and issueToMR Tests
+// =============================================================================
+
+func TestManager_calculateIssueScore(t *testing.T) {
+	mgr, _, _ := setupTestManager(t)
+	now := time.Now()
+
+	t.Run("basic score calculation", func(t *testing.T) {
+		issue := &beads.Issue{
+			ID:        "gt-mr-score",
+			Priority:  2,
+			CreatedAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
+		}
+		score := mgr.calculateIssueScore(issue, now)
+		assert.Greater(t, score, 0.0, "score should be positive")
+	})
+
+	t.Run("higher priority gets higher score", func(t *testing.T) {
+		lowPriority := &beads.Issue{
+			ID:        "gt-low",
+			Priority:  4,
+			CreatedAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
+		}
+		highPriority := &beads.Issue{
+			ID:        "gt-high",
+			Priority:  1,
+			CreatedAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
+		}
+
+		lowScore := mgr.calculateIssueScore(lowPriority, now)
+		highScore := mgr.calculateIssueScore(highPriority, now)
+
+		assert.Greater(t, highScore, lowScore, "higher priority should have higher score")
+	})
+
+	t.Run("with MR fields in description", func(t *testing.T) {
+		issue := &beads.Issue{
+			ID:          "gt-mr-fields",
+			Priority:    2,
+			CreatedAt:   now.Add(-1 * time.Hour).Format(time.RFC3339),
+			Description: "Branch: test\nRetry_count: 3",
+		}
+		score := mgr.calculateIssueScore(issue, now)
+		assert.Greater(t, score, 0.0, "score with retry count should be positive")
+	})
+
+	t.Run("with convoy created at", func(t *testing.T) {
+		convoyTime := now.Add(-24 * time.Hour).Format(time.RFC3339)
+		issue := &beads.Issue{
+			ID:          "gt-mr-convoy",
+			Priority:    2,
+			CreatedAt:   now.Add(-1 * time.Hour).Format(time.RFC3339),
+			Description: "Branch: test\nConvoy_created_at: " + convoyTime,
+		}
+		score := mgr.calculateIssueScore(issue, now)
+		assert.Greater(t, score, 0.0, "score with convoy should be positive")
+	})
+
+	t.Run("invalid created at falls back to now", func(t *testing.T) {
+		issue := &beads.Issue{
+			ID:        "gt-bad-time",
+			Priority:  2,
+			CreatedAt: "invalid-time",
+		}
+		score := mgr.calculateIssueScore(issue, now)
+		assert.Greater(t, score, 0.0, "score should be positive with invalid time")
+	})
+}
+
+func TestManager_issueToMR(t *testing.T) {
+	mgr, _, _ := setupTestManager(t)
+
+	t.Run("nil issue returns nil", func(t *testing.T) {
+		result := mgr.issueToMR(nil)
+		assert.Nil(t, result)
+	})
+
+	t.Run("issue without MR fields", func(t *testing.T) {
+		issue := &beads.Issue{
+			ID:        "gt-123",
+			Title:     "Test Issue",
+			CreatedAt: "2024-01-15T10:00:00Z",
+		}
+		result := mgr.issueToMR(issue)
+		require.NotNil(t, result)
+		assert.Equal(t, "gt-123", result.ID)
+		assert.Equal(t, MROpen, result.Status)
+	})
+
+	t.Run("issue with MR fields", func(t *testing.T) {
+		issue := &beads.Issue{
+			ID:    "gt-mr-456",
+			Title: "MR for feature",
+			Description: `Branch: polecat/Toast/gt-feature
+Worker: Toast
+Target: main
+Source_issue: gt-feature`,
+			CreatedAt: "2024-01-15T10:00:00Z",
+		}
+		result := mgr.issueToMR(issue)
+		require.NotNil(t, result)
+		assert.Equal(t, "polecat/Toast/gt-feature", result.Branch)
+		assert.Equal(t, "Toast", result.Worker)
+		assert.Equal(t, "main", result.TargetBranch)
+	})
+
+	t.Run("issue with MR fields but no target uses default", func(t *testing.T) {
+		issue := &beads.Issue{
+			ID:    "gt-mr-789",
+			Title: "MR without target",
+			Description: `Branch: polecat/Toast/gt-notarget
+Worker: Toast`,
+			CreatedAt: "2024-01-15T10:00:00Z",
+		}
+		result := mgr.issueToMR(issue)
+		require.NotNil(t, result)
+		// Should use rig's default branch (or empty if not set)
+		assert.NotEmpty(t, result.TargetBranch)
+	})
 }

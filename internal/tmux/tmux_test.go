@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 func hasTmux() bool {
@@ -18,7 +20,7 @@ func TestListSessionsNoServer(t *testing.T) {
 	}
 
 	tm := NewTmux()
-	sessions, err := tm.ListSessions()
+	sessions, err := tm.List()
 	// Should not error even if no server running
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
@@ -33,7 +35,7 @@ func TestHasSessionNoServer(t *testing.T) {
 	}
 
 	tm := NewTmux()
-	has, err := tm.HasSession("nonexistent-session-xyz")
+	has, err := tm.Exists(session.SessionID("nonexistent-session-xyz"))
 	if err != nil {
 		t.Fatalf("HasSession: %v", err)
 	}
@@ -49,18 +51,19 @@ func TestSessionLifecycle(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-session-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// Create session
 	if err := tm.NewSession(sessionName, ""); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
 	// Verify exists
-	has, err := tm.HasSession(sessionName)
+	has, err := tm.Exists(sessionID)
 	if err != nil {
 		t.Fatalf("HasSession: %v", err)
 	}
@@ -69,13 +72,13 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 
 	// List should include it
-	sessions, err := tm.ListSessions()
+	sessions, err := tm.List()
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
 	found := false
 	for _, s := range sessions {
-		if s == sessionName {
+		if s == sessionID {
 			found = true
 			break
 		}
@@ -85,12 +88,12 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 
 	// Kill session
-	if err := tm.KillSession(sessionName); err != nil {
+	if err := tm.Stop(sessionID); err != nil {
 		t.Fatalf("KillSession: %v", err)
 	}
 
 	// Verify gone
-	has, err = tm.HasSession(sessionName)
+	has, err = tm.Exists(sessionID)
 	if err != nil {
 		t.Fatalf("HasSession after kill: %v", err)
 	}
@@ -106,15 +109,16 @@ func TestDuplicateSession(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-dup-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// Create session
 	if err := tm.NewSession(sessionName, ""); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
 	// Try to create duplicate
 	err := tm.NewSession(sessionName, "")
@@ -130,24 +134,25 @@ func TestSendKeysAndCapture(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-keys-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// Create session
 	if err := tm.NewSession(sessionName, ""); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
 	// Send echo command
-	if err := tm.SendKeys(sessionName, "echo HELLO_TEST_MARKER"); err != nil {
+	if err := tm.Send(sessionID, "echo HELLO_TEST_MARKER"); err != nil {
 		t.Fatalf("SendKeys: %v", err)
 	}
 
 	// Give it a moment to execute
 	// In real tests you'd wait for output, but for basic test we just capture
-	output, err := tm.CapturePane(sessionName, 50)
+	output, err := tm.Capture(sessionID, 50)
 	if err != nil {
 		t.Fatalf("CapturePane: %v", err)
 	}
@@ -166,17 +171,18 @@ func TestGetSessionInfo(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-info-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// Create session
 	if err := tm.NewSession(sessionName, ""); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
-	info, err := tm.GetSessionInfo(sessionName)
+	info, err := tm.GetInfo(sessionID)
 	if err != nil {
 		t.Fatalf("GetSessionInfo: %v", err)
 	}
@@ -218,18 +224,19 @@ func TestEnsureSessionFresh_NoExistingSession(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-fresh-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// EnsureSessionFresh should create a new session
 	if err := tm.EnsureSessionFresh(sessionName, ""); err != nil {
 		t.Fatalf("EnsureSessionFresh: %v", err)
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
 	// Verify session exists
-	has, err := tm.HasSession(sessionName)
+	has, err := tm.Exists(sessionID)
 	if err != nil {
 		t.Fatalf("HasSession: %v", err)
 	}
@@ -245,16 +252,17 @@ func TestEnsureSessionFresh_ZombieSession(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-zombie-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// Create a zombie session (session exists but no Claude/node running)
 	// A normal tmux session with bash/zsh is a "zombie" for our purposes
 	if err := tm.NewSession(sessionName, ""); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
 	// Verify it's a zombie (not running Claude/node)
 	if tm.IsClaudeRunning(sessionName) {
@@ -273,7 +281,7 @@ func TestEnsureSessionFresh_ZombieSession(t *testing.T) {
 	}
 
 	// Session should still exist
-	has, err := tm.HasSession(sessionName)
+	has, err := tm.Exists(sessionID)
 	if err != nil {
 		t.Fatalf("HasSession: %v", err)
 	}
@@ -289,9 +297,10 @@ func TestEnsureSessionFresh_IdempotentOnZombie(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-idem-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// Call EnsureSessionFresh multiple times - should work each time
 	for i := 0; i < 3; i++ {
@@ -299,10 +308,10 @@ func TestEnsureSessionFresh_IdempotentOnZombie(t *testing.T) {
 			t.Fatalf("EnsureSessionFresh attempt %d: %v", i+1, err)
 		}
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
 	// Session should exist
-	has, err := tm.HasSession(sessionName)
+	has, err := tm.Exists(sessionID)
 	if err != nil {
 		t.Fatalf("HasSession: %v", err)
 	}
@@ -318,15 +327,16 @@ func TestIsAgentRunning(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-agent-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// Create session (will run default shell)
 	if err := tm.NewSession(sessionName, ""); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
 	// Get the current pane command (should be bash/zsh/etc)
 	cmd, err := tm.GetPaneCommand(sessionName)
@@ -408,15 +418,16 @@ func TestIsClaudeRunning(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-claude-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// Create session (will run default shell, not Claude)
 	if err := tm.NewSession(sessionName, ""); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
 	// IsClaudeRunning should be false (shell is running, not node/claude)
 	cmd, _ := tm.GetPaneCommand(sessionName)
@@ -468,17 +479,18 @@ func TestIsClaudeRunning_ShellWithNodeChild(t *testing.T) {
 
 	tm := NewTmux()
 	sessionName := "gt-test-shell-child-" + t.Name()
+	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	_ = tm.Stop(sessionID)
 
 	// Create session with "bash -c" running a node process
 	// Use a simple node command that runs for a few seconds
 	cmd := `node -e "setTimeout(() => {}, 10000)"`
-	if err := tm.NewSessionWithCommand(sessionName, "", cmd); err != nil {
+	if _, err := tm.Start(sessionName, "", cmd); err != nil {
 		t.Fatalf("NewSessionWithCommand: %v", err)
 	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	defer func() { _ = tm.Stop(sessionID) }()
 
 	// Give the node process time to start
 	// WaitForCommand waits until NOT running bash/zsh/sh

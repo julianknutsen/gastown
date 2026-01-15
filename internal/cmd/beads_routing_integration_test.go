@@ -30,9 +30,9 @@ func setupRoutingTestTown(t *testing.T) string {
 
 	// Create routes.jsonl with multiple rigs
 	routes := []beads.Route{
-		{Prefix: "hq-", Path: "."},                      // Town-level beads
-		{Prefix: "gt-", Path: "gastown/mayor/rig"},      // Gastown rig
-		{Prefix: "tr-", Path: "testrig/mayor/rig"},      // Test rig
+		{Prefix: "hq-", Path: "."},                 // Town-level beads
+		{Prefix: "gt-", Path: "gastown/mayor/rig"}, // Gastown rig
+		{Prefix: "tr-", Path: "testrig/mayor/rig"}, // Test rig
 	}
 	if err := beads.WriteRoutes(townBeadsDir, routes); err != nil {
 		t.Fatalf("write routes: %v", err)

@@ -10,9 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/claude"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
@@ -26,19 +27,12 @@ var (
 	ErrCrewNotFound    = errors.New("crew worker not found")
 	ErrHasChanges      = errors.New("crew worker has uncommitted changes")
 	ErrInvalidCrewName = errors.New("invalid crew name")
-	ErrSessionRunning  = errors.New("session already running")
-	ErrSessionNotFound = errors.New("session not found")
+	ErrSessionRunning  = agent.ErrAlreadyRunning
+	ErrNotRunning      = errors.New("crew session not running")
 )
 
 // StartOptions configures crew session startup.
 type StartOptions struct {
-	// Account specifies the account handle to use (overrides default).
-	Account string
-
-	// ClaudeConfigDir is resolved CLAUDE_CONFIG_DIR for the account.
-	// If set, this is injected as an environment variable.
-	ClaudeConfigDir string
-
 	// KillExisting kills any existing session before starting (for restart operations).
 	// If false and a session is running, Start() returns ErrSessionRunning.
 	KillExisting bool
@@ -49,9 +43,6 @@ type StartOptions struct {
 
 	// Interactive removes --dangerously-skip-permissions for interactive/refresh mode.
 	Interactive bool
-
-	// AgentOverride specifies an alternate agent alias (e.g., for testing).
-	AgentOverride string
 }
 
 // validateCrewName checks that a crew name is safe and valid.
@@ -80,16 +71,60 @@ func validateCrewName(name string) error {
 
 // Manager handles crew worker lifecycle.
 type Manager struct {
-	rig *rig.Rig
-	git *git.Git
+	rig       *rig.Rig
+	git       *git.Git
+	agents    agent.Agents
+	agentName string
+
+	// startOpts holds options for the current Start() call, used by onSessionCreated callback
+	startOpts *StartOptions
+	// startWorker holds the worker for the current Start() call
+	startWorker *CrewWorker
+	// startCrewName holds the crew name for the current Start() call
+	startCrewName string
 }
 
 // NewManager creates a new crew manager.
-func NewManager(r *rig.Rig, g *git.Git) *Manager {
+// agents is the Agents implementation for session lifecycle.
+// agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
+func NewManager(r *rig.Rig, g *git.Git, agents agent.Agents, agentName string) *Manager {
 	return &Manager{
-		rig: r,
-		git: g,
+		rig:       r,
+		git:       g,
+		agents:    agents,
+		agentName: agentName,
 	}
+}
+
+// envConfig returns the environment configuration for the current crew member.
+// Must be called after m.startCrewName is set.
+func (m *Manager) envConfig() config.AgentEnvConfig {
+	return config.AgentEnvConfig{
+		Role:          "crew",
+		Rig:           m.rig.Name,
+		AgentName:     m.startCrewName,
+		TownRoot:      filepath.Dir(m.rig.Path),
+		BeadsNoDaemon: true,
+	}
+}
+
+// OnSessionCreated handles post-creation setup: env vars, theming, and crew bindings.
+// This is called by agent.Agents after creating a session.
+func (m *Manager) OnSessionCreated(sess session.Sessions, id session.SessionID) error {
+	t, ok := sess.(*tmux.Tmux)
+	if !ok {
+		return nil
+	}
+	if err := t.SetEnvVars(id, config.AgentEnv(m.envConfig())); err != nil {
+		return fmt.Errorf("setting env vars: %w", err)
+	}
+	if err := t.ConfigureGasTownSession(id, tmux.AssignTheme(m.rig.Name), m.rig.Name, m.startCrewName, "crew"); err != nil {
+		return fmt.Errorf("configuring session: %w", err)
+	}
+	if err := t.SetCrewCycleBindings(string(id)); err != nil {
+		return fmt.Errorf("setting crew cycle bindings: %w", err)
+	}
+	return nil
 }
 
 // crewDir returns the directory for a crew worker.
@@ -191,7 +226,8 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 	// Install runtime settings in the working directory.
 	// Claude Code does NOT traverse parent directories for settings.json.
 	// See: https://github.com/anthropics/claude-code/issues/12962
-	if err := claude.EnsureSettingsForRole(crewPath, "crew"); err != nil {
+	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
+	if err := runtime.EnsureSettingsForRole(crewPath, "crew", runtimeConfig); err != nil {
 		// Non-fatal - log warning but continue
 		fmt.Printf("Warning: could not install runtime settings: %v\n", err)
 	}
@@ -463,37 +499,22 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		return fmt.Errorf("getting crew worker: %w", err)
 	}
 
-	t := tmux.NewTmux()
-	sessionID := m.SessionName(name)
+	sessionName := m.SessionName(name)
 
-	// Check if session already exists
-	running, err := t.HasSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if running {
-		if opts.KillExisting {
-			// Restart mode - kill existing session
-			if err := t.KillSession(sessionID); err != nil {
-				return fmt.Errorf("killing existing session: %w", err)
-			}
-		} else {
-			// Normal start - session exists, check if Claude is actually running
-			if t.IsClaudeRunning(sessionID) {
-				return fmt.Errorf("%w: %s", ErrSessionRunning, sessionID)
-			}
-			// Zombie session - kill and recreate
-			if err := t.KillSession(sessionID); err != nil {
-				return fmt.Errorf("killing zombie session: %w", err)
-			}
+	// Handle KillExisting option - force restart by stopping first
+	if opts.KillExisting {
+		agentID := agent.AgentID(sessionName)
+		if m.agents.Exists(agentID) {
+			_ = m.agents.Stop(agentID, false)
 		}
 	}
 
-	// Ensure Claude settings exist in the working directory.
+	// Ensure runtime settings exist in the working directory.
 	// Claude Code does NOT traverse parent directories for settings.json.
 	// See: https://github.com/anthropics/claude-code/issues/12962
-	if err := claude.EnsureSettingsForRole(worker.ClonePath, "crew"); err != nil {
-		return fmt.Errorf("ensuring Claude settings: %w", err)
+	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
+	if err := runtime.EnsureSettingsForRole(worker.ClonePath, "crew", runtimeConfig); err != nil {
+		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
 	// Build the startup beacon for predecessor discovery via /resume
@@ -509,50 +530,28 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		Topic:     topic,
 	})
 
-	// Build startup command first
-	// SessionStart hook handles context loading (gt prime --hook)
-	claudeCmd, err := config.BuildCrewStartupCommandWithAgentOverride(m.rig.Name, name, m.rig.Path, beacon, opts.AgentOverride)
-	if err != nil {
-		return fmt.Errorf("building startup command: %w", err)
-	}
+	// Store context for onSessionCreated callback and envConfig
+	m.startCrewName = name
+	m.startOpts = &opts
+	m.startWorker = worker
+
+	// Build startup command
+	claudeCmd := config.PrependEnv(config.BuildAgentCommand(m.agentName, beacon), config.AgentEnv(m.envConfig()))
 
 	// For interactive/refresh mode, remove --dangerously-skip-permissions
 	if opts.Interactive {
 		claudeCmd = strings.Replace(claudeCmd, " --dangerously-skip-permissions", "", 1)
 	}
 
-	// Create session with command directly to avoid send-keys race condition.
-	// See: https://github.com/anthropics/gastown/issues/280
-	if err := t.NewSessionWithCommand(sessionID, worker.ClonePath, claudeCmd); err != nil {
-		return fmt.Errorf("creating session: %w", err)
+	// Start the agent (handles zombie detection, env vars, theming via callback)
+	_, err = m.agents.Start(sessionName, worker.ClonePath, claudeCmd)
+	if err != nil {
+		return err // ErrAlreadyRunning or other errors
 	}
-
-	// Set environment variables (non-fatal: session works without these)
-	// Use centralized AgentEnv for consistency across all role startup paths
-	townRoot := filepath.Dir(m.rig.Path)
-	envVars := config.AgentEnv(config.AgentEnvConfig{
-		Role:             "crew",
-		Rig:              m.rig.Name,
-		AgentName:        name,
-		TownRoot:         townRoot,
-		RuntimeConfigDir: opts.ClaudeConfigDir,
-		BeadsNoDaemon:    true,
-	})
-	for k, v := range envVars {
-		_ = t.SetEnvironment(sessionID, k, v)
-	}
-
-	// Apply rig-based theming (non-fatal: theming failure doesn't affect operation)
-	theme := tmux.AssignTheme(m.rig.Name)
-	_ = t.ConfigureGasTownSession(sessionID, theme, m.rig.Name, name, "crew")
-
-	// Set up C-b n/p keybindings for crew session cycling (non-fatal)
-	_ = t.SetCrewCycleBindings(sessionID)
 
 	// Note: We intentionally don't wait for Claude to start here.
-	// The session is created in detached mode, and blocking for 60 seconds
-	// serves no purpose. If the caller needs to know when Claude is ready,
-	// they can check with IsClaudeRunning().
+	// The session is created in detached mode, and blocking serves no purpose.
+	// If the caller needs to know when Claude is ready, they can check with IsRunning().
 
 	return nil
 }
@@ -563,21 +562,15 @@ func (m *Manager) Stop(name string) error {
 		return err
 	}
 
-	t := tmux.NewTmux()
-	sessionID := m.SessionName(name)
+	agentID := agent.AgentID(m.SessionName(name))
 
-	// Check if session exists
-	running, err := t.HasSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if !running {
-		return ErrSessionNotFound
+	if !m.agents.Exists(agentID) {
+		return ErrNotRunning
 	}
 
-	// Kill the session
-	if err := t.KillSession(sessionID); err != nil {
-		return fmt.Errorf("killing session: %w", err)
+	// Stop gracefully
+	if err := m.agents.Stop(agentID, true); err != nil {
+		return fmt.Errorf("stopping session: %w", err)
 	}
 
 	return nil
@@ -585,7 +578,6 @@ func (m *Manager) Stop(name string) error {
 
 // IsRunning checks if a crew member's session is active.
 func (m *Manager) IsRunning(name string) (bool, error) {
-	t := tmux.NewTmux()
-	sessionID := m.SessionName(name)
-	return t.HasSession(sessionID)
+	agentID := agent.AgentID(m.SessionName(name))
+	return m.agents.Exists(agentID), nil
 }

@@ -66,7 +66,7 @@ func contentHeight(content string) int {
 }
 
 // ToPager pipes content to a pager if appropriate.
-// Prints directly if pager is disabled, stdout is not a TTY, or content fits in terminal.
+// Prints directly if pager is disabled, stdout is not a TTY, or content fits in session.
 func ToPager(content string, opts PagerOptions) error {
 	if !shouldUsePager(opts) {
 		fmt.Print(content)

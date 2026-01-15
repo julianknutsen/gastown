@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/dog"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -487,7 +488,7 @@ func showDogStatus(mgr *dog.Manager, name string) error {
 		if err == nil {
 			sessionName := fmt.Sprintf("gt-%s-deacon-%s", townName, name)
 			tm := tmux.NewTmux()
-			if has, _ := tm.HasSession(sessionName); has {
+			if has, _ := tm.Exists(session.SessionID(sessionName)); has {
 				fmt.Printf("\nSession: %s (running)\n", sessionName)
 			}
 		}

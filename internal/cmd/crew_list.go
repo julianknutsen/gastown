@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/crew"
+	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -36,7 +39,7 @@ func runCrewList(cmd *cobra.Command, args []string) error {
 		}
 		rigs = allRigs
 	} else {
-		_, r, err := getCrewManager(crewRig)
+		_, r, err := getCrewManager(crewRig, "")
 		if err != nil {
 			return err
 		}
@@ -48,8 +51,9 @@ func runCrewList(cmd *cobra.Command, args []string) error {
 	var items []CrewListItem
 
 	for _, r := range rigs {
-		crewGit := git.NewGit(r.Path)
-		crewMgr := crew.NewManager(r, crewGit)
+		townRoot := filepath.Dir(r.Path)
+		agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
+		crewMgr := factory.CrewManager(r, townRoot, agentName)
 
 		workers, err := crewMgr.List()
 		if err != nil {
@@ -58,8 +62,8 @@ func runCrewList(cmd *cobra.Command, args []string) error {
 		}
 
 		for _, w := range workers {
-			sessionID := crewSessionName(r.Name, w.Name)
-			hasSession, _ := t.HasSession(sessionID)
+			sessionName := crewSessionName(r.Name, w.Name)
+			hasSession, _ := t.Exists(session.SessionID(sessionName))
 
 			workerGit := git.NewGit(w.ClonePath)
 			gitClean := true

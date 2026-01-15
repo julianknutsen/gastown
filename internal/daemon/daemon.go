@@ -16,12 +16,14 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/boot"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/events"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/feed"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/refinery"
@@ -78,9 +80,10 @@ func New(config *Config) (*Daemon, error) {
 	logger := log.New(logFile, "", log.LstdFlags)
 	ctx, cancel := context.WithCancel(context.Background())
 
+	t := tmux.NewTmux()
 	return &Daemon{
 		config: config,
-		tmux:   tmux.NewTmux(),
+		tmux:   t,
 		logger: logger,
 		ctx:    ctx,
 		cancel: cancel,
@@ -286,7 +289,7 @@ func (d *Daemon) runDegradedBootTriage(b *boot.Boot) {
 	}
 
 	// Simple check: is Deacon session alive?
-	hasDeacon, err := d.tmux.HasSession(d.getDeaconSessionName())
+	hasDeacon, err := d.tmux.Exists(session.SessionID(d.getDeaconSessionName()))
 	if err != nil {
 		d.logger.Printf("Error checking Deacon session: %v", err)
 		status.LastAction = "error"
@@ -311,9 +314,17 @@ func (d *Daemon) runDegradedBootTriage(b *boot.Boot) {
 // ensureDeaconRunning ensures the Deacon is running.
 // Uses deacon.Manager for consistent startup behavior (WaitForShellReady, GUPP, etc.).
 func (d *Daemon) ensureDeaconRunning() {
-	mgr := deacon.NewManager(d.config.TownRoot)
+	// Look up the configured agent for deacon role
+	agentName, _ := config.ResolveRoleAgentName("deacon", d.config.TownRoot, "")
 
-	if err := mgr.Start(""); err != nil {
+	// Create agents with proper configuration
+	envVars := config.AgentEnv(config.AgentEnvConfig{Role: "deacon", TownRoot: d.config.TownRoot})
+	sessionCfg := tmux.SessionConfigForRole("deacon", "").WithEnvVars(envVars)
+	t := tmux.NewTmux().WithSessionConfig(sessionCfg)
+	agents := agent.New(t, agent.FromPreset(agentName).WithEnvVars(envVars))
+	mgr := deacon.NewManager(d.config.TownRoot, agentName, agents)
+
+	if err := mgr.Start(); err != nil {
 		if err == deacon.ErrAlreadyRunning {
 			// Deacon is running - nothing to do
 			return
@@ -346,9 +357,10 @@ func (d *Daemon) checkDeaconHeartbeat() {
 	d.logger.Printf("Deacon heartbeat is stale (%s old), checking session...", age.Round(time.Minute))
 
 	sessionName := d.getDeaconSessionName()
+	sessionID := session.SessionID(sessionName)
 
 	// Check if session exists
-	hasSession, err := d.tmux.HasSession(sessionName)
+	hasSession, err := d.tmux.Exists(sessionID)
 	if err != nil {
 		d.logger.Printf("Error checking Deacon session: %v", err)
 		return
@@ -364,7 +376,7 @@ func (d *Daemon) checkDeaconHeartbeat() {
 	if age > 30*time.Minute {
 		// Very stuck - restart the session
 		d.logger.Printf("Deacon stuck for %s - restarting session", age.Round(time.Minute))
-		if err := d.tmux.KillSession(sessionName); err != nil {
+		if err := d.tmux.Stop(sessionID); err != nil {
 			d.logger.Printf("Error killing stuck Deacon: %v", err)
 		}
 		// ensureDeaconRunning will restart on next heartbeat
@@ -402,9 +414,16 @@ func (d *Daemon) ensureWitnessRunning(rigName string) {
 		Name: rigName,
 		Path: filepath.Join(d.config.TownRoot, rigName),
 	}
-	mgr := witness.NewManager(r)
+	agentName, _ := config.ResolveRoleAgentName("witness", d.config.TownRoot, "")
 
-	if err := mgr.Start(false, "", nil); err != nil {
+	// Create agents with proper configuration
+	envVars := config.AgentEnv(config.AgentEnvConfig{Role: "witness", Rig: rigName, TownRoot: d.config.TownRoot})
+	sessionCfg := tmux.SessionConfigForRole("witness", rigName).WithEnvVars(envVars)
+	t := tmux.NewTmux().WithSessionConfig(sessionCfg)
+	agents := agent.New(t, agent.FromPreset(agentName).WithEnvVars(envVars))
+	mgr := witness.NewManager(r, agents, agentName)
+
+	if err := mgr.Start(); err != nil {
 		if err == witness.ErrAlreadyRunning {
 			// Already running - nothing to do
 			return
@@ -441,9 +460,10 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 		Name: rigName,
 		Path: filepath.Join(d.config.TownRoot, rigName),
 	}
-	mgr := refinery.NewManager(r)
+	agentName, _ := config.ResolveRoleAgentName("refinery", d.config.TownRoot, r.Path)
+	mgr := factory.RefineryManager(r, d.config.TownRoot, agentName)
 
-	if err := mgr.Start(false); err != nil {
+	if err := mgr.Start(); err != nil {
 		if err == refinery.ErrAlreadyRunning {
 			// Already running - nothing to do
 			return
@@ -722,9 +742,10 @@ func listPolecatWorktrees(polecatsDir string) ([]string, error) {
 func (d *Daemon) checkPolecatHealth(rigName, polecatName string) {
 	// Build the expected tmux session name
 	sessionName := fmt.Sprintf("gt-%s-%s", rigName, polecatName)
+	sessionID := session.SessionID(sessionName)
 
 	// Check if tmux session exists
-	sessionAlive, err := d.tmux.HasSession(sessionName)
+	sessionAlive, err := d.tmux.Exists(sessionID)
 	if err != nil {
 		d.logger.Printf("Error checking session %s: %v", sessionName, err)
 		return
@@ -821,6 +842,8 @@ func (d *Daemon) emitMassDeathEvent() {
 
 // restartPolecatSession restarts a crashed polecat session.
 func (d *Daemon) restartPolecatSession(rigName, polecatName, sessionName string) error {
+	sessionID := session.SessionID(sessionName)
+
 	// Check rig operational state before auto-restarting
 	if operational, reason := d.isRigOperational(rigName); !operational {
 		return fmt.Errorf("cannot restart polecat: %s", reason)
@@ -863,21 +886,21 @@ func (d *Daemon) restartPolecatSession(rigName, polecatName, sessionName string)
 
 	// Set all env vars in tmux session (for debugging) and they'll also be exported to Claude
 	for k, v := range envVars {
-		_ = d.tmux.SetEnvironment(sessionName, k, v)
+		_ = d.tmux.SetEnv(sessionID, k, v)
 	}
 
 	// Apply theme
 	theme := tmux.AssignTheme(rigName)
-	_ = d.tmux.ConfigureGasTownSession(sessionName, theme, rigName, polecatName, "polecat")
+	_ = d.tmux.ConfigureGasTownSession(sessionID, theme, rigName, polecatName, "polecat")
 
 	// Set pane-died hook for future crash detection
 	agentID := fmt.Sprintf("%s/%s", rigName, polecatName)
-	_ = d.tmux.SetPaneDiedHook(sessionName, agentID)
+	_ = d.tmux.SetPaneDiedHook(sessionID, agentID)
 
 	// Launch Claude with environment exported inline
 	// Pass rigPath so rig agent settings are honored (not town-level defaults)
 	startCmd := config.BuildStartupCommand(envVars, rigPath, "")
-	if err := d.tmux.SendKeys(sessionName, startCmd); err != nil {
+	if err := d.tmux.Send(sessionID, startCmd); err != nil {
 		return fmt.Errorf("sending startup command: %w", err)
 	}
 

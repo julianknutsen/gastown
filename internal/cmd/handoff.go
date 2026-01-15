@@ -506,7 +506,7 @@ func detectTownRootFromCwd() string {
 // handoffRemoteSession respawns a different session and optionally switches to it.
 func handoffRemoteSession(t *tmux.Tmux, targetSession, restartCmd string) error {
 	// Check if target session exists
-	exists, err := t.HasSession(targetSession)
+	exists, err := t.Exists(session.SessionID(targetSession))
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}

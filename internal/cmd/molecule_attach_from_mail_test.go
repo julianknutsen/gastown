@@ -54,7 +54,7 @@ func TestExtractMoleculeIDFromMail(t *testing.T) {
 			expected: "gt-case",
 		},
 		{
-			name:     "molecule in multiline context",
+			name: "molecule in multiline context",
 			body: `Subject: Work Assignment
 
 This is your next task.

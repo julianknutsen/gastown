@@ -4,8 +4,11 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -84,12 +87,26 @@ func init() {
 }
 
 // getMayorManager returns a mayor manager for the current workspace.
-func getMayorManager() (*mayor.Manager, error) {
+// agentOverride is the command-line agent override (empty uses config default).
+func getMayorManager(agentOverride string) (*mayor.Manager, error) {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return nil, fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-	return mayor.NewManager(townRoot), nil
+	agentName := config.ResolveAgentForRole("mayor", townRoot, "", agentOverride)
+
+	// Get env vars and visual config for mayor role
+	envVars := config.AgentEnv(config.AgentEnvConfig{
+		Role:     "mayor",
+		TownRoot: townRoot,
+	})
+	sessionCfg := tmux.SessionConfigForRole("mayor", "").WithEnvVars(envVars)
+
+	// Create configured tmux and Agents
+	t := tmux.NewTmux().WithSessionConfig(sessionCfg)
+	agents := agent.New(t, agent.FromPreset(agentName).WithEnvVars(envVars))
+
+	return mayor.NewManager(townRoot, agentName, agents), nil
 }
 
 // getMayorSessionName returns the Mayor session name.
@@ -98,13 +115,13 @@ func getMayorSessionName() string {
 }
 
 func runMayorStart(cmd *cobra.Command, args []string) error {
-	mgr, err := getMayorManager()
+	mgr, err := getMayorManager(mayorAgentOverride)
 	if err != nil {
 		return err
 	}
 
 	fmt.Println("Starting Mayor session...")
-	if err := mgr.Start(mayorAgentOverride); err != nil {
+	if err := mgr.Start(); err != nil {
 		if err == mayor.ErrAlreadyRunning {
 			return fmt.Errorf("Mayor session already running. Attach with: gt mayor attach")
 		}
@@ -119,7 +136,7 @@ func runMayorStart(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorStop(cmd *cobra.Command, args []string) error {
-	mgr, err := getMayorManager()
+	mgr, err := getMayorManager("")
 	if err != nil {
 		return err
 	}
@@ -137,7 +154,7 @@ func runMayorStop(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorAttach(cmd *cobra.Command, args []string) error {
-	mgr, err := getMayorManager()
+	mgr, err := getMayorManager(mayorAgentOverride)
 	if err != nil {
 		return err
 	}
@@ -149,7 +166,7 @@ func runMayorAttach(cmd *cobra.Command, args []string) error {
 	if !running {
 		// Auto-start if not running
 		fmt.Println("Mayor session not running, starting...")
-		if err := mgr.Start(mayorAgentOverride); err != nil {
+		if err := mgr.Start(); err != nil {
 			return err
 		}
 	}
@@ -159,7 +176,7 @@ func runMayorAttach(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorStatus(cmd *cobra.Command, args []string) error {
-	mgr, err := getMayorManager()
+	mgr, err := getMayorManager("")
 	if err != nil {
 		return err
 	}
@@ -191,7 +208,7 @@ func runMayorStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorRestart(cmd *cobra.Command, args []string) error {
-	mgr, err := getMayorManager()
+	mgr, err := getMayorManager(mayorAgentOverride)
 	if err != nil {
 		return err
 	}

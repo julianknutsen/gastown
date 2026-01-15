@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -26,41 +28,85 @@ func debugSession(context string, err error) {
 
 // Session errors
 var (
-	ErrSessionRunning  = errors.New("session already running")
+	ErrSessionRunning  = agent.ErrAlreadyRunning
 	ErrSessionNotFound = errors.New("session not found")
 )
 
 // SessionManager handles polecat session lifecycle.
+// Uses agent.Agents for lifecycle operations (same pattern as mayor/deacon/witness/refinery).
 type SessionManager struct {
-	tmux *tmux.Tmux
-	rig  *rig.Rig
+	agents    agent.Agents
+	sess      session.Sessions // For direct session access (capture, inject, etc.)
+	rig       *rig.Rig
+	agentName string
 }
 
 // NewSessionManager creates a new polecat session manager for a rig.
-func NewSessionManager(t *tmux.Tmux, r *rig.Rig) *SessionManager {
+// agents is the Agents instance for lifecycle management.
+// sess is the underlying Sessions for direct access (capture, inject, attach).
+// agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
+func NewSessionManager(agents agent.Agents, sess session.Sessions, r *rig.Rig, agentName string) *SessionManager {
 	return &SessionManager{
-		tmux: t,
-		rig:  r,
+		agents:    agents,
+		sess:      sess,
+		rig:       r,
+		agentName: agentName,
 	}
 }
 
-// SessionStartOptions configures polecat session startup.
-type SessionStartOptions struct {
-	// WorkDir overrides the default working directory (polecat clone dir).
-	WorkDir string
+// envConfig returns the environment configuration for the given polecat.
+func (m *SessionManager) envConfig(polecat string) config.AgentEnvConfig {
+	return config.AgentEnvConfig{
+		Role:          "polecat",
+		Rig:           m.rig.Name,
+		AgentName:     polecat,
+		TownRoot:      filepath.Dir(m.rig.Path),
+		BeadsNoDaemon: true,
+	}
+}
 
-	// Issue is an optional issue ID to work on.
-	Issue string
+// configureTmuxSession applies tmux-specific configuration after session creation.
+// This is a no-op if sess is not a *tmux.Tmux.
+func (m *SessionManager) configureTmuxSession(polecat string, sessionID session.SessionID) {
+	t, ok := m.sess.(*tmux.Tmux)
+	if !ok {
+		return
+	}
 
-	// Command overrides the default "claude" command.
-	Command string
+	// Set environment variables (redundant with command prefix, but provides runtime visibility)
+	if err := t.SetEnvVars(sessionID, config.AgentEnv(m.envConfig(polecat))); err != nil {
+		debugSession("SetEnvVars", err)
+	}
 
-	// Account specifies the account handle to use (overrides default).
-	Account string
+	// Configure session appearance (theme, status bar)
+	if err := t.ConfigureGasTownSession(sessionID, tmux.AssignTheme(m.rig.Name), m.rig.Name, polecat, "polecat"); err != nil {
+		debugSession("ConfigureGasTownSession", err)
+	}
 
-	// RuntimeConfigDir is resolved config directory for the runtime account.
-	// If set, this is injected as an environment variable.
-	RuntimeConfigDir string
+	// Set pane-died hook for cleanup
+	if err := t.SetPaneDiedHook(sessionID, fmt.Sprintf("%s/%s", m.rig.Name, polecat)); err != nil {
+		debugSession("SetPaneDiedHook", err)
+	}
+}
+
+// waitForReady performs tmux-specific startup waiting.
+// This is a no-op if sess is not a *tmux.Tmux.
+func (m *SessionManager) waitForReady(sessionName string) {
+	t, ok := m.sess.(*tmux.Tmux)
+	if !ok {
+		return
+	}
+
+	// Wait for Claude to start and handle dialogs
+	debugSession("WaitForCommand", t.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout))
+
+	// Accept bypass permissions warning dialog if it appears
+	debugSession("AcceptBypassPermissionsWarning", t.AcceptBypassPermissionsWarning(sessionName))
+
+	// Wait for runtime to be fully ready at the prompt
+	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
+	runtime.SleepForReadyDelay(runtimeConfig)
+	_ = runtime.RunStartupFallback(t, sessionName, "polecat", runtimeConfig)
 }
 
 // SessionInfo contains information about a running polecat session.
@@ -136,29 +182,13 @@ func (m *SessionManager) hasPolecat(polecat string) bool {
 }
 
 // Start creates and starts a new session for a polecat.
-func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
+func (m *SessionManager) Start(polecat string) error {
 	if !m.hasPolecat(polecat) {
 		return fmt.Errorf("%w: %s", ErrPolecatNotFound, polecat)
 	}
 
-	sessionID := m.SessionName(polecat)
-
-	// Check if session already exists
-	// Note: Orphan sessions are cleaned up by ReconcilePool during AllocateName,
-	// so by this point, any existing session should be legitimately in use.
-	running, err := m.tmux.HasSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if running {
-		return fmt.Errorf("%w: %s", ErrSessionRunning, sessionID)
-	}
-
-	// Determine working directory
-	workDir := opts.WorkDir
-	if workDir == "" {
-		workDir = m.clonePath(polecat)
-	}
+	sessionName := m.SessionName(polecat)
+	workDir := m.clonePath(polecat)
 
 	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
 
@@ -169,80 +199,34 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
-	// Build startup command with initial prompt for propulsion.
-	// The CLI prompt is more reliable than post-startup nudges (which arrive before input is ready).
-	command := opts.Command
-	if command == "" {
-		command = config.BuildPolecatStartupCommand(m.rig.Name, polecat, m.rig.Path, "gt prime")
-	}
-	// Prepend runtime config dir env if needed
-	if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && opts.RuntimeConfigDir != "" {
-		command = config.PrependEnv(command, map[string]string{runtimeConfig.Session.ConfigDirEnv: opts.RuntimeConfigDir})
-	}
+	// Build startup command with env vars baked in
+	command := config.PrependEnv(config.BuildAgentCommand(m.agentName, ""), config.AgentEnv(m.envConfig(polecat)))
 
-	// Create session with command directly to avoid send-keys race condition.
-	// See: https://github.com/anthropics/gastown/issues/280
-	if err := m.tmux.NewSessionWithCommand(sessionID, workDir, command); err != nil {
+	// Create session via agent.Agents (handles zombie detection)
+	_, err := m.agents.Start(sessionName, workDir, command)
+	if err != nil {
+		if errors.Is(err, agent.ErrAlreadyRunning) {
+			return fmt.Errorf("%w: %s", ErrSessionRunning, sessionName)
+		}
 		return fmt.Errorf("creating session: %w", err)
 	}
 
-	// Set environment (non-fatal: session works without these)
-	// Use centralized AgentEnv for consistency across all role startup paths
-	townRoot := filepath.Dir(m.rig.Path)
-	envVars := config.AgentEnv(config.AgentEnvConfig{
-		Role:             "polecat",
-		Rig:              m.rig.Name,
-		AgentName:        polecat,
-		TownRoot:         townRoot,
-		RuntimeConfigDir: opts.RuntimeConfigDir,
-		BeadsNoDaemon:    true,
-	})
-	for k, v := range envVars {
-		debugSession("SetEnvironment "+k, m.tmux.SetEnvironment(sessionID, k, v))
-	}
+	// Apply tmux-specific configuration (themes, hooks) - no-op for non-tmux
+	sessionID := session.SessionID(sessionName)
+	m.configureTmuxSession(polecat, sessionID)
 
-	// Hook the issue to the polecat if provided via --issue flag
-	if opts.Issue != "" {
-		agentID := fmt.Sprintf("%s/polecats/%s", m.rig.Name, polecat)
-		if err := m.hookIssue(opts.Issue, agentID, workDir); err != nil {
-			fmt.Printf("Warning: could not hook issue %s: %v\n", opts.Issue, err)
-		}
-	}
-
-	// Apply theme (non-fatal)
-	theme := tmux.AssignTheme(m.rig.Name)
-	debugSession("ConfigureGasTownSession", m.tmux.ConfigureGasTownSession(sessionID, theme, m.rig.Name, polecat, "polecat"))
-
-	// Set pane-died hook for crash detection (non-fatal)
-	agentID := fmt.Sprintf("%s/%s", m.rig.Name, polecat)
-	debugSession("SetPaneDiedHook", m.tmux.SetPaneDiedHook(sessionID, agentID))
-
-	// Wait for Claude to start (non-fatal)
-	debugSession("WaitForCommand", m.tmux.WaitForCommand(sessionID, constants.SupportedShells, constants.ClaudeStartTimeout))
-
-	// Accept bypass permissions warning dialog if it appears
-	debugSession("AcceptBypassPermissionsWarning", m.tmux.AcceptBypassPermissionsWarning(sessionID))
-
-	// Wait for runtime to be fully ready at the prompt (not just started)
-	runtime.SleepForReadyDelay(runtimeConfig)
-	_ = runtime.RunStartupFallback(m.tmux, sessionID, "polecat", runtimeConfig)
-
-	// Propulsion is handled by the CLI prompt ("gt prime") passed at startup.
-	// No need for post-startup nudges which are unreliable (text arrives before input is ready).
-	// The SessionStart hook also runs "gt prime" as a backup.
+	// Wait for ready (tmux-specific startup) - no-op for non-tmux
+	m.waitForReady(sessionName)
 
 	return nil
 }
 
 // Stop terminates a polecat session.
 func (m *SessionManager) Stop(polecat string, force bool) error {
-	sessionID := m.SessionName(polecat)
+	sessionName := m.SessionName(polecat)
+	agentID := agent.AgentID(sessionName)
 
-	running, err := m.tmux.HasSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if !running {
+	if !m.agents.Exists(agentID) {
 		return ErrSessionNotFound
 	}
 
@@ -254,14 +238,9 @@ func (m *SessionManager) Stop(polecat string, force bool) error {
 		}
 	}
 
-	// Try graceful shutdown first
-	if !force {
-		_ = m.tmux.SendKeysRaw(sessionID, "C-c")
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if err := m.tmux.KillSession(sessionID); err != nil {
-		return fmt.Errorf("killing session: %w", err)
+	// Stop via agent.Agents (graceful sends Ctrl-C first)
+	if err := m.agents.Stop(agentID, !force); err != nil {
+		return fmt.Errorf("stopping session: %w", err)
 	}
 
 	return nil
@@ -276,22 +255,23 @@ func (m *SessionManager) syncBeads(workDir string) error {
 
 // IsRunning checks if a polecat session is active.
 func (m *SessionManager) IsRunning(polecat string) (bool, error) {
-	sessionID := m.SessionName(polecat)
-	return m.tmux.HasSession(sessionID)
+	agentID := agent.AgentID(m.SessionName(polecat))
+	return m.agents.Exists(agentID), nil
 }
 
 // Status returns detailed status for a polecat session.
 func (m *SessionManager) Status(polecat string) (*SessionInfo, error) {
-	sessionID := m.SessionName(polecat)
+	sessionName := m.SessionName(polecat)
+	sessionID := session.SessionID(sessionName)
 
-	running, err := m.tmux.HasSession(sessionID)
+	running, err := m.sess.Exists(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("checking session: %w", err)
 	}
 
 	info := &SessionInfo{
 		Polecat:   polecat,
-		SessionID: sessionID,
+		SessionID: sessionName,
 		Running:   running,
 		RigName:   m.rig.Name,
 	}
@@ -300,7 +280,7 @@ func (m *SessionManager) Status(polecat string) (*SessionInfo, error) {
 		return info, nil
 	}
 
-	tmuxInfo, err := m.tmux.GetSessionInfo(sessionID)
+	tmuxInfo, err := m.sess.GetInfo(sessionID)
 	if err != nil {
 		return info, nil
 	}
@@ -335,7 +315,7 @@ func (m *SessionManager) Status(polecat string) (*SessionInfo, error) {
 
 // List returns information about all polecat sessions for this rig.
 func (m *SessionManager) List() ([]SessionInfo, error) {
-	sessions, err := m.tmux.ListSessions()
+	sessions, err := m.sess.List()
 	if err != nil {
 		return nil, err
 	}
@@ -344,14 +324,15 @@ func (m *SessionManager) List() ([]SessionInfo, error) {
 	var infos []SessionInfo
 
 	for _, sessionID := range sessions {
-		if !strings.HasPrefix(sessionID, prefix) {
+		sessionName := string(sessionID)
+		if !strings.HasPrefix(sessionName, prefix) {
 			continue
 		}
 
-		polecat := strings.TrimPrefix(sessionID, prefix)
+		polecat := strings.TrimPrefix(sessionName, prefix)
 		infos = append(infos, SessionInfo{
 			Polecat:   polecat,
-			SessionID: sessionID,
+			SessionID: sessionName,
 			Running:   true,
 			RigName:   m.rig.Name,
 		})
@@ -362,9 +343,10 @@ func (m *SessionManager) List() ([]SessionInfo, error) {
 
 // Attach attaches to a polecat session.
 func (m *SessionManager) Attach(polecat string) error {
-	sessionID := m.SessionName(polecat)
+	sessionName := m.SessionName(polecat)
+	sessionID := session.SessionID(sessionName)
 
-	running, err := m.tmux.HasSession(sessionID)
+	running, err := m.sess.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
@@ -372,14 +354,18 @@ func (m *SessionManager) Attach(polecat string) error {
 		return ErrSessionNotFound
 	}
 
-	return m.tmux.AttachSession(sessionID)
+	// AttachSession is tmux-specific
+	if t, ok := m.sess.(*tmux.Tmux); ok {
+		return t.AttachSession(sessionName)
+	}
+	return fmt.Errorf("attach not supported for this session type")
 }
 
 // Capture returns the recent output from a polecat session.
 func (m *SessionManager) Capture(polecat string, lines int) (string, error) {
-	sessionID := m.SessionName(polecat)
+	sessionID := session.SessionID(m.SessionName(polecat))
 
-	running, err := m.tmux.HasSession(sessionID)
+	running, err := m.sess.Exists(sessionID)
 	if err != nil {
 		return "", fmt.Errorf("checking session: %w", err)
 	}
@@ -387,12 +373,13 @@ func (m *SessionManager) Capture(polecat string, lines int) (string, error) {
 		return "", ErrSessionNotFound
 	}
 
-	return m.tmux.CapturePane(sessionID, lines)
+	return m.sess.Capture(sessionID, lines)
 }
 
 // CaptureSession returns the recent output from a session by raw session ID.
-func (m *SessionManager) CaptureSession(sessionID string, lines int) (string, error) {
-	running, err := m.tmux.HasSession(sessionID)
+func (m *SessionManager) CaptureSession(sessionName string, lines int) (string, error) {
+	sessionID := session.SessionID(sessionName)
+	running, err := m.sess.Exists(sessionID)
 	if err != nil {
 		return "", fmt.Errorf("checking session: %w", err)
 	}
@@ -400,14 +387,15 @@ func (m *SessionManager) CaptureSession(sessionID string, lines int) (string, er
 		return "", ErrSessionNotFound
 	}
 
-	return m.tmux.CapturePane(sessionID, lines)
+	return m.sess.Capture(sessionID, lines)
 }
 
 // Inject sends a message to a polecat session.
 func (m *SessionManager) Inject(polecat, message string) error {
-	sessionID := m.SessionName(polecat)
+	sessionName := m.SessionName(polecat)
+	sessionID := session.SessionID(sessionName)
 
-	running, err := m.tmux.HasSession(sessionID)
+	running, err := m.sess.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
@@ -420,7 +408,12 @@ func (m *SessionManager) Inject(polecat, message string) error {
 		debounceMs = 1500
 	}
 
-	return m.tmux.SendKeysDebounced(sessionID, message, debounceMs)
+	// SendKeysDebounced is tmux-specific
+	if t, ok := m.sess.(*tmux.Tmux); ok {
+		return t.SendKeysDebounced(sessionName, message, debounceMs)
+	}
+	// Fallback to regular Send for non-tmux sessions
+	return m.sess.Send(sessionID, message)
 }
 
 // StopAll terminates all polecat sessions for this rig.

@@ -666,10 +666,11 @@ func (c *ClaudeSettingsCheck) Fix(ctx *CheckContext) error {
 		if ctx.RestartSessions {
 			if sf.agentType == "witness" || sf.agentType == "refinery" ||
 				sf.agentType == "deacon" || sf.agentType == "mayor" {
-				running, _ := t.HasSession(sf.sessionName)
+				sessionID := session.SessionID(sf.sessionName)
+				running, _ := t.Exists(sessionID)
 				if running {
 					// Cycle the agent by killing and letting gt up restart it
-					_ = t.KillSession(sf.sessionName)
+					_ = t.Stop(sessionID)
 				}
 			}
 		}

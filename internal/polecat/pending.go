@@ -9,6 +9,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/mail"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -122,7 +123,7 @@ func TriggerPendingSpawns(townRoot string, timeout time.Duration) ([]TriggerResu
 		result := TriggerResult{Spawn: ps}
 
 		// Check if session still exists (ZFC: query tmux directly)
-		running, err := t.HasSession(ps.Session)
+		running, err := t.Exists(session.SessionID(ps.Session))
 		if err != nil {
 			result.Error = fmt.Errorf("checking session: %w", err)
 			results = append(results, result)

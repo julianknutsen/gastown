@@ -11,12 +11,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/deps"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/wisp"
@@ -624,7 +625,7 @@ func runResetStale(bd *beads.Beads, dryRun bool) error {
 		}
 
 		// Check if session exists
-		hasSession, err := t.HasSession(sessionName)
+		hasSession, err := t.Exists(session.SessionID(sessionName))
 		if err != nil {
 			// tmux error, skip this one
 			continue
@@ -748,40 +749,29 @@ func runRigBoot(cmd *cobra.Command, args []string) error {
 	var started []string
 	var skipped []string
 
-	t := tmux.NewTmux()
-
 	// 1. Start the witness
-	// Check actual tmux session, not state file (may be stale)
-	witnessSession := fmt.Sprintf("gt-%s-witness", rigName)
-	witnessRunning, _ := t.HasSession(witnessSession)
-	if witnessRunning {
-		skipped = append(skipped, "witness (already running)")
-	} else {
-		fmt.Printf("  Starting witness...\n")
-		witMgr := witness.NewManager(r)
-		if err := witMgr.Start(false, "", nil); err != nil {
-			if err == witness.ErrAlreadyRunning {
-				skipped = append(skipped, "witness (already running)")
-			} else {
-				return fmt.Errorf("starting witness: %w", err)
-			}
+	fmt.Printf("  Starting witness...\n")
+	witMgr := factory.WitnessManager(r, townRoot, "")
+	if err := witMgr.Start(); err != nil {
+		if err == witness.ErrAlreadyRunning {
+			skipped = append(skipped, "witness (already running)")
 		} else {
-			started = append(started, "witness")
+			return fmt.Errorf("starting witness: %w", err)
 		}
+	} else {
+		started = append(started, "witness")
 	}
 
 	// 2. Start the refinery
-	// Check actual tmux session, not state file (may be stale)
-	refinerySession := fmt.Sprintf("gt-%s-refinery", rigName)
-	refineryRunning, _ := t.HasSession(refinerySession)
-	if refineryRunning {
-		skipped = append(skipped, "refinery (already running)")
-	} else {
-		fmt.Printf("  Starting refinery...\n")
-		refMgr := refinery.NewManager(r)
-		if err := refMgr.Start(false); err != nil { // false = background mode
+	fmt.Printf("  Starting refinery...\n")
+	refMgr := factory.RefineryManager(r, townRoot, "")
+	if err := refMgr.Start(); err != nil {
+		if err == refinery.ErrAlreadyRunning {
+			skipped = append(skipped, "refinery (already running)")
+		} else {
 			return fmt.Errorf("starting refinery: %w", err)
 		}
+	} else {
 		started = append(started, "refinery")
 	}
 
@@ -812,7 +802,6 @@ func runRigStart(cmd *cobra.Command, args []string) error {
 
 	g := git.NewGit(townRoot)
 	rigMgr := rig.NewManager(townRoot, rigsConfig, g)
-	t := tmux.NewTmux()
 
 	var successRigs []string
 	var failedRigs []string
@@ -832,39 +821,31 @@ func runRigStart(cmd *cobra.Command, args []string) error {
 		hasError := false
 
 		// 1. Start the witness
-		witnessSession := fmt.Sprintf("gt-%s-witness", rigName)
-		witnessRunning, _ := t.HasSession(witnessSession)
-		if witnessRunning {
-			skipped = append(skipped, "witness")
-		} else {
-			fmt.Printf("  Starting witness...\n")
-			witMgr := witness.NewManager(r)
-			if err := witMgr.Start(false, "", nil); err != nil {
-				if err == witness.ErrAlreadyRunning {
-					skipped = append(skipped, "witness")
-				} else {
-					fmt.Printf("  %s Failed to start witness: %v\n", style.Warning.Render("⚠"), err)
-					hasError = true
-				}
+		fmt.Printf("  Starting witness...\n")
+		witMgr := factory.WitnessManager(r, townRoot, "")
+		if err := witMgr.Start(); err != nil {
+			if err == witness.ErrAlreadyRunning {
+				skipped = append(skipped, "witness")
 			} else {
-				started = append(started, "witness")
+				fmt.Printf("  %s Failed to start witness: %v\n", style.Warning.Render("⚠"), err)
+				hasError = true
 			}
+		} else {
+			started = append(started, "witness")
 		}
 
 		// 2. Start the refinery
-		refinerySession := fmt.Sprintf("gt-%s-refinery", rigName)
-		refineryRunning, _ := t.HasSession(refinerySession)
-		if refineryRunning {
-			skipped = append(skipped, "refinery")
-		} else {
-			fmt.Printf("  Starting refinery...\n")
-			refMgr := refinery.NewManager(r)
-			if err := refMgr.Start(false); err != nil {
+		fmt.Printf("  Starting refinery...\n")
+		refMgr := factory.RefineryManager(r, townRoot, "")
+		if err := refMgr.Start(); err != nil {
+			if err == refinery.ErrAlreadyRunning {
+				skipped = append(skipped, "refinery")
+			} else {
 				fmt.Printf("  %s Failed to start refinery: %v\n", style.Warning.Render("⚠"), err)
 				hasError = true
-			} else {
-				started = append(started, "refinery")
 			}
+		} else {
+			started = append(started, "refinery")
 		}
 
 		// Report results for this rig
@@ -956,8 +937,7 @@ func runRigShutdown(cmd *cobra.Command, args []string) error {
 	var errors []string
 
 	// 1. Stop all polecat sessions
-	t := tmux.NewTmux()
-	polecatMgr := polecat.NewSessionManager(t, r)
+	polecatMgr := factory.PolecatSessionManager(r, "")
 	infos, err := polecatMgr.List()
 	if err == nil && len(infos) > 0 {
 		fmt.Printf("  Stopping %d polecat session(s)...\n", len(infos))
@@ -967,7 +947,7 @@ func runRigShutdown(cmd *cobra.Command, args []string) error {
 	}
 
 	// 2. Stop the refinery
-	refMgr := refinery.NewManager(r)
+	refMgr := factory.RefineryManager(r, townRoot, "")
 	refStatus, err := refMgr.Status()
 	if err == nil && refStatus.State == refinery.StateRunning {
 		fmt.Printf("  Stopping refinery...\n")
@@ -977,7 +957,7 @@ func runRigShutdown(cmd *cobra.Command, args []string) error {
 	}
 
 	// 3. Stop the witness
-	witMgr := witness.NewManager(r)
+	witMgr := factory.WitnessManager(r, townRoot, "")
 	witStatus, err := witMgr.Status()
 	if err == nil && witStatus.State == witness.StateRunning {
 		fmt.Printf("  Stopping witness...\n")
@@ -1066,9 +1046,9 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 
 	// Witness status
 	fmt.Printf("%s\n", style.Bold.Render("Witness"))
-	witnessSession := fmt.Sprintf("gt-%s-witness", rigName)
-	witnessRunning, _ := t.HasSession(witnessSession)
-	witMgr := witness.NewManager(r)
+	witnessSession := session.SessionID(fmt.Sprintf("gt-%s-witness", rigName))
+	witnessRunning, _ := t.Exists(witnessSession)
+	witMgr := factory.WitnessManager(r, townRoot, "")
 	witStatus, _ := witMgr.Status()
 	if witnessRunning {
 		fmt.Printf("  %s running", style.Success.Render("●"))
@@ -1083,9 +1063,9 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 
 	// Refinery status
 	fmt.Printf("%s\n", style.Bold.Render("Refinery"))
-	refinerySession := fmt.Sprintf("gt-%s-refinery", rigName)
-	refineryRunning, _ := t.HasSession(refinerySession)
-	refMgr := refinery.NewManager(r)
+	refinerySession := session.SessionID(fmt.Sprintf("gt-%s-refinery", rigName))
+	refineryRunning, _ := t.Exists(refinerySession)
+	refMgr := factory.RefineryManager(r, townRoot, "")
 	refStatus, _ := refMgr.Status()
 	if refineryRunning {
 		fmt.Printf("  %s running", style.Success.Render("●"))
@@ -1113,8 +1093,8 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf(" (%d)\n", len(polecats))
 		for _, p := range polecats {
-			sessionName := fmt.Sprintf("gt-%s-%s", rigName, p.Name)
-			hasSession, _ := t.HasSession(sessionName)
+			polecatSessionID := session.SessionID(fmt.Sprintf("gt-%s-%s", rigName, p.Name))
+			hasSession, _ := t.Exists(polecatSessionID)
 
 			sessionIcon := style.Dim.Render("○")
 			if hasSession {
@@ -1132,7 +1112,7 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Crew
-	crewMgr := crew.NewManager(r, git.NewGit(townRoot))
+	crewMgr := factory.CrewManager(r, townRoot, "")
 	crewWorkers, err := crewMgr.List()
 	fmt.Printf("%s", style.Bold.Render("Crew"))
 	if err != nil || len(crewWorkers) == 0 {
@@ -1140,8 +1120,8 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf(" (%d)\n", len(crewWorkers))
 		for _, w := range crewWorkers {
-			sessionName := crewSessionName(rigName, w.Name)
-			hasSession, _ := t.HasSession(sessionName)
+			crewSessionID := session.SessionID(crewSessionName(rigName, w.Name))
+			hasSession, _ := t.Exists(crewSessionID)
 
 			sessionIcon := style.Dim.Render("○")
 			if hasSession {
@@ -1233,8 +1213,7 @@ func runRigStop(cmd *cobra.Command, args []string) error {
 		var errors []string
 
 		// 1. Stop all polecat sessions
-		t := tmux.NewTmux()
-		polecatMgr := polecat.NewSessionManager(t, r)
+		polecatMgr := factory.PolecatSessionManager(r, "")
 		infos, err := polecatMgr.List()
 		if err == nil && len(infos) > 0 {
 			fmt.Printf("  Stopping %d polecat session(s)...\n", len(infos))
@@ -1244,7 +1223,7 @@ func runRigStop(cmd *cobra.Command, args []string) error {
 		}
 
 		// 2. Stop the refinery
-		refMgr := refinery.NewManager(r)
+		refMgr := factory.RefineryManager(r, townRoot, "")
 		refStatus, err := refMgr.Status()
 		if err == nil && refStatus.State == refinery.StateRunning {
 			fmt.Printf("  Stopping refinery...\n")
@@ -1254,7 +1233,7 @@ func runRigStop(cmd *cobra.Command, args []string) error {
 		}
 
 		// 3. Stop the witness
-		witMgr := witness.NewManager(r)
+		witMgr := factory.WitnessManager(r, townRoot, "")
 		witStatus, err := witMgr.Status()
 		if err == nil && witStatus.State == witness.StateRunning {
 			fmt.Printf("  Stopping witness...\n")
@@ -1310,7 +1289,6 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 
 	g := git.NewGit(townRoot)
 	rigMgr := rig.NewManager(townRoot, rigsConfig, g)
-	t := tmux.NewTmux()
 
 	// Track results
 	var succeeded []string
@@ -1367,7 +1345,7 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Stopping...\n")
 
 		// 1. Stop all polecat sessions
-		polecatMgr := polecat.NewSessionManager(t, r)
+		polecatMgr := factory.PolecatSessionManager(r, "")
 		infos, err := polecatMgr.List()
 		if err == nil && len(infos) > 0 {
 			fmt.Printf("    Stopping %d polecat session(s)...\n", len(infos))
@@ -1377,7 +1355,7 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 		}
 
 		// 2. Stop the refinery
-		refMgr := refinery.NewManager(r)
+		refMgr := factory.RefineryManager(r, townRoot, "")
 		refStatus, err := refMgr.Status()
 		if err == nil && refStatus.State == refinery.StateRunning {
 			fmt.Printf("    Stopping refinery...\n")
@@ -1387,7 +1365,7 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 		}
 
 		// 3. Stop the witness
-		witMgr := witness.NewManager(r)
+		witMgr := factory.WitnessManager(r, townRoot, "")
 		witStatus, err := witMgr.Status()
 		if err == nil && witStatus.State == witness.StateRunning {
 			fmt.Printf("    Stopping witness...\n")
@@ -1412,37 +1390,29 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 		var skipped []string
 
 		// 1. Start the witness
-		witnessSession := fmt.Sprintf("gt-%s-witness", rigName)
-		witnessRunning, _ := t.HasSession(witnessSession)
-		if witnessRunning {
-			skipped = append(skipped, "witness")
-		} else {
-			fmt.Printf("    Starting witness...\n")
-			if err := witMgr.Start(false, "", nil); err != nil {
-				if err == witness.ErrAlreadyRunning {
-					skipped = append(skipped, "witness")
-				} else {
-					fmt.Printf("    %s Failed to start witness: %v\n", style.Warning.Render("⚠"), err)
-					startErrors = append(startErrors, fmt.Sprintf("witness: %v", err))
-				}
+		fmt.Printf("    Starting witness...\n")
+		if err := witMgr.Start(); err != nil {
+			if err == witness.ErrAlreadyRunning {
+				skipped = append(skipped, "witness")
 			} else {
-				started = append(started, "witness")
+				fmt.Printf("    %s Failed to start witness: %v\n", style.Warning.Render("⚠"), err)
+				startErrors = append(startErrors, fmt.Sprintf("witness: %v", err))
 			}
+		} else {
+			started = append(started, "witness")
 		}
 
 		// 2. Start the refinery
-		refinerySession := fmt.Sprintf("gt-%s-refinery", rigName)
-		refineryRunning, _ := t.HasSession(refinerySession)
-		if refineryRunning {
-			skipped = append(skipped, "refinery")
-		} else {
-			fmt.Printf("    Starting refinery...\n")
-			if err := refMgr.Start(false); err != nil {
+		fmt.Printf("    Starting refinery...\n")
+		if err := refMgr.Start(); err != nil {
+			if err == refinery.ErrAlreadyRunning {
+				skipped = append(skipped, "refinery")
+			} else {
 				fmt.Printf("    %s Failed to start refinery: %v\n", style.Warning.Render("⚠"), err)
 				startErrors = append(startErrors, fmt.Sprintf("refinery: %v", err))
-			} else {
-				started = append(started, "refinery")
 			}
+		} else {
+			started = append(started, "refinery")
 		}
 
 		// Report results for this rig

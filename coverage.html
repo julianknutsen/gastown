@@ -1,0 +1,933 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>agent: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/steveyegge/gastown/internal/agent/agent.go (92.8%)</option>
+				
+				<option value="file1">github.com/steveyegge/gastown/internal/agent/bootstrap.go (100.0%)</option>
+				
+				<option value="file2">github.com/steveyegge/gastown/internal/agent/double.go (98.3%)</option>
+				
+				<option value="file3">github.com/steveyegge/gastown/internal/agent/hooks.go (98.0%)</option>
+				
+				<option value="file4">github.com/steveyegge/gastown/internal/agent/state.go (100.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">// Package agent provides the Agents manager for agent processes.
+package agent
+
+import (
+        "errors"
+        "fmt"
+        "sort"
+        "strings"
+        "time"
+
+        "github.com/steveyegge/gastown/internal/session"
+)
+
+// AgentID identifies an agent managed by Agents.
+// This is an opaque identifier returned by Start() and used for subsequent operations.
+type AgentID string
+
+// ErrAlreadyRunning is returned when trying to start an already running agent.
+var ErrAlreadyRunning = errors.New("agent already running")
+
+// ErrNotRunning is returned when trying to operate on a non-running agent.
+var ErrNotRunning = errors.New("agent not running")
+
+// Agents is the interface for managing agent processes.
+// Implementations handle lifecycle, readiness detection, and session management.
+type Agents interface {
+        // Start launches an agent process in a new session.
+        Start(name, workDir, command string) (AgentID, error)
+
+        // Stop terminates an agent process.
+        Stop(id AgentID, graceful bool) error
+
+        // Exists checks if an agent session exists.
+        Exists(id AgentID) bool
+
+        // WaitReady blocks until the agent is ready for input or times out.
+        WaitReady(id AgentID) error
+
+        // SessionID returns the underlying session ID for an agent.
+        SessionID(id AgentID) session.SessionID
+
+        // GetInfo returns information about an agent's session.
+        GetInfo(id AgentID) (*session.Info, error)
+}
+
+// Implementation is the concrete implementation of the Agents interface.
+// It provides runtime-aware lifecycle management.
+type Implementation struct {
+        sess   session.Sessions
+        config *Config
+}
+
+// Ensure Implementation implements Agents
+var _ Agents = (*Implementation)(nil)
+
+// New creates a new Agents implementation.
+func New(sess session.Sessions, config *Config) *Implementation <span class="cov10" title="37">{
+        if config == nil </span><span class="cov8" title="23">{
+                config = Claude()
+        }</span>
+        <span class="cov10" title="37">return &amp;Implementation{
+                sess:   sess,
+                config: config,
+        }</span>
+}
+
+// timeout returns the effective timeout for readiness detection.
+func (a *Implementation) timeout() time.Duration <span class="cov9" title="28">{
+        if a.config.Timeout &gt; 0 </span><span class="cov8" title="24">{
+                return a.config.Timeout
+        }</span>
+        <span class="cov4" title="4">return 30 * time.Second</span> // Default fallback
+}
+
+// prependEnvVars prepends environment variables to a command.
+// Returns a command like "VAR1=val1 VAR2=val2 original-command".
+func prependEnvVars(envVars map[string]string, command string) string <span class="cov2" title="2">{
+        if len(envVars) == 0 </span><span class="cov0" title="0">{
+                return command
+        }</span>
+
+        // Sort keys for deterministic output
+        <span class="cov2" title="2">keys := make([]string, 0, len(envVars))
+        for k := range envVars </span><span class="cov5" title="5">{
+                keys = append(keys, k)
+        }</span>
+        <span class="cov2" title="2">sort.Strings(keys)
+
+        var parts []string
+        for _, k := range keys </span><span class="cov5" title="5">{
+                parts = append(parts, fmt.Sprintf("%s=%s", k, envVars[k]))
+        }</span>
+
+        <span class="cov2" title="2">return strings.Join(parts, " ") + " " + command</span>
+}
+
+// Start launches an agent process in a new session.
+// Takes a name and returns the AgentID (which may differ if TownSessions adds a suffix).
+// Handles zombie detection: if a session exists but the agent process is dead, it cleans up first.
+// If EnvVars are configured, they are prepended to the command.
+func (a *Implementation) Start(name, workDir, command string) (AgentID, error) <span class="cov9" title="36">{
+        // Check for existing session and handle zombie detection
+        sessionID := session.SessionID(name)
+        exists, _ := a.sess.Exists(sessionID)
+        if exists </span><span class="cov3" title="3">{
+                // Session exists - check if agent is actually running (healthy vs zombie)
+                if a.sess.IsRunning(sessionID, a.config.ProcessNames...) </span><span class="cov2" title="2">{
+                        return AgentID(sessionID), ErrAlreadyRunning
+                }</span>
+                // Zombie - session alive but agent dead. Kill and recreate.
+                <span class="cov1" title="1">if err := a.sess.Stop(sessionID); err != nil </span><span class="cov0" title="0">{
+                        return "", fmt.Errorf("killing zombie session: %w", err)
+                }</span>
+        }
+
+        // Prepend env vars to command if configured
+        <span class="cov9" title="34">if len(a.config.EnvVars) &gt; 0 </span><span class="cov2" title="2">{
+                command = prependEnvVars(a.config.EnvVars, command)
+        }</span>
+
+        // Create the session
+        <span class="cov9" title="34">sessionID, err := a.sess.Start(name, workDir, command)
+        if err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("starting session: %w", err)
+        }</span>
+
+        // Run post-creation callback (theming, env vars, etc.)
+        // This runs synchronously before the command executes
+        <span class="cov9" title="34">if a.config.OnSessionCreated != nil </span><span class="cov2" title="2">{
+                if err := a.config.OnSessionCreated(a.sess, sessionID); err != nil </span><span class="cov1" title="1">{
+                        // Cleanup session on callback failure
+                        _ = a.sess.Stop(sessionID)
+                        return "", fmt.Errorf("session setup: %w", err)
+                }</span>
+        }
+
+        // AgentID mirrors the session ID but with its own type
+        <span class="cov9" title="33">id := AgentID(sessionID)
+
+        // Wait for agent to be ready (non-blocking)
+        go a.doWaitForReady(sessionID)
+
+        return id, nil</span>
+}
+
+// doWaitForReady implements the readiness wait logic.
+func (a *Implementation) doWaitForReady(sessionID session.SessionID) error <span class="cov9" title="36">{
+        // Run startup hook if defined (e.g., dismiss dialogs)
+        if a.config.StartupHook != nil </span><span class="cov8" title="24">{
+                _ = a.config.StartupHook(a.sess, sessionID) // Non-fatal
+        }</span>
+
+        // Use checker if available
+        <span class="cov9" title="36">if a.config.Checker != nil </span><span class="cov9" title="28">{
+                return WaitForReady(a.sess, sessionID, a.timeout(), a.config.Checker)
+        }</span>
+
+        // Fall back to startup delay
+        <span class="cov6" title="8">if a.config.StartupDelay &gt; 0 </span><span class="cov2" title="2">{
+                time.Sleep(a.config.StartupDelay)
+        }</span>
+
+        <span class="cov6" title="8">return nil</span>
+}
+
+// IsReady checks if an agent is ready for input.
+func (a *Implementation) IsReady(id AgentID) bool <span class="cov5" title="5">{
+        sessionID := session.SessionID(id)
+
+        // Check session exists first
+        exists, _ := a.sess.Exists(sessionID)
+        if !exists </span><span class="cov2" title="2">{
+                return false
+        }</span>
+
+        // Check output if we have a checker
+        <span class="cov3" title="3">if a.config.Checker == nil </span><span class="cov1" title="1">{
+                return false
+        }</span>
+        <span class="cov2" title="2">output, err := a.sess.Capture(sessionID, 50)
+        if err != nil </span><span class="cov0" title="0">{
+                return false
+        }</span>
+        <span class="cov2" title="2">return a.config.Checker.IsReady(output)</span>
+}
+
+// WaitReady blocks until the agent is ready for input or times out.
+func (a *Implementation) WaitReady(id AgentID) error <span class="cov4" title="4">{
+        sessionID := session.SessionID(id)
+
+        // Check session exists first
+        exists, _ := a.sess.Exists(sessionID)
+        if !exists </span><span class="cov1" title="1">{
+                return ErrNotRunning
+        }</span>
+
+        <span class="cov3" title="3">return a.doWaitForReady(sessionID)</span>
+}
+
+// Stop terminates an agent process.
+func (a *Implementation) Stop(id AgentID, graceful bool) error <span class="cov6" title="10">{
+        sessionID := session.SessionID(id)
+
+        // Check if session exists
+        exists, _ := a.sess.Exists(sessionID)
+        if !exists </span><span class="cov2" title="2">{
+                return nil // Idempotent - nothing to stop
+        }</span>
+
+        <span class="cov6" title="8">if graceful </span><span class="cov4" title="4">{
+                _ = a.sess.SendControl(sessionID, "C-c")
+                time.Sleep(100 * time.Millisecond)
+        }</span>
+
+        <span class="cov6" title="8">if err := a.sess.Stop(sessionID); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("stopping session: %w", err)
+        }</span>
+
+        <span class="cov6" title="8">return nil</span>
+}
+
+// Restart stops and restarts an agent with a new command.
+func (a *Implementation) Restart(id AgentID, workDir, command string) error <span class="cov2" title="2">{
+        if err := a.Stop(id, true); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("stopping for restart: %w", err)
+        }</span>
+
+        <span class="cov2" title="2">_, err := a.Start(string(id), workDir, command)
+        return err</span>
+}
+
+// Send sends text to an agent.
+func (a *Implementation) Send(id AgentID, text string) error <span class="cov1" title="1">{
+        sessionID := session.SessionID(id)
+        return a.sess.Send(sessionID, text)
+}</span>
+
+// SendControl sends a control sequence to an agent.
+func (a *Implementation) SendControl(id AgentID, key string) error <span class="cov1" title="1">{
+        sessionID := session.SessionID(id)
+        return a.sess.SendControl(sessionID, key)
+}</span>
+
+// Capture returns the last N lines from an agent's session.
+func (a *Implementation) Capture(id AgentID, lines int) (string, error) <span class="cov1" title="1">{
+        sessionID := session.SessionID(id)
+        return a.sess.Capture(sessionID, lines)
+}</span>
+
+// Sessions returns the underlying Sessions for role-specific configuration.
+// Use this for operations like setting environment variables or applying theming.
+func (a *Implementation) Sessions() session.Sessions <span class="cov1" title="1">{
+        return a.sess
+}</span>
+
+// SessionID returns the underlying session ID for an agent.
+func (a *Implementation) SessionID(id AgentID) session.SessionID <span class="cov3" title="3">{
+        return session.SessionID(id)
+}</span>
+
+// Exists checks if an agent session exists.
+func (a *Implementation) Exists(id AgentID) bool <span class="cov8" title="18">{
+        exists, _ := a.sess.Exists(session.SessionID(id))
+        return exists
+}</span>
+
+// GetInfo returns information about an agent's session.
+func (a *Implementation) GetInfo(id AgentID) (*session.Info, error) <span class="cov3" title="3">{
+        sessionID := session.SessionID(id)
+        return a.sess.GetInfo(sessionID)
+}</span>
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package agent
+
+// GenerateBootstrap creates the bootstrap pointer content for CLAUDE.md/AGENTS.md.
+// This is a minimal on-disk file that tells agents to run `gt prime` for full context.
+// Used by both rig manager (initial creation) and doctor (fix missing files).
+//
+// Bootstrap files are placed at:
+// - &lt;root&gt;/mayor/ - town-level mayor
+// - &lt;rig&gt;/refinery/ - rig-level refinery
+// - &lt;rig&gt;/witness/ - rig-level witness
+// - &lt;rig&gt;/crew/ - parent directory for crew worktrees
+// - &lt;rig&gt;/polecats/ - parent directory for polecat worktrees
+//
+// Note: Per-rig mayor (&lt;rig&gt;/mayor/) is just a source clone and does NOT get bootstrap files.
+func GenerateBootstrap(role, rigName string) string <span class="cov10" title="12">{
+        switch role </span>{
+        case "mayor":<span class="cov3" title="2">
+                return `# Mayor Context (` + rigName + `)
+
+&gt; **Recovery**: Run ` + "`gt prime`" + ` after compaction, clear, or new session
+
+Full context is injected by ` + "`gt prime`" + ` at session start.
+`</span>
+        case "refinery":<span class="cov3" title="2">
+                return `# Refinery Context (` + rigName + `)
+
+&gt; **Recovery**: Run ` + "`gt prime`" + ` after compaction, clear, or new session
+
+Full context is injected by ` + "`gt prime`" + ` at session start.
+
+## Quick Reference
+
+- Check MQ: ` + "`gt mq list`" + `
+- Process next: ` + "`gt mq process`" + `
+`</span>
+        case "witness":<span class="cov3" title="2">
+                return `# Witness Context (` + rigName + `)
+
+&gt; **Recovery**: Run ` + "`gt prime`" + ` after compaction, clear, or new session
+
+Full context is injected by ` + "`gt prime`" + ` at session start.
+
+## Quick Reference
+
+- Check patrol: ` + "`gt patrol status`" + `
+- Spawn polecat: ` + "`gt polecat spawn`" + `
+`</span>
+        case "crew":<span class="cov3" title="2">
+                return `# Crew Context (` + rigName + `)
+
+&gt; **Recovery**: Run ` + "`gt prime`" + ` after compaction, clear, or new session
+
+Full context is injected by ` + "`gt prime`" + ` at session start.
+`</span>
+        case "polecats":<span class="cov3" title="2">
+                return `# Polecat Context (` + rigName + `)
+
+&gt; **Recovery**: Run ` + "`gt prime`" + ` after compaction, clear, or new session
+
+Full context is injected by ` + "`gt prime`" + ` at session start.
+
+## Quick Reference
+
+- Check status: ` + "`gt polecat status`" + `
+- View logs: ` + "`gt polecat logs`" + `
+`</span>
+        default:<span class="cov3" title="2">
+                return `# Agent Context (` + rigName + `)
+
+&gt; **Recovery**: Run ` + "`gt prime`" + ` after compaction, clear, or new session
+
+Full context is injected by ` + "`gt prime`" + ` at session start.
+`</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package agent
+
+import (
+        "errors"
+        "sync"
+
+        "github.com/steveyegge/gastown/internal/session"
+)
+
+// Double is an in-memory test double for the Agents interface.
+// It provides controllable behavior for testing manager logic.
+type Double struct {
+        mu       sync.RWMutex
+        agents   map[AgentID]*doubleAgent
+
+        // Configurable errors for testing failure paths
+        StartErr     error
+        StopErr      error
+        WaitReadyErr error
+}
+
+type doubleAgent struct {
+        name    string
+        workDir string
+        command string
+}
+
+// NewDouble creates a new in-memory Agents test double.
+func NewDouble() *Double <span class="cov10" title="25">{
+        return &amp;Double{
+                agents: make(map[AgentID]*doubleAgent),
+        }
+}</span>
+
+// Ensure Double implements Agents
+var _ Agents = (*Double)(nil)
+
+// Start creates a new agent. Returns StartErr if set.
+func (d *Double) Start(name, workDir, command string) (AgentID, error) <span class="cov9" title="24">{
+        if d.StartErr != nil </span><span class="cov1" title="1">{
+                return "", d.StartErr
+        }</span>
+
+        <span class="cov9" title="23">d.mu.Lock()
+        defer d.mu.Unlock()
+
+        id := AgentID(name)
+        if _, exists := d.agents[id]; exists </span><span class="cov2" title="2">{
+                return "", ErrAlreadyRunning
+        }</span>
+
+        <span class="cov9" title="21">d.agents[id] = &amp;doubleAgent{
+                name:    name,
+                workDir: workDir,
+                command: command,
+        }
+
+        return id, nil</span>
+}
+
+// Stop removes an agent. Returns StopErr if set.
+func (d *Double) Stop(id AgentID, graceful bool) error <span class="cov6" title="7">{
+        if d.StopErr != nil </span><span class="cov1" title="1">{
+                return d.StopErr
+        }</span>
+
+        <span class="cov6" title="6">d.mu.Lock()
+        defer d.mu.Unlock()
+
+        delete(d.agents, id)
+        return nil</span>
+}
+
+// Exists checks if an agent exists.
+func (d *Double) Exists(id AgentID) bool <span class="cov8" title="15">{
+        d.mu.RLock()
+        defer d.mu.RUnlock()
+
+        _, exists := d.agents[id]
+        return exists
+}</span>
+
+// WaitReady returns WaitReadyErr if set, otherwise nil.
+func (d *Double) WaitReady(id AgentID) error <span class="cov4" title="3">{
+        d.mu.RLock()
+        _, exists := d.agents[id]
+        d.mu.RUnlock()
+
+        if !exists </span><span class="cov2" title="2">{
+                return ErrNotRunning
+        }</span>
+
+        <span class="cov1" title="1">if d.WaitReadyErr != nil </span><span class="cov1" title="1">{
+                return d.WaitReadyErr
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// SessionID returns the session ID for an agent.
+func (d *Double) SessionID(id AgentID) session.SessionID <span class="cov1" title="1">{
+        return session.SessionID(id)
+}</span>
+
+// GetInfo returns information about an agent's session.
+func (d *Double) GetInfo(id AgentID) (*session.Info, error) <span class="cov4" title="4">{
+        d.mu.RLock()
+        defer d.mu.RUnlock()
+
+        agent, exists := d.agents[id]
+        if !exists </span><span class="cov2" title="2">{
+                return nil, ErrNotRunning
+        }</span>
+
+        <span class="cov2" title="2">return &amp;session.Info{
+                Name:    agent.name,
+                Created: "2024-01-01T00:00:00Z",
+                Windows: 1,
+        }, nil</span>
+}
+
+// --- Test helpers ---
+
+// SetStartErr sets the error to return from Start.
+func (d *Double) SetStartErr(err error) <span class="cov2" title="2">{
+        d.StartErr = err
+}</span>
+
+// SetStopErr sets the error to return from Stop.
+func (d *Double) SetStopErr(err error) <span class="cov2" title="2">{
+        d.StopErr = err
+}</span>
+
+// SetWaitReadyErr sets the error to return from WaitReady.
+func (d *Double) SetWaitReadyErr(err error) <span class="cov2" title="2">{
+        d.WaitReadyErr = err
+}</span>
+
+// Clear removes all agents (for test cleanup).
+func (d *Double) Clear() <span class="cov1" title="1">{
+        d.mu.Lock()
+        defer d.mu.Unlock()
+        d.agents = make(map[AgentID]*doubleAgent)
+        d.StartErr = nil
+        d.StopErr = nil
+        d.WaitReadyErr = nil
+}</span>
+
+// AgentCount returns the number of agents (for test verification).
+func (d *Double) AgentCount() int <span class="cov6" title="6">{
+        d.mu.RLock()
+        defer d.mu.RUnlock()
+        return len(d.agents)
+}</span>
+
+// CreateAgent adds an agent without going through Start (for test setup).
+func (d *Double) CreateAgent(id AgentID) <span class="cov1" title="1">{
+        d.mu.Lock()
+        defer d.mu.Unlock()
+        d.agents[id] = &amp;doubleAgent{name: string(id)}
+}</span>
+
+// GetWorkDir returns the working directory passed to Start for an agent.
+// Returns empty string if agent doesn't exist.
+func (d *Double) GetWorkDir(id AgentID) string <span class="cov2" title="2">{
+        d.mu.RLock()
+        defer d.mu.RUnlock()
+        if agent, exists := d.agents[id]; exists </span><span class="cov1" title="1">{
+                return agent.workDir
+        }</span>
+        <span class="cov1" title="1">return ""</span>
+}
+
+// GetCommand returns the command passed to Start for an agent.
+// Returns empty string if agent doesn't exist.
+func (d *Double) GetCommand(id AgentID) string <span class="cov2" title="2">{
+        d.mu.RLock()
+        defer d.mu.RUnlock()
+        if agent, exists := d.agents[id]; exists </span><span class="cov1" title="1">{
+                return agent.command
+        }</span>
+        <span class="cov1" title="1">return ""</span>
+}
+
+// ErrWaitReadyTimeout is a common error for testing WaitReady failures.
+var ErrWaitReadyTimeout = errors.New("timeout waiting for agent ready")
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">// Package agent provides agent runtime abstractions and hooks.
+// Different agent runtimes (Claude Code, OpenCode, etc.) may have different
+// startup behaviors, UI dialogs, and process signatures. This package
+// provides hooks to handle these differences.
+package agent
+
+import (
+        "errors"
+        "strings"
+        "time"
+
+        "github.com/steveyegge/gastown/internal/config"
+        "github.com/steveyegge/gastown/internal/session"
+)
+
+// ReadinessChecker determines if a session is ready based on its output.
+type ReadinessChecker interface {
+        // IsReady returns true if the output indicates the session is ready.
+        IsReady(output string) bool
+}
+
+// WaitForReady polls until the checker indicates the session is ready.
+// This is a helper function that uses Capture() to check readiness.
+func WaitForReady(sess session.Sessions, id session.SessionID, timeout time.Duration, checker ReadinessChecker) error <span class="cov6" title="32">{
+        if checker == nil </span><span class="cov1" title="1">{
+                return nil
+        }</span>
+        <span class="cov6" title="31">deadline := time.Now().Add(timeout)
+        for time.Now().Before(deadline) </span><span class="cov10" title="282">{
+                output, err := sess.Capture(id, 50)
+                if err != nil </span><span class="cov8" title="96">{
+                        time.Sleep(200 * time.Millisecond)
+                        continue</span>
+                }
+                <span class="cov9" title="186">if checker.IsReady(output) </span><span class="cov5" title="18">{
+                        return nil
+                }</span>
+                <span class="cov9" title="168">time.Sleep(200 * time.Millisecond)</span>
+        }
+        <span class="cov2" title="3">return errors.New("timeout waiting for ready")</span>
+}
+
+// PromptChecker checks for a specific prompt prefix in the output.
+type PromptChecker struct {
+        Prefix string
+}
+
+// IsReady returns true if any line starts with the prompt prefix.
+func (p *PromptChecker) IsReady(output string) bool <span class="cov9" title="193">{
+        for _, line := range strings.Split(output, "\n") </span><span class="cov9" title="226">{
+                trimmed := strings.TrimSpace(line)
+                if strings.HasPrefix(trimmed, p.Prefix) </span><span class="cov5" title="22">{
+                        return true
+                }</span>
+        }
+        <span class="cov9" title="171">return false</span>
+}
+
+// StartupHook is called after an agent session is created.
+// It handles agent-specific initialization like dismissing dialogs.
+type StartupHook func(sess session.Sessions, id session.SessionID) error
+
+// OnSessionCreated is called immediately after a session is created,
+// before waiting for readiness. Use this for synchronous setup like theming.
+// Managers typically type-assert sess to *tmux.Tmux for theming operations.
+type OnSessionCreated func(sess session.Sessions, id session.SessionID) error
+
+// Config defines the behavior for a specific agent runtime.
+// This is a data-only struct; the Agents type implements the logic.
+type Config struct {
+        // Name identifies the runtime (e.g., "claude", "opencode").
+        Name string
+
+        // ProcessNames are the process names to check for zombie detection.
+        // Used internally by Agents.Start() to detect dead sessions.
+        ProcessNames []string
+
+        // EnvVars are environment variables to prepend to the start command.
+        // These are passed as VAR=value prefix to the command.
+        EnvVars map[string]string
+
+        // OnSessionCreated is called immediately after session creation.
+        // Use for synchronous setup like theming. Runs before StartupHook.
+        OnSessionCreated OnSessionCreated
+
+        // StartupHook is called before checking readiness (e.g., dismiss dialogs).
+        StartupHook StartupHook
+
+        // Checker determines readiness by examining session output.
+        // If nil, StartupDelay is used instead.
+        Checker ReadinessChecker
+
+        // StartupDelay is a fallback wait time when Checker is nil.
+        StartupDelay time.Duration
+
+        // Timeout is the maximum time to wait for readiness.
+        // Defaults to 30 seconds if not specified.
+        Timeout time.Duration
+}
+
+// WithOnSessionCreated returns a copy of Config with the callback set.
+// This allows chaining: agent.FromPreset("claude").WithOnSessionCreated(...)
+func (c *Config) WithOnSessionCreated(fn OnSessionCreated) *Config <span class="cov2" title="2">{
+        copy := *c
+        copy.OnSessionCreated = fn
+        return &amp;copy
+}</span>
+
+// WithStartupHook returns a copy of Config with the startup hook set.
+// This allows chaining: agent.FromPreset("claude").WithStartupHook(...)
+func (c *Config) WithStartupHook(fn StartupHook) *Config <span class="cov2" title="2">{
+        copy := *c
+        copy.StartupHook = fn
+        return &amp;copy
+}</span>
+
+// WithEnvVars returns a copy of Config with environment variables set.
+// These are prepended to the start command as VAR=value prefix.
+func (c *Config) WithEnvVars(envVars map[string]string) *Config <span class="cov2" title="2">{
+        copy := *c
+        copy.EnvVars = envVars
+        return &amp;copy
+}</span>
+
+// FromPreset creates a Config from an agent preset name.
+// Returns a Config with process names from the registry and agent-specific hooks.
+func FromPreset(agentName string) *Config <span class="cov6" title="30">{
+        // Get process names from the registry
+        processNames := config.GetProcessNames(agentName)
+
+        // Create base config with default timeout
+        cfg := &amp;Config{
+                Name:         agentName,
+                ProcessNames: processNames,
+                Timeout:      30 * time.Second, // Default timeout
+        }
+
+        // Add agent-specific hooks and timeouts
+        switch agentName </span>{
+        case "claude":<span class="cov6" title="26">
+                cfg.StartupHook = ClaudeStartupHook
+                cfg.Checker = &amp;PromptChecker{Prefix: "&gt;"}
+                cfg.Timeout = 60 * time.Second</span> // Claude can take longer to start
+        case "opencode":<span class="cov2" title="2">
+                cfg.StartupDelay = 500 * time.Millisecond
+                cfg.Timeout = 10 * time.Second</span>
+        case "gemini":<span class="cov1" title="1">
+                cfg.Checker = &amp;PromptChecker{Prefix: "&gt;"}
+                cfg.Timeout = 30 * time.Second</span>
+        default:<span class="cov1" title="1">
+                // For unknown agents, use a generic startup delay
+                cfg.StartupDelay = 1 * time.Second</span>
+        }
+
+        <span class="cov6" title="30">return cfg</span>
+}
+
+// Claude returns the config for Claude Code.
+func Claude() *Config <span class="cov6" title="24">{
+        return FromPreset("claude")
+}</span>
+
+// OpenCode returns the config for OpenCode.
+func OpenCode() *Config <span class="cov1" title="1">{
+        return FromPreset("opencode")
+}</span>
+
+// ClaudeStartupHook handles Claude Code-specific startup behavior.
+// It dismisses the "Bypass Permissions" warning dialog if present.
+func ClaudeStartupHook(sess session.Sessions, id session.SessionID) error <span class="cov6" title="25">{
+        // Wait for the dialog to potentially render
+        time.Sleep(1 * time.Second)
+
+        // Check if the bypass permissions warning is present
+        content, err := sess.Capture(id, 30)
+        if err != nil </span><span class="cov4" title="7">{
+                return err
+        }</span>
+
+        // Look for the characteristic warning text
+        <span class="cov5" title="18">if !strings.Contains(content, "Bypass Permissions mode") </span><span class="cov5" title="17">{
+                // Warning not present, nothing to do
+                return nil
+        }</span>
+
+        // Press Down to select "Yes, I accept" (option 2)
+        <span class="cov1" title="1">if err := sess.SendControl(id, "Down"); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Small delay to let selection update
+        <span class="cov1" title="1">time.Sleep(200 * time.Millisecond)
+
+        // Press Enter to confirm
+        return sess.SendControl(id, "Enter")</span>
+}
+
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">// Package agent provides shared types and utilities for Gas Town agents
+// (witness, refinery, deacon, etc.).
+package agent
+
+import (
+        "encoding/json"
+        "os"
+        "path/filepath"
+
+        "github.com/steveyegge/gastown/internal/util"
+)
+
+// State represents an agent's running state.
+type State string
+
+const (
+        // StateStopped means the agent is not running.
+        StateStopped State = "stopped"
+
+        // StateRunning means the agent is actively operating.
+        StateRunning State = "running"
+
+        // StatePaused means the agent is paused (not operating but not stopped).
+        StatePaused State = "paused"
+)
+
+// StateManager handles loading and saving agent state to disk.
+// It uses generics to work with any state type.
+type StateManager[T any] struct {
+        stateFilePath  string
+        defaultFactory func() *T
+}
+
+// NewStateManager creates a new StateManager for the given state file path.
+// The defaultFactory function is called when the state file doesn't exist
+// to create a new state with default values.
+func NewStateManager[T any](rigPath, stateFileName string, defaultFactory func() *T) *StateManager[T] <span class="cov10" title="8">{
+        return &amp;StateManager[T]{
+                stateFilePath:  filepath.Join(rigPath, ".runtime", stateFileName),
+                defaultFactory: defaultFactory,
+        }
+}</span>
+
+// StateFile returns the path to the state file.
+func (m *StateManager[T]) StateFile() string <span class="cov4" title="2">{
+        return m.stateFilePath
+}</span>
+
+// Load loads agent state from disk.
+// If the file doesn't exist, returns a new state created by the default factory.
+func (m *StateManager[T]) Load() (*T, error) <span class="cov7" title="4">{
+        data, err := os.ReadFile(m.stateFilePath)
+        if err != nil </span><span class="cov4" title="2">{
+                if os.IsNotExist(err) </span><span class="cov1" title="1">{
+                        return m.defaultFactory(), nil
+                }</span>
+                <span class="cov1" title="1">return nil, err</span>
+        }
+
+        <span class="cov4" title="2">var state T
+        if err := json.Unmarshal(data, &amp;state); err != nil </span><span class="cov1" title="1">{
+                return nil, err
+        }</span>
+
+        <span class="cov1" title="1">return &amp;state, nil</span>
+}
+
+// Save persists agent state to disk using atomic write.
+func (m *StateManager[T]) Save(state *T) error <span class="cov5" title="3">{
+        dir := filepath.Dir(m.stateFilePath)
+        if err := os.MkdirAll(dir, 0755); err != nil </span><span class="cov1" title="1">{
+                return err
+        }</span>
+
+        <span class="cov4" title="2">return util.AtomicWriteJSON(m.stateFilePath, state)</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

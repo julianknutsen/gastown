@@ -254,10 +254,10 @@ func TestDoneCircularRedirectProtection(t *testing.T) {
 // contain the actual issue ID (test-845.1), but the agent's hook does.
 func TestGetIssueFromAgentHook(t *testing.T) {
 	tests := []struct {
-		name         string
-		agentBeadID  string
-		setupBeads   func(t *testing.T, bd *beads.Beads) // setup agent bead with hook
-		wantIssueID  string
+		name        string
+		agentBeadID string
+		setupBeads  func(t *testing.T, bd *beads.Beads) // setup agent bead with hook
+		wantIssueID string
 	}{
 		{
 			name:        "agent with hook_bead returns issue ID",

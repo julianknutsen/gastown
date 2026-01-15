@@ -239,16 +239,16 @@ func TestRigAddCreatesCorrectStructure(t *testing.T) {
 
 	// Verify directory structure
 	expectedDirs := []string{
-		"",                // rig root
-		"mayor",           // mayor container
-		"mayor/rig",       // mayor clone
-		"refinery",        // refinery container
-		"refinery/rig",    // refinery worktree
-		"witness",         // witness dir
-		"polecats",        // polecats dir
-		"crew",            // crew dir
-		".beads",          // beads dir
-		"plugins",         // plugins dir
+		"",             // rig root
+		"mayor",        // mayor container
+		"mayor/rig",    // mayor clone
+		"refinery",     // refinery container
+		"refinery/rig", // refinery worktree
+		"witness",      // witness dir
+		"polecats",     // polecats dir
+		"crew",         // crew dir
+		".beads",       // beads dir
+		"plugins",      // plugins dir
 	}
 
 	for _, dir := range expectedDirs {
@@ -810,10 +810,10 @@ func TestAgentWorktreesStayClean(t *testing.T) {
 
 // agentWorktree describes an agent's worktree to check for cleanliness.
 type agentWorktree struct {
-	name        string   // Human-readable name (e.g., "mayor", "polecat")
-	path        string   // Path to the worktree
-	allowlist   []string // Additional allowlisted files beyond .beads/redirect
-	isClone     bool     // True if this is a clone (not worktree) - has different expectations
+	name      string   // Human-readable name (e.g., "mayor", "polecat")
+	path      string   // Path to the worktree
+	allowlist []string // Additional allowlisted files beyond .beads/redirect
+	isClone   bool     // True if this is a clone (not worktree) - has different expectations
 }
 
 // runAgentCleanTest runs the agent worktree cleanliness test for all agent types.

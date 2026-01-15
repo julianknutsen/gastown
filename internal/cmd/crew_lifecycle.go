@@ -12,11 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/townlog"
@@ -41,7 +41,7 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 			name = crewName
 		}
 
-		crewMgr, r, err := getCrewManager(rigOverride)
+		crewMgr, r, err := getCrewManager(rigOverride, "")
 		if err != nil {
 			fmt.Printf("Error removing %s: %v\n", arg, err)
 			lastErr = err
@@ -51,10 +51,11 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 		// Check for running session (unless forced)
 		if !forceRemove {
 			t := tmux.NewTmux()
-			sessionID := crewSessionName(r.Name, name)
-			hasSession, _ := t.HasSession(sessionID)
+			sessionName := crewSessionName(r.Name, name)
+			sessionID := session.SessionID(sessionName)
+			hasSession, _ := t.Exists(sessionID)
 			if hasSession {
-				fmt.Printf("Error removing %s: session '%s' is running (use --force to kill and remove)\n", arg, sessionID)
+				fmt.Printf("Error removing %s: session '%s' is running (use --force to kill and remove)\n", arg, sessionName)
 				lastErr = fmt.Errorf("session running")
 				continue
 			}
@@ -62,14 +63,15 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 
 		// Kill session if it exists
 		t := tmux.NewTmux()
-		sessionID := crewSessionName(r.Name, name)
-		if hasSession, _ := t.HasSession(sessionID); hasSession {
-			if err := t.KillSession(sessionID); err != nil {
+		sessionName := crewSessionName(r.Name, name)
+		sessionID := session.SessionID(sessionName)
+		if hasSession, _ := t.Exists(sessionID); hasSession {
+			if err := t.Stop(sessionID); err != nil {
 				fmt.Printf("Error killing session for %s: %v\n", arg, err)
 				lastErr = err
 				continue
 			}
-			fmt.Printf("Killed session %s\n", sessionID)
+			fmt.Printf("Killed session %s\n", sessionName)
 		}
 
 		// Determine workspace path
@@ -197,7 +199,7 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 		name = crewName
 	}
 
-	crewMgr, r, err := getCrewManager(crewRig)
+	crewMgr, r, err := getCrewManager(crewRig, crewAgentOverride)
 	if err != nil {
 		return err
 	}
@@ -240,10 +242,9 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 
 	// Use manager's Start() with refresh options
 	err = crewMgr.Start(name, crew.StartOptions{
-		KillExisting:  true,      // Kill old session if running
-		Topic:         "refresh", // Startup nudge topic
-		Interactive:   true,      // No --dangerously-skip-permissions
-		AgentOverride: crewAgentOverride,
+		KillExisting: true,      // Kill old session if running
+		Topic:        "refresh", // Startup nudge topic
+		Interactive:  true,      // No --dangerously-skip-permissions
 	})
 	if err != nil {
 		return fmt.Errorf("starting crew session: %w", err)
@@ -281,7 +282,7 @@ func runCrewStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get the rig manager and rig (infers from cwd if rigName is empty)
-	crewMgr, r, err := getCrewManager(rigName)
+	crewMgr, r, err := getCrewManager(rigName, crewAgentOverride)
 	if err != nil {
 		return err
 	}
@@ -303,20 +304,8 @@ func runCrewStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Resolve account config once for all crew members
-	townRoot, _ := workspace.Find(r.Path)
-	if townRoot == "" {
-		townRoot = filepath.Dir(r.Path)
-	}
-	accountsPath := constants.MayorAccountsPath(townRoot)
-	claudeConfigDir, _, _ := config.ResolveAccountConfigDir(accountsPath, crewAccount)
-
 	// Build start options (shared across all crew members)
-	opts := crew.StartOptions{
-		Account:         crewAccount,
-		ClaudeConfigDir: claudeConfigDir,
-		AgentOverride:   crewAgentOverride,
-	}
+	opts := crew.StartOptions{}
 
 	// Start each crew member in parallel
 	type result struct {
@@ -395,7 +384,7 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 			name = crewName
 		}
 
-		crewMgr, r, err := getCrewManager(rigOverride)
+		crewMgr, r, err := getCrewManager(rigOverride, crewAgentOverride)
 		if err != nil {
 			fmt.Printf("Error restarting %s: %v\n", arg, err)
 			lastErr = err
@@ -405,9 +394,8 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 		// Use manager's Start() with restart options
 		// Start() will create workspace if needed (idempotent)
 		err = crewMgr.Start(name, crew.StartOptions{
-			KillExisting:  true,      // Kill old session if running
-			Topic:         "restart", // Startup nudge topic
-			AgentOverride: crewAgentOverride,
+			KillExisting: true,      // Kill old session if running
+			Topic:        "restart", // Startup nudge topic
 		})
 		if err != nil {
 			fmt.Printf("Error restarting %s: %v\n", arg, err)
@@ -474,7 +462,7 @@ func runCrewRestartAll() error {
 		savedRig := crewRig
 		crewRig = agent.Rig
 
-		crewMgr, _, err := getCrewManager(crewRig)
+		crewMgr, _, err := getCrewManager(crewRig, crewAgentOverride)
 		if err != nil {
 			failed++
 			failures = append(failures, fmt.Sprintf("%s: %v", agentName, err))
@@ -485,9 +473,8 @@ func runCrewRestartAll() error {
 
 		// Use manager's Start() with restart options
 		err = crewMgr.Start(agent.AgentName, crew.StartOptions{
-			KillExisting:  true,      // Kill old session if running
-			Topic:         "restart", // Startup nudge topic
-			AgentOverride: crewAgentOverride,
+			KillExisting: true,      // Kill old session if running
+			Topic:        "restart", // Startup nudge topic
 		})
 		if err != nil {
 			failed++
@@ -558,19 +545,20 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 			name = crewName
 		}
 
-		_, r, err := getCrewManager(rigOverride)
+		_, r, err := getCrewManager(rigOverride, "")
 		if err != nil {
 			fmt.Printf("Error stopping %s: %v\n", arg, err)
 			lastErr = err
 			continue
 		}
 
-		sessionID := crewSessionName(r.Name, name)
+		sessionName := crewSessionName(r.Name, name)
+		sessionID := session.SessionID(sessionName)
 
 		// Check if session exists
-		hasSession, err := t.HasSession(sessionID)
+		hasSession, err := t.Exists(sessionID)
 		if err != nil {
-			fmt.Printf("Error checking session %s: %v\n", sessionID, err)
+			fmt.Printf("Error checking session %s: %v\n", sessionName, err)
 			lastErr = err
 			continue
 		}
@@ -581,18 +569,18 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 
 		// Dry run - just show what would be stopped
 		if crewDryRun {
-			fmt.Printf("Would stop %s/%s (session: %s)\n", r.Name, name, sessionID)
+			fmt.Printf("Would stop %s/%s (session: %s)\n", r.Name, name, sessionName)
 			continue
 		}
 
 		// Capture output before stopping (best effort)
 		var output string
 		if !crewForce {
-			output, _ = t.CapturePane(sessionID, 50)
+			output, _ = t.Capture(sessionID, 50)
 		}
 
 		// Kill the session
-		if err := t.KillSession(sessionID); err != nil {
+		if err := t.Stop(sessionID); err != nil {
 			fmt.Printf("  %s [%s] %s: %s\n",
 				style.ErrorPrefix,
 				r.Name, name,
@@ -673,16 +661,16 @@ func runCrewStopAll() error {
 
 	for _, agent := range targets {
 		agentName := fmt.Sprintf("%s/crew/%s", agent.Rig, agent.AgentName)
-		sessionID := agent.Name // agent.Name IS the tmux session name
+		sessionID := session.SessionID(agent.Name) // agent.Name IS the tmux session name
 
 		// Capture output before stopping (best effort)
 		var output string
 		if !crewForce {
-			output, _ = t.CapturePane(sessionID, 50)
+			output, _ = t.Capture(sessionID, 50)
 		}
 
 		// Kill the session
-		if err := t.KillSession(sessionID); err != nil {
+		if err := t.Stop(sessionID); err != nil {
 			failed++
 			failures = append(failures, fmt.Sprintf("%s: %v", agentName, err))
 			fmt.Printf("  %s %s\n", style.ErrorPrefix, agentName)

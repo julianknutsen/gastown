@@ -4,11 +4,12 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/refinery"
+	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/factory"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/wisp"
-	"github.com/steveyegge/gastown/internal/witness"
 )
 
 // RigStatusKey is the wisp config key for rig operational status.
@@ -79,10 +80,11 @@ func runRigPark(cmd *cobra.Command, args []string) error {
 
 	// Stop witness if running
 	witnessSession := fmt.Sprintf("gt-%s-witness", rigName)
-	witnessRunning, _ := t.HasSession(witnessSession)
+	witnessRunning, _ := t.Exists(session.SessionID(witnessSession))
 	if witnessRunning {
 		fmt.Printf("  Stopping witness...\n")
-		witMgr := witness.NewManager(r)
+		agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
+		witMgr := factory.WitnessManager(r, townRoot, agentName)
 		if err := witMgr.Stop(); err != nil {
 			fmt.Printf("  %s Failed to stop witness: %v\n", style.Warning.Render("!"), err)
 		} else {
@@ -92,10 +94,11 @@ func runRigPark(cmd *cobra.Command, args []string) error {
 
 	// Stop refinery if running
 	refinerySession := fmt.Sprintf("gt-%s-refinery", rigName)
-	refineryRunning, _ := t.HasSession(refinerySession)
+	refineryRunning, _ := t.Exists(session.SessionID(refinerySession))
 	if refineryRunning {
 		fmt.Printf("  Stopping refinery...\n")
-		refMgr := refinery.NewManager(r)
+		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+		refMgr := factory.RefineryManager(r, townRoot, refineryAgentName)
 		if err := refMgr.Stop(); err != nil {
 			fmt.Printf("  %s Failed to stop refinery: %v\n", style.Warning.Render("!"), err)
 		} else {

@@ -16,10 +16,10 @@ import (
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/mayor"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -82,8 +82,8 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 
 	// 2. Deacon (Claude agent)
-	deaconMgr := deacon.NewManager(townRoot)
-	if err := deaconMgr.Start(""); err != nil {
+	deaconMgr := factory.DeaconManager(townRoot, "")
+	if err := deaconMgr.Start(); err != nil {
 		if err == deacon.ErrAlreadyRunning {
 			printStatus("Deacon", true, deaconMgr.SessionName())
 		} else {
@@ -95,8 +95,8 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 
 	// 3. Mayor (Claude agent)
-	mayorMgr := mayor.NewManager(townRoot)
-	if err := mayorMgr.Start(""); err != nil {
+	mayorMgr := factory.MayorManager(townRoot, "")
+	if err := mayorMgr.Start(); err != nil {
 		if err == mayor.ErrAlreadyRunning {
 			printStatus("Mayor", true, mayorMgr.SessionName())
 		} else {
@@ -117,8 +117,8 @@ func runUp(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		mgr := witness.NewManager(r)
-		if err := mgr.Start(false, "", nil); err != nil {
+		mgr := factory.WitnessManager(r, townRoot, "")
+		if err := mgr.Start(); err != nil {
 			if err == witness.ErrAlreadyRunning {
 				printStatus(fmt.Sprintf("Witness (%s)", rigName), true, mgr.SessionName())
 			} else {
@@ -139,8 +139,8 @@ func runUp(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		mgr := refinery.NewManager(r)
-		if err := mgr.Start(false); err != nil {
+		mgr := factory.RefineryManager(r, townRoot, "")
+		if err := mgr.Start(); err != nil {
 			if err == refinery.ErrAlreadyRunning {
 				printStatus(fmt.Sprintf("Refinery (%s)", rigName), true, mgr.SessionName())
 			} else {
@@ -321,7 +321,7 @@ func startCrewFromSettings(townRoot, rigName string) ([]string, map[string]error
 	}
 
 	// Get available crew members using helper
-	crewMgr, _, err := getCrewManager(rigName)
+	crewMgr, _, err := getCrewManager(rigName, "")
 	if err != nil {
 		return started, errors
 	}
@@ -444,8 +444,7 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 	if err != nil {
 		return started, errors
 	}
-	t := tmux.NewTmux()
-	polecatMgr := polecat.NewSessionManager(t, r)
+	polecatMgr := factory.PolecatSessionManager(r, "")
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -472,7 +471,7 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 		}
 
 		// This polecat has work - start it using SessionManager
-		if err := polecatMgr.Start(polecatName, polecat.SessionStartOptions{}); err != nil {
+		if err := polecatMgr.Start(polecatName); err != nil {
 			if err == polecat.ErrSessionRunning {
 				started = append(started, polecatName)
 			} else {

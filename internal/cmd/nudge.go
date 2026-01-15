@@ -145,7 +145,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 	if target == "deacon" {
 		deaconSession := session.DeaconSessionName()
 		// Check if Deacon session exists
-		exists, err := t.HasSession(deaconSession)
+		exists, err := t.Exists(session.SessionID(deaconSession))
 		if err != nil {
 			return fmt.Errorf("checking deacon session: %w", err)
 		}
@@ -207,7 +207,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload(rigName, target, message))
 	} else {
 		// Raw session name (legacy)
-		exists, err := t.HasSession(target)
+		exists, err := t.Exists(session.SessionID(target))
 		if err != nil {
 			return fmt.Errorf("checking session: %w", err)
 		}
@@ -352,6 +352,7 @@ func runNudgeChannel(channelName, message string) error {
 //   - Wildcard: "gastown/polecats/*" → all polecat sessions in gastown
 //   - Role: "*/witness" → all witness sessions
 //   - Special: "mayor", "deacon" → gt-{town}-mayor, gt-{town}-deacon
+//
 // townName is used to generate the correct session names for mayor/deacon.
 func resolveNudgePattern(pattern string, agents []*AgentSession) []string {
 	var results []string

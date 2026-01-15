@@ -10,6 +10,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -302,11 +303,11 @@ func ensureAgentReady(sessionName string) error {
 
 // waitForPrompt polls the pane content until a prompt indicator appears.
 // This ensures the agent is actually interactive before we send commands.
-func waitForPrompt(t *tmux.Tmux, session string, timeout time.Duration) error {
+func waitForPrompt(t *tmux.Tmux, sess string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		// Capture the last few lines to check for prompt
-		content, err := t.CapturePane(session, 10)
+		content, err := t.Capture(session.SessionID(sess), 10)
 		if err != nil {
 			return err
 		}

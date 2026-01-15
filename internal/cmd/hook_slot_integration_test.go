@@ -29,8 +29,8 @@ func setupHookTestTown(t *testing.T) (townRoot, polecatDir string) {
 
 	// Create routes.jsonl
 	routes := []beads.Route{
-		{Prefix: "hq-", Path: "."},                     // Town-level beads
-		{Prefix: "gt-", Path: "gastown/mayor/rig"},     // Gastown rig
+		{Prefix: "hq-", Path: "."},                 // Town-level beads
+		{Prefix: "gt-", Path: "gastown/mayor/rig"}, // Gastown rig
 	}
 	if err := beads.WriteRoutes(townBeadsDir, routes); err != nil {
 		t.Fatalf("write routes: %v", err)

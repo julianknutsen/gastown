@@ -68,11 +68,11 @@ func TestIsCompleteNotFound(t *testing.T) {
 //
 // The test scenario creates a DAG of work:
 //
-//	     A
-//	    / \
-//	   B   C
-//	    \ /
-//	     D
+//	  A
+//	 / \
+//	B   C
+//	 \ /
+//	  D
 //
 // Test Results (verified 2025-12-29):
 //

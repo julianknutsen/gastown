@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -44,17 +45,17 @@ func runIssueSet(cmd *cobra.Command, args []string) error {
 	issueID := args[0]
 
 	// Get current tmux session
-	session := os.Getenv("TMUX_PANE")
-	if session == "" {
+	sess := os.Getenv("TMUX_PANE")
+	if sess == "" {
 		// Try to detect from GT env vars
-		session = detectCurrentSession()
-		if session == "" {
+		sess = detectCurrentSession()
+		if sess == "" {
 			return fmt.Errorf("not in a tmux session")
 		}
 	}
 
 	t := tmux.NewTmux()
-	if err := t.SetEnvironment(session, "GT_ISSUE", issueID); err != nil {
+	if err := t.SetEnv(session.SessionID(sess), "GT_ISSUE", issueID); err != nil {
 		return fmt.Errorf("setting issue: %w", err)
 	}
 
@@ -63,17 +64,17 @@ func runIssueSet(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueClear(cmd *cobra.Command, args []string) error {
-	session := os.Getenv("TMUX_PANE")
-	if session == "" {
-		session = detectCurrentSession()
-		if session == "" {
+	sess := os.Getenv("TMUX_PANE")
+	if sess == "" {
+		sess = detectCurrentSession()
+		if sess == "" {
 			return fmt.Errorf("not in a tmux session")
 		}
 	}
 
 	t := tmux.NewTmux()
 	// Set to empty string to clear
-	if err := t.SetEnvironment(session, "GT_ISSUE", ""); err != nil {
+	if err := t.SetEnv(session.SessionID(sess), "GT_ISSUE", ""); err != nil {
 		return fmt.Errorf("clearing issue: %w", err)
 	}
 

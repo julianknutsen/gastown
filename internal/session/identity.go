@@ -20,43 +20,51 @@ const (
 
 // AgentIdentity represents a parsed Gas Town agent identity.
 type AgentIdentity struct {
-	Role Role   // mayor, deacon, witness, refinery, crew, polecat
-	Rig  string // rig name (empty for mayor/deacon)
-	Name string // crew/polecat name (empty for mayor/deacon/witness/refinery)
+	Role   Role   // mayor, deacon, witness, refinery, crew, polecat
+	Rig    string // rig name (empty for mayor/deacon)
+	Name   string // crew/polecat name (empty for mayor/deacon/witness/refinery)
+	TownID string // town ID suffix (empty for legacy sessions)
 }
 
 // ParseSessionName parses a tmux session name into an AgentIdentity.
 //
-// Session name formats:
-//   - hq-mayor → Role: mayor (town-level, one per machine)
-//   - hq-deacon → Role: deacon (town-level, one per machine)
-//   - gt-<rig>-witness → Role: witness, Rig: <rig>
-//   - gt-<rig>-refinery → Role: refinery, Rig: <rig>
-//   - gt-<rig>-crew-<name> → Role: crew, Rig: <rig>, Name: <name>
-//   - gt-<rig>-<name> → Role: polecat, Rig: <rig>, Name: <name>
+// Session name formats (with optional -<townID> suffix):
+//   - hq-mayor[-<townID>] → Role: mayor (town-level)
+//   - hq-deacon[-<townID>] → Role: deacon (town-level)
+//   - gt-<rig>-witness[-<townID>] → Role: witness, Rig: <rig>
+//   - gt-<rig>-refinery[-<townID>] → Role: refinery, Rig: <rig>
+//   - gt-<rig>-crew-<name>[-<townID>] → Role: crew, Rig: <rig>, Name: <name>
+//   - gt-<rig>-<name>[-<townID>] → Role: polecat, Rig: <rig>, Name: <name>
 //
 // For polecat sessions without a crew marker, the last segment after the rig
 // is assumed to be the polecat name. This works for simple rig names but may
 // be ambiguous for rig names containing hyphens.
+//
+// Town ID suffixes (6 hex chars) are extracted and stored in TownID field.
+// Legacy sessions without town ID suffix are fully supported.
 func ParseSessionName(session string) (*AgentIdentity, error) {
+	// Extract and strip town ID if present
+	townID := ExtractTownID(session)
+	baseName := StripTownID(session)
+
 	// Check for town-level roles (hq- prefix)
-	if strings.HasPrefix(session, HQPrefix) {
-		suffix := strings.TrimPrefix(session, HQPrefix)
+	if strings.HasPrefix(baseName, HQPrefix) {
+		suffix := strings.TrimPrefix(baseName, HQPrefix)
 		if suffix == "mayor" {
-			return &AgentIdentity{Role: RoleMayor}, nil
+			return &AgentIdentity{Role: RoleMayor, TownID: townID}, nil
 		}
 		if suffix == "deacon" {
-			return &AgentIdentity{Role: RoleDeacon}, nil
+			return &AgentIdentity{Role: RoleDeacon, TownID: townID}, nil
 		}
 		return nil, fmt.Errorf("invalid session name %q: unknown hq- role", session)
 	}
 
 	// Rig-level roles use gt- prefix
-	if !strings.HasPrefix(session, Prefix) {
+	if !strings.HasPrefix(baseName, Prefix) {
 		return nil, fmt.Errorf("invalid session name %q: missing %q or %q prefix", session, HQPrefix, Prefix)
 	}
 
-	suffix := strings.TrimPrefix(session, Prefix)
+	suffix := strings.TrimPrefix(baseName, Prefix)
 	if suffix == "" {
 		return nil, fmt.Errorf("invalid session name %q: empty after prefix", session)
 	}
@@ -70,11 +78,11 @@ func ParseSessionName(session string) (*AgentIdentity, error) {
 	// Check for witness/refinery (suffix markers)
 	if parts[len(parts)-1] == "witness" {
 		rig := strings.Join(parts[:len(parts)-1], "-")
-		return &AgentIdentity{Role: RoleWitness, Rig: rig}, nil
+		return &AgentIdentity{Role: RoleWitness, Rig: rig, TownID: townID}, nil
 	}
 	if parts[len(parts)-1] == "refinery" {
 		rig := strings.Join(parts[:len(parts)-1], "-")
-		return &AgentIdentity{Role: RoleRefinery, Rig: rig}, nil
+		return &AgentIdentity{Role: RoleRefinery, Rig: rig, TownID: townID}, nil
 	}
 
 	// Check for crew (marker in middle)
@@ -82,7 +90,7 @@ func ParseSessionName(session string) (*AgentIdentity, error) {
 		if p == "crew" && i > 0 && i < len(parts)-1 {
 			rig := strings.Join(parts[:i], "-")
 			name := strings.Join(parts[i+1:], "-")
-			return &AgentIdentity{Role: RoleCrew, Rig: rig, Name: name}, nil
+			return &AgentIdentity{Role: RoleCrew, Rig: rig, Name: name, TownID: townID}, nil
 		}
 	}
 
@@ -92,7 +100,7 @@ func ParseSessionName(session string) (*AgentIdentity, error) {
 	}
 	rig := strings.Join(parts[:len(parts)-1], "-")
 	name := parts[len(parts)-1]
-	return &AgentIdentity{Role: RolePolecat, Rig: rig, Name: name}, nil
+	return &AgentIdentity{Role: RolePolecat, Rig: rig, Name: name, TownID: townID}, nil
 }
 
 // SessionName returns the tmux session name for this identity.

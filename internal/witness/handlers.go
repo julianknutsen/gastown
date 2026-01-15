@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -656,13 +657,14 @@ func NukePolecat(workDir, rigName, polecatName string) error {
 	t := tmux.NewTmux()
 
 	// Check if session exists and kill it
-	if running, _ := t.HasSession(sessionName); running {
+	sessionID := session.SessionID(sessionName)
+	if running, _ := t.Exists(sessionID); running {
 		// Try graceful shutdown first (Ctrl-C), then force kill
-		_ = t.SendKeysRaw(sessionName, "C-c")
+		_ = t.SendControl(sessionID, "C-c")
 		// Brief delay for graceful handling
 		time.Sleep(100 * time.Millisecond)
 		// Force kill the session
-		if err := t.KillSession(sessionName); err != nil {
+		if err := t.Stop(sessionID); err != nil {
 			// Log but continue - session might already be dead
 			// The important thing is we tried
 		}

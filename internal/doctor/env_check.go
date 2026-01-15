@@ -11,7 +11,7 @@ import (
 
 // SessionEnvReader abstracts tmux session environment access for testing.
 type SessionEnvReader interface {
-	ListSessions() ([]string, error)
+	List() ([]string, error)
 	GetAllEnvironment(session string) (map[string]string, error)
 }
 
@@ -20,8 +20,16 @@ type tmuxEnvReader struct {
 	t *tmux.Tmux
 }
 
-func (r *tmuxEnvReader) ListSessions() ([]string, error) {
-	return r.t.ListSessions()
+func (r *tmuxEnvReader) List() ([]string, error) {
+	sessionIDs, err := r.t.List()
+	if err != nil {
+		return nil, err
+	}
+	sessions := make([]string, len(sessionIDs))
+	for i, id := range sessionIDs {
+		sessions[i] = string(id)
+	}
+	return sessions, nil
 }
 
 func (r *tmuxEnvReader) GetAllEnvironment(session string) (map[string]string, error) {
@@ -59,7 +67,7 @@ func (c *EnvVarsCheck) Run(ctx *CheckContext) *CheckResult {
 		reader = &tmuxEnvReader{t: tmux.NewTmux()}
 	}
 
-	sessions, err := reader.ListSessions()
+	sessions, err := reader.List()
 	if err != nil {
 		// No tmux server - treat as success (valid when Gas Town is down)
 		return &CheckResult{

@@ -11,16 +11,15 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/claude"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -306,22 +305,54 @@ func init() {
 }
 
 func runDeaconStart(cmd *cobra.Command, args []string) error {
-	t := tmux.NewTmux()
-
-	sessionName := getDeaconSessionName()
-
-	// Check if session already exists
-	running, err := t.HasSession(sessionName)
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
+
+	// Resolve agent name (with optional override)
+	agentName := config.ResolveRoleAgentName("deacon", townRoot, deaconAgentOverride)
+
+	// Create manager with resolved agent name
+	mgr := factory.DeaconManager(townRoot, agentName)
+
+	// Check if already running
+	running, _ := mgr.IsRunning()
 	if running {
 		return fmt.Errorf("Deacon session already running. Attach with: gt deacon attach")
 	}
 
-	if err := startDeaconSession(t, sessionName, deaconAgentOverride); err != nil {
-		return err
+	// Ensure deacon directory exists
+	deaconDir := filepath.Join(townRoot, "deacon")
+	if err := os.MkdirAll(deaconDir, 0755); err != nil {
+		return fmt.Errorf("creating deacon directory: %w", err)
 	}
+
+	fmt.Println("Starting Deacon session...")
+
+	// Start the deacon agent
+	if err := mgr.Start(); err != nil {
+		return fmt.Errorf("starting deacon: %w", err)
+	}
+
+	// Run startup fallback (dismiss dialogs, etc.)
+	runtimeConfig := config.LoadRuntimeConfig(townRoot)
+	for _, fallbackCmd := range runtime.StartupFallbackCommands("deacon", runtimeConfig) {
+		_ = mgr.Nudge(fallbackCmd)
+	}
+
+	// Inject startup nudge for predecessor discovery via /resume
+	startupMsg := session.FormatStartupNudge(session.StartupNudgeConfig{
+		Recipient: "deacon",
+		Sender:    "daemon",
+		Topic:     "patrol",
+	})
+	_ = mgr.Nudge(startupMsg)
+
+	// GUPP: Gas Town Universal Propulsion Principle
+	// Send the propulsion nudge to trigger autonomous patrol execution.
+	time.Sleep(2 * time.Second)
+	_ = mgr.Nudge(session.PropulsionNudgeForRole("deacon", deaconDir))
 
 	fmt.Printf("%s Deacon session started. Attach with: %s\n",
 		style.Bold.Render("✓"),
@@ -330,92 +361,20 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// startDeaconSession creates and initializes the Deacon tmux session.
-func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
-	// Find workspace root
-	townRoot, err := workspace.FindFromCwdOrError()
-	if err != nil {
-		return fmt.Errorf("not in a Gas Town workspace: %w", err)
-	}
-
-	// Deacon runs from its own directory (for correct role detection by gt prime)
-	deaconDir := filepath.Join(townRoot, "deacon")
-
-	// Ensure deacon directory exists
-	if err := os.MkdirAll(deaconDir, 0755); err != nil {
-		return fmt.Errorf("creating deacon directory: %w", err)
-	}
-
-	// Ensure Claude settings exist (autonomous role needs mail in SessionStart)
-	if err := claude.EnsureSettingsForRole(deaconDir, "deacon"); err != nil {
-		style.PrintWarning("Could not create deacon settings: %v", err)
-	}
-
-	// Create session in deacon directory
-	fmt.Println("Starting Deacon session...")
-	if err := t.NewSession(sessionName, deaconDir); err != nil {
-		return fmt.Errorf("creating session: %w", err)
-	}
-
-	// Set environment (non-fatal: session works without these)
-	// Use centralized AgentEnv for consistency across all role startup paths
-	envVars := config.AgentEnv(config.AgentEnvConfig{
-		Role:     "deacon",
-		TownRoot: townRoot,
-	})
-	for k, v := range envVars {
-		_ = t.SetEnvironment(sessionName, k, v)
-	}
-
-	// Apply Deacon theme (non-fatal: theming failure doesn't affect operation)
-	// Note: ConfigureGasTownSession includes cycle bindings
-	theme := tmux.DeaconTheme()
-	_ = t.ConfigureGasTownSession(sessionName, theme, "", "Deacon", "health-check")
-
-	// Launch Claude directly (no shell respawn loop)
-	// Restarts are handled by daemon via ensureDeaconRunning on each heartbeat
-	// The startup hook handles context loading automatically
-	// Export GT_ROLE and BD_ACTOR in the command since tmux SetEnvironment only affects new panes
-	startupCmd, err := config.BuildAgentStartupCommandWithAgentOverride("deacon", "", townRoot, "", "", agentOverride)
-	if err != nil {
-		return fmt.Errorf("building startup command: %w", err)
-	}
-	if err := t.SendKeys(sessionName, startupCmd); err != nil {
-		return fmt.Errorf("sending command: %w", err)
-	}
-
-	// Wait for Claude to start (non-fatal)
-	if err := t.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
-		// Non-fatal
-	}
-	time.Sleep(constants.ShutdownNotifyDelay)
-
-	runtimeConfig := config.LoadRuntimeConfig("")
-	_ = runtime.RunStartupFallback(t, sessionName, "deacon", runtimeConfig)
-
-	// Inject startup nudge for predecessor discovery via /resume
-	_ = session.StartupNudge(t, sessionName, session.StartupNudgeConfig{
-		Recipient: "deacon",
-		Sender:    "daemon",
-		Topic:     "patrol",
-	}) // Non-fatal
-
-	// GUPP: Gas Town Universal Propulsion Principle
-	// Send the propulsion nudge to trigger autonomous patrol execution.
-	// Wait for beacon to be fully processed (needs to be separate prompt)
-	time.Sleep(2 * time.Second)
-	_ = t.NudgeSession(sessionName, session.PropulsionNudgeForRole("deacon", deaconDir)) // Non-fatal
-
-	return nil
+// createDeaconManager creates a deacon manager with optional agent override.
+func createDeaconManager(townRoot, agentOverride string) *deacon.Manager {
+	agentName := config.ResolveRoleAgentName("deacon", townRoot, agentOverride)
+	return factory.DeaconManager(townRoot, agentName)
 }
 
 func runDeaconStop(cmd *cobra.Command, args []string) error {
 	t := tmux.NewTmux()
 
 	sessionName := getDeaconSessionName()
+	sessionID := session.SessionID(sessionName)
 
 	// Check if session exists
-	running, err := t.HasSession(sessionName)
+	running, err := t.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
@@ -426,11 +385,11 @@ func runDeaconStop(cmd *cobra.Command, args []string) error {
 	fmt.Println("Stopping Deacon session...")
 
 	// Try graceful shutdown first (best-effort interrupt)
-	_ = t.SendKeysRaw(sessionName, "C-c")
+	_ = t.SendControl(sessionID, "C-c")
 	time.Sleep(100 * time.Millisecond)
 
 	// Kill the session
-	if err := t.KillSession(sessionName); err != nil {
+	if err := t.Stop(sessionID); err != nil {
 		return fmt.Errorf("killing session: %w", err)
 	}
 
@@ -442,9 +401,10 @@ func runDeaconAttach(cmd *cobra.Command, args []string) error {
 	t := tmux.NewTmux()
 
 	sessionName := getDeaconSessionName()
+	sessionID := session.SessionID(sessionName)
 
 	// Check if session exists
-	running, err := t.HasSession(sessionName)
+	running, err := t.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
@@ -465,6 +425,7 @@ func runDeaconStatus(cmd *cobra.Command, args []string) error {
 	t := tmux.NewTmux()
 
 	sessionName := getDeaconSessionName()
+	sessionID := session.SessionID(sessionName)
 
 	// Check pause state first (most important)
 	townRoot, _ := workspace.FindFromCwdOrError()
@@ -483,14 +444,14 @@ func runDeaconStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	running, err := t.HasSession(sessionName)
+	running, err := t.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
 
 	if running {
 		// Get session info for more details
-		info, err := t.GetSessionInfo(sessionName)
+		info, err := t.GetInfo(sessionID)
 		if err == nil {
 			status := "detached"
 			if info.Attached {
@@ -521,8 +482,9 @@ func runDeaconRestart(cmd *cobra.Command, args []string) error {
 	t := tmux.NewTmux()
 
 	sessionName := getDeaconSessionName()
+	sessionID := session.SessionID(sessionName)
 
-	running, err := t.HasSession(sessionName)
+	running, err := t.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
@@ -531,7 +493,7 @@ func runDeaconRestart(cmd *cobra.Command, args []string) error {
 
 	if running {
 		// Kill existing session
-		if err := t.KillSession(sessionName); err != nil {
+		if err := t.Stop(sessionID); err != nil {
 			style.PrintWarning("failed to kill session: %v", err)
 		}
 	}
@@ -673,9 +635,10 @@ func runDeaconHealthCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	t := tmux.NewTmux()
+	sessionID := session.SessionID(sessionName)
 
 	// Check if session exists
-	exists, err := t.HasSession(sessionName)
+	exists, err := t.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
@@ -781,9 +744,10 @@ func runDeaconForceKill(cmd *cobra.Command, args []string) error {
 	}
 
 	t := tmux.NewTmux()
+	sessionID := session.SessionID(sessionName)
 
 	// Check if session exists
-	exists, err := t.HasSession(sessionName)
+	exists, err := t.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
@@ -806,7 +770,7 @@ func runDeaconForceKill(cmd *cobra.Command, args []string) error {
 
 	// Step 2: Kill the tmux session
 	fmt.Printf("%s Killing tmux session %s...\n", style.Dim.Render("2."), sessionName)
-	if err := t.KillSession(sessionName); err != nil {
+	if err := t.Stop(sessionID); err != nil {
 		return fmt.Errorf("killing session: %w", err)
 	}
 

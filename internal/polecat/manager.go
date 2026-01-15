@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -652,7 +653,7 @@ func (m *Manager) ReconcilePool() {
 		poolNames := m.namePool.getNames()
 		for _, name := range poolNames {
 			sessionName := fmt.Sprintf("gt-%s-%s", m.rig.Name, name)
-			hasSession, _ := m.tmux.HasSession(sessionName)
+			hasSession, _ := m.tmux.Exists(session.SessionID(sessionName))
 			if hasSession {
 				namesWithSessions = append(namesWithSessions, name)
 			}
@@ -686,7 +687,7 @@ func (m *Manager) ReconcilePoolWith(namesWithDirs, namesWithSessions []string) {
 		for _, name := range namesWithSessions {
 			if !dirSet[name] {
 				sessionName := fmt.Sprintf("gt-%s-%s", m.rig.Name, name)
-				_ = m.tmux.KillSession(sessionName)
+				_ = m.tmux.Stop(session.SessionID(sessionName))
 			}
 		}
 	}

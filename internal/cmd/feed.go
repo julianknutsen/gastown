@@ -177,7 +177,7 @@ func buildFeedArgs() []string {
 	return args
 }
 
-// runFeedDirect runs bd activity in the current terminal.
+// runFeedDirect runs bd activity in the current session.
 func runFeedDirect(workDir string, bdArgs []string) error {
 	bdPath, err := exec.LookPath("bd")
 	if err != nil {

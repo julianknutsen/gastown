@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/townlog"
@@ -503,7 +504,7 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 		if _, err := bd.Run("agent", "state", agentBeadID, "awaiting-gate"); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: couldn't set agent %s to awaiting-gate: %v\n", agentBeadID, err)
 		}
-	// ExitCompleted and ExitDeferred don't set state - observable from tmux
+		// ExitCompleted and ExitDeferred don't set state - observable from tmux
 	}
 
 	// ZFC #10: Self-report cleanup status
@@ -635,12 +636,9 @@ func selfKillSession(townRoot string, roleInfo RoleInfo) error {
 	_ = events.LogFeed(events.TypeSessionDeath, agentID,
 		events.SessionDeathPayload(sessionName, agentID, "self-clean: done means gone", "gt done"))
 
-	// Kill our own tmux session with proper process cleanup
-	// This will terminate Claude and all child processes, then kill the session.
-	// KillSessionWithProcesses recursively kills all descendants (deepest first)
-	// to prevent orphaned processes that ignore SIGHUP.
+	// Kill our own tmux session (this kills all descendant processes first)
 	t := tmux.NewTmux()
-	if err := t.KillSessionWithProcesses(sessionName); err != nil {
+	if err := t.Stop(session.SessionID(sessionName)); err != nil {
 		return fmt.Errorf("killing session %s: %w", sessionName, err)
 	}
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/dog"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -116,7 +117,7 @@ func DispatchToDog(dogName string, create bool) (*DogDispatchInfo, error) {
 	sessionName := fmt.Sprintf("gt-%s-deacon-%s", townName, targetDog.Name)
 	t := tmux.NewTmux()
 	var pane string
-	if has, _ := t.HasSession(sessionName); has {
+	if has, _ := t.Exists(session.SessionID(sessionName)); has {
 		// Get the pane from the session
 		pane, _ = getSessionPane(sessionName)
 	}

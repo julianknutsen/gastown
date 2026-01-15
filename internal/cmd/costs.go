@@ -197,7 +197,7 @@ func runLiveCosts() error {
 	t := tmux.NewTmux()
 
 	// Get all tmux sessions
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
@@ -205,7 +205,8 @@ func runLiveCosts() error {
 	var costs []SessionCost
 	var total float64
 
-	for _, session := range sessions {
+	for _, sessionID := range sessions {
+		session := string(sessionID)
 		// Only process Gas Town sessions (start with "gt-")
 		if !strings.HasPrefix(session, constants.SessionPrefix) {
 			continue

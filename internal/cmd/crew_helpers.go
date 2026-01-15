@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
@@ -42,7 +43,8 @@ func inferRigFromCwd(townRoot string) (string, error) {
 }
 
 // getCrewManager returns a crew manager for the specified or inferred rig.
-func getCrewManager(rigName string) (*crew.Manager, *rig.Rig, error) {
+// agentOverride optionally specifies a different agent alias to use.
+func getCrewManager(rigName string, agentOverride string) (*crew.Manager, *rig.Rig, error) {
 	// Handle optional rig inference from cwd
 	if rigName == "" {
 		townRoot, err := workspace.FindFromCwdOrError()
@@ -55,13 +57,16 @@ func getCrewManager(rigName string) (*crew.Manager, *rig.Rig, error) {
 		}
 	}
 
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	crewGit := git.NewGit(r.Path)
-	crewMgr := crew.NewManager(r, crewGit)
+	agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
+	if agentOverride != "" {
+		agentName = agentOverride
+	}
+	crewMgr := factory.CrewManager(r, townRoot, agentName)
 
 	return crewMgr, r, nil
 }

@@ -158,6 +158,7 @@ func (d *Daemon) executeLifecycleAction(request *LifecycleRequest) error {
 	if sessionName == "" {
 		return fmt.Errorf("unknown agent identity: %s", request.From)
 	}
+	sessionID := session.SessionID(sessionName)
 
 	d.logger.Printf("Executing %s for session %s", request.Action, sessionName)
 
@@ -170,7 +171,7 @@ func (d *Daemon) executeLifecycleAction(request *LifecycleRequest) error {
 	}
 
 	// Check if session exists (tmux detection still needed for lifecycle actions)
-	running, err := d.tmux.HasSession(sessionName)
+	running, err := d.tmux.Exists(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
@@ -178,7 +179,7 @@ func (d *Daemon) executeLifecycleAction(request *LifecycleRequest) error {
 	switch request.Action {
 	case ActionShutdown:
 		if running {
-			if err := d.tmux.KillSession(sessionName); err != nil {
+			if err := d.tmux.Stop(sessionID); err != nil {
 				return fmt.Errorf("killing session: %w", err)
 			}
 			d.logger.Printf("Killed session %s", sessionName)
@@ -188,7 +189,7 @@ func (d *Daemon) executeLifecycleAction(request *LifecycleRequest) error {
 	case ActionCycle, ActionRestart:
 		if running {
 			// Kill the session first
-			if err := d.tmux.KillSession(sessionName); err != nil {
+			if err := d.tmux.Stop(sessionID); err != nil {
 				return fmt.Errorf("killing session: %w", err)
 			}
 			d.logger.Printf("Killed session %s for restart", sessionName)
@@ -334,6 +335,8 @@ func (d *Daemon) identityToSession(identity string) string {
 // restartSession starts a new session for the given agent.
 // Uses role bead config if available, falls back to hardcoded defaults.
 func (d *Daemon) restartSession(sessionName, identity string) error {
+	sessionID := session.SessionID(sessionName)
+
 	// Get role config for this identity
 	config, parsed, err := d.getRoleConfigForIdentity(identity)
 	if err != nil {
@@ -371,14 +374,14 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 	}
 
 	// Set environment variables
-	d.setSessionEnvironment(sessionName, config, parsed)
+	d.setSessionEnvironment(sessionID, config, parsed)
 
 	// Apply theme (non-fatal: theming failure doesn't affect operation)
-	d.applySessionTheme(sessionName, parsed)
+	d.applySessionTheme(sessionID, parsed)
 
 	// Get and send startup command
 	startCmd := d.getStartCommand(config, parsed)
-	if err := d.tmux.SendKeys(sessionName, startCmd); err != nil {
+	if err := d.tmux.Send(sessionID, startCmd); err != nil {
 		return fmt.Errorf("sending startup command: %w", err)
 	}
 
@@ -516,7 +519,7 @@ func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIde
 
 // setSessionEnvironment sets environment variables for the tmux session.
 // Uses centralized AgentEnv for consistency, plus role bead custom env vars if available.
-func (d *Daemon) setSessionEnvironment(sessionName string, roleConfig *beads.RoleConfig, parsed *ParsedIdentity) {
+func (d *Daemon) setSessionEnvironment(sessionID session.SessionID, roleConfig *beads.RoleConfig, parsed *ParsedIdentity) {
 	// Use centralized AgentEnv for base environment variables
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:      parsed.RoleType,
@@ -525,26 +528,26 @@ func (d *Daemon) setSessionEnvironment(sessionName string, roleConfig *beads.Rol
 		TownRoot:  d.config.TownRoot,
 	})
 	for k, v := range envVars {
-		_ = d.tmux.SetEnvironment(sessionName, k, v)
+		_ = d.tmux.SetEnv(sessionID, k, v)
 	}
 
 	// Set any custom env vars from role config (bead-defined overrides)
 	if roleConfig != nil {
 		for k, v := range roleConfig.EnvVars {
 			expanded := beads.ExpandRolePattern(v, d.config.TownRoot, parsed.RigName, parsed.AgentName, parsed.RoleType)
-			_ = d.tmux.SetEnvironment(sessionName, k, expanded)
+			_ = d.tmux.SetEnv(sessionID, k, expanded)
 		}
 	}
 }
 
 // applySessionTheme applies tmux theming to the session.
-func (d *Daemon) applySessionTheme(sessionName string, parsed *ParsedIdentity) {
+func (d *Daemon) applySessionTheme(sessionID session.SessionID, parsed *ParsedIdentity) {
 	if parsed.RoleType == "mayor" {
 		theme := tmux.MayorTheme()
-		_ = d.tmux.ConfigureGasTownSession(sessionName, theme, "", "Mayor", "coordinator")
+		_ = d.tmux.ConfigureGasTownSession(sessionID, theme, "", "Mayor", "coordinator")
 	} else if parsed.RigName != "" {
 		theme := tmux.AssignTheme(parsed.RigName)
-		_ = d.tmux.ConfigureGasTownSession(sessionName, theme, parsed.RigName, parsed.RoleType, parsed.RoleType)
+		_ = d.tmux.ConfigureGasTownSession(sessionID, theme, parsed.RigName, parsed.RoleType, parsed.RoleType)
 	}
 }
 

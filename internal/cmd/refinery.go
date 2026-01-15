@@ -6,9 +6,12 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/mrqueue"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -16,7 +19,6 @@ import (
 
 // Refinery command flags
 var (
-	refineryForeground bool
 	refineryStatusJSON bool
 	refineryQueueJSON  bool
 )
@@ -206,9 +208,6 @@ Examples:
 var refineryBlockedJSON bool
 
 func init() {
-	// Start flags
-	refineryStartCmd.Flags().BoolVar(&refineryForeground, "foreground", false, "Run in foreground (default: background)")
-
 	// Status flags
 	refineryStatusCmd.Flags().BoolVar(&refineryStatusJSON, "json", false, "Output as JSON")
 
@@ -255,12 +254,13 @@ func getRefineryManager(rigName string) (*refinery.Manager, *rig.Rig, string, er
 		}
 	}
 
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return nil, nil, "", err
 	}
 
-	mgr := refinery.NewManager(r)
+	agentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+	mgr := factory.RefineryManager(r, townRoot, agentName)
 	return mgr, r, rigName, nil
 }
 
@@ -277,17 +277,12 @@ func runRefineryStart(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Starting refinery for %s...\n", rigName)
 
-	if err := mgr.Start(refineryForeground); err != nil {
+	if err := mgr.Start(); err != nil {
 		if err == refinery.ErrAlreadyRunning {
 			fmt.Printf("%s Refinery is already running\n", style.Dim.Render("⚠"))
 			return nil
 		}
 		return fmt.Errorf("starting refinery: %w", err)
-	}
-
-	if refineryForeground {
-		// This will block until stopped
-		return nil
 	}
 
 	fmt.Printf("%s Refinery started for %s\n", style.Bold.Render("✓"), rigName)
@@ -483,14 +478,14 @@ func runRefineryAttach(cmd *cobra.Command, args []string) error {
 
 	// Check if session exists
 	t := tmux.NewTmux()
-	running, err := t.HasSession(sessionID)
+	running, err := t.Exists(session.SessionID(sessionID))
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
 	if !running {
 		// Auto-start if not running
 		fmt.Printf("Refinery not running for %s, starting...\n", rigName)
-		if err := mgr.Start(false); err != nil {
+		if err := mgr.Start(); err != nil {
 			return fmt.Errorf("starting refinery: %w", err)
 		}
 		fmt.Printf("%s Refinery started\n", style.Bold.Render("✓"))
@@ -519,7 +514,7 @@ func runRefineryRestart(cmd *cobra.Command, args []string) error {
 	}
 
 	// Start fresh
-	if err := mgr.Start(false); err != nil {
+	if err := mgr.Start(); err != nil {
 		return fmt.Errorf("starting refinery: %w", err)
 	}
 

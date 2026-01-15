@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -162,27 +163,35 @@ func (c *LocalConnection) TmuxNewSession(name, dir string) error {
 
 // TmuxKillSession terminates a tmux session.
 func (c *LocalConnection) TmuxKillSession(name string) error {
-	return c.tmux.KillSession(name)
+	return c.tmux.Stop(session.SessionID(name))
 }
 
 // TmuxSendKeys sends keys to a tmux session.
-func (c *LocalConnection) TmuxSendKeys(session, keys string) error {
-	return c.tmux.SendKeys(session, keys)
+func (c *LocalConnection) TmuxSendKeys(sess, keys string) error {
+	return c.tmux.Send(session.SessionID(sess), keys)
 }
 
 // TmuxCapturePane captures the last N lines from a tmux pane.
-func (c *LocalConnection) TmuxCapturePane(session string, lines int) (string, error) {
-	return c.tmux.CapturePane(session, lines)
+func (c *LocalConnection) TmuxCapturePane(sess string, lines int) (string, error) {
+	return c.tmux.Capture(session.SessionID(sess), lines)
 }
 
 // TmuxHasSession returns true if the session exists.
 func (c *LocalConnection) TmuxHasSession(name string) (bool, error) {
-	return c.tmux.HasSession(name)
+	return c.tmux.Exists(session.SessionID(name))
 }
 
 // TmuxListSessions returns all tmux session names.
 func (c *LocalConnection) TmuxListSessions() ([]string, error) {
-	return c.tmux.ListSessions()
+	ids, err := c.tmux.List()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(ids))
+	for i, id := range ids {
+		names[i] = string(id)
+	}
+	return names, nil
 }
 
 // Verify LocalConnection implements Connection.

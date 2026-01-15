@@ -15,7 +15,7 @@ type mockEnvReader struct {
 	envErrs     map[string]error
 }
 
-func (m *mockEnvReader) ListSessions() ([]string, error) {
+func (m *mockEnvReader) List() ([]string, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}

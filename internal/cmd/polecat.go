@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
@@ -365,7 +366,7 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 	for _, r := range rigs {
 		polecatGit := git.NewGit(r.Path)
 		mgr := polecat.NewManager(r, polecatGit, t)
-		polecatMgr := polecat.NewSessionManager(t, r)
+		polecatMgr := factory.PolecatSessionManager(r, "")
 
 		polecats, err := mgr.List()
 		if err != nil {
@@ -470,14 +471,13 @@ func runPolecatRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	// Remove each polecat
-	t := tmux.NewTmux()
 	var removeErrors []string
 	removed := 0
 
 	for _, p := range targets {
 		// Check if session is running
 		if !polecatForce {
-			polecatMgr := polecat.NewSessionManager(t, p.r)
+			polecatMgr := factory.PolecatSessionManager(p.r, "")
 			running, _ := polecatMgr.IsRunning(p.polecatName)
 			if running {
 				removeErrors = append(removeErrors, fmt.Sprintf("%s/%s: session is running (stop first or use --force)", p.rigName, p.polecatName))
@@ -638,8 +638,7 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get session info
-	t := tmux.NewTmux()
-	polecatMgr := polecat.NewSessionManager(t, r)
+	polecatMgr := factory.PolecatSessionManager(r, "")
 	sessInfo, err := polecatMgr.Status(polecatName)
 	if err != nil {
 		// Non-fatal - continue without session info
@@ -1148,7 +1147,6 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 	}
 
 	// Nuke each polecat
-	t := tmux.NewTmux()
 	var nukeErrors []string
 	nuked := 0
 
@@ -1172,7 +1170,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		}
 
 		// Step 1: Kill session (force mode - no graceful shutdown)
-		polecatMgr := polecat.NewSessionManager(t, p.r)
+		polecatMgr := factory.PolecatSessionManager(p.r, "")
 		running, _ := polecatMgr.IsRunning(p.polecatName)
 		if running {
 			if err := polecatMgr.Stop(p.polecatName, true); err != nil {

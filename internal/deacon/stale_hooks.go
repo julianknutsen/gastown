@@ -12,12 +12,21 @@ import (
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
+// SessionChecker is the minimal interface for checking if sessions exist.
+type SessionChecker interface {
+	Exists(id session.SessionID) (bool, error)
+}
+
 // StaleHookConfig holds configurable parameters for stale hook detection.
 type StaleHookConfig struct {
 	// MaxAge is how long a bead can be hooked before being considered stale.
 	MaxAge time.Duration `json:"max_age"`
 	// DryRun if true, only reports what would be done without making changes.
 	DryRun bool `json:"dry_run"`
+	// SessionChecker is used to check if agent sessions exist.
+	// If nil, a real tmux.Tmux instance is used.
+	// This field enables testing without real tmux sessions.
+	SessionChecker SessionChecker `json:"-"`
 }
 
 // DefaultStaleHookConfig returns the default stale hook config.
@@ -78,7 +87,12 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 
 	// Filter to stale ones (older than threshold)
 	threshold := time.Now().Add(-cfg.MaxAge)
-	t := tmux.NewTmux()
+
+	// Use injected SessionChecker if provided, otherwise create real tmux instance
+	checker := cfg.SessionChecker
+	if checker == nil {
+		checker = tmux.NewTmux()
+	}
 
 	for _, bead := range hookedBeads {
 		// Skip if updated recently (not stale)
@@ -99,7 +113,7 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 		if bead.Assignee != "" {
 			sessionName := assigneeToSessionName(bead.Assignee)
 			if sessionName != "" {
-				alive, _ := t.HasSession(sessionName)
+				alive, _ := checker.Exists(session.SessionID(sessionName))
 				hookResult.AgentAlive = alive
 			}
 		}

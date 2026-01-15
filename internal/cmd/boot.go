@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/boot"
 	"github.com/steveyegge/gastown/internal/deacon"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -278,7 +279,8 @@ func runDegradedTriage(b *boot.Boot) (action, target string, err error) {
 
 	// Check if Deacon session exists
 	deaconSession := getDeaconSessionName()
-	hasDeacon, err := tm.HasSession(deaconSession)
+	deaconSessionID := session.SessionID(deaconSession)
+	hasDeacon, err := tm.Exists(deaconSessionID)
 	if err != nil {
 		return "error", "deacon", fmt.Errorf("checking deacon session: %w", err)
 	}
@@ -301,7 +303,7 @@ func runDegradedTriage(b *boot.Boot) (action, target string, err error) {
 			if age > 30*time.Minute {
 				// Very stuck - restart the session
 				fmt.Printf("Deacon heartbeat is %s old - restarting session\n", age.Round(time.Minute))
-				if err := tm.KillSession(deaconSession); err == nil {
+				if err := tm.Stop(deaconSessionID); err == nil {
 					return "restart", "deacon-stuck", nil
 				}
 			} else {

@@ -39,7 +39,6 @@ TO DISPATCH WORK (with molecules):
   gt formulas               # List available formulas`,
 }
 
-
 var moleculeProgressCmd = &cobra.Command{
 	Use:   "progress <root-issue-id>",
 	Short: "Show progress through a molecule's steps",
@@ -171,7 +170,6 @@ Examples:
 	RunE: runMoleculeCurrent,
 }
 
-
 var moleculeBurnCmd = &cobra.Command{
 	Use:   "burn [target]",
 	Short: "Burn current molecule without creating a digest",
@@ -222,7 +220,6 @@ When a polecat is working on a molecule, it processes one step at a time:
 IMPORTANT: Always use 'gt mol step done' to complete steps. Do not manually
 close steps with 'bd close' - that skips the auto-continuation logic.`,
 }
-
 
 func init() {
 	// Progress flags

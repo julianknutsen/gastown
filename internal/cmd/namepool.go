@@ -98,7 +98,7 @@ func runNamepool(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Rig: %s\n", rigName)
 	fmt.Printf("Theme: %s\n", pool.GetTheme())
 	fmt.Printf("Active polecats: %d\n", pool.ActiveCount())
-	
+
 	activeNames := pool.ActiveNames()
 	if len(activeNames) > 0 {
 		fmt.Printf("In use: %s\n", strings.Join(activeNames, ", "))
@@ -178,11 +178,11 @@ func runNamepoolSet(cmd *cobra.Command, args []string) error {
 	if err := pool.Load(); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("loading pool: %w", err)
 	}
-	
+
 	if err := pool.SetTheme(theme); err != nil {
 		return err
 	}
-	
+
 	if err := pool.Save(); err != nil {
 		return fmt.Errorf("saving pool: %w", err)
 	}
@@ -213,7 +213,7 @@ func runNamepoolAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	pool.AddCustomName(name)
-	
+
 	if err := pool.Save(); err != nil {
 		return fmt.Errorf("saving pool: %w", err)
 	}
@@ -235,7 +235,7 @@ func runNamepoolReset(cmd *cobra.Command, args []string) error {
 	}
 
 	pool.Reset()
-	
+
 	if err := pool.Save(); err != nil {
 		return fmt.Errorf("saving pool: %w", err)
 	}

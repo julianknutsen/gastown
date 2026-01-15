@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/lock"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -192,14 +193,14 @@ func categorizeSession(name string) *AgentSession {
 // getAgentSessions returns all categorized Gas Town sessions.
 func getAgentSessions(includePolecats bool) ([]*AgentSession, error) {
 	t := tmux.NewTmux()
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return nil, err
 	}
 
 	var agents []*AgentSession
-	for _, name := range sessions {
-		agent := categorizeSession(name)
+	for _, sessionID := range sessions {
+		agent := categorizeSession(string(sessionID))
 		if agent == nil {
 			continue
 		}
@@ -387,11 +388,11 @@ func runAgentsList(cmd *cobra.Command, args []string) error {
 
 // CollisionReport holds the results of a collision check.
 type CollisionReport struct {
-	TotalSessions int                    `json:"total_sessions"`
-	TotalLocks    int                    `json:"total_locks"`
-	Collisions    int                    `json:"collisions"`
-	StaleLocks    int                    `json:"stale_locks"`
-	Issues        []CollisionIssue       `json:"issues,omitempty"`
+	TotalSessions int                       `json:"total_sessions"`
+	TotalLocks    int                       `json:"total_locks"`
+	Collisions    int                       `json:"collisions"`
+	StaleLocks    int                       `json:"stale_locks"`
+	Issues        []CollisionIssue          `json:"issues,omitempty"`
 	Locks         map[string]*lock.LockInfo `json:"locks,omitempty"`
 }
 
@@ -494,16 +495,17 @@ func buildCollisionReport(townRoot string) (*CollisionReport, error) {
 
 	// Get all tmux sessions
 	t := tmux.NewTmux()
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
-		sessions = []string{} // Continue even if tmux not running
+		sessions = []session.SessionID{} // Continue even if tmux not running
 	}
 
 	// Filter to gt- sessions
 	var gtSessions []string
 	for _, s := range sessions {
-		if strings.HasPrefix(s, "gt-") {
-			gtSessions = append(gtSessions, s)
+		sessionName := string(s)
+		if strings.HasPrefix(sessionName, "gt-") {
+			gtSessions = append(gtSessions, sessionName)
 		}
 	}
 	report.TotalSessions = len(gtSessions)

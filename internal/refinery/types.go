@@ -27,9 +27,6 @@ type Refinery struct {
 	// State is the current running state.
 	State State `json:"state"`
 
-	// PID is the process ID if running in background.
-	PID int `json:"pid,omitempty"`
-
 	// StartedAt is when the refinery was started.
 	StartedAt *time.Time `json:"started_at,omitempty"`
 
@@ -39,9 +36,6 @@ type Refinery struct {
 	// PendingMRs tracks merge requests that have been submitted.
 	// Key is the MR ID.
 	PendingMRs map[string]*MergeRequest `json:"pending_mrs,omitempty"`
-
-	// LastMergeAt is when the last successful merge happened.
-	LastMergeAt *time.Time `json:"last_merge_at,omitempty"`
 }
 
 // MergeRequest represents a branch waiting to be merged.

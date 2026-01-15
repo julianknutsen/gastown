@@ -23,15 +23,23 @@ type OrphanSessionCheck struct {
 
 // SessionLister abstracts tmux session listing for testing.
 type SessionLister interface {
-	ListSessions() ([]string, error)
+	List() ([]string, error)
 }
 
 type realSessionLister struct {
 	t *tmux.Tmux
 }
 
-func (r *realSessionLister) ListSessions() ([]string, error) {
-	return r.t.ListSessions()
+func (r *realSessionLister) List() ([]string, error) {
+	sessionIDs, err := r.t.List()
+	if err != nil {
+		return nil, err
+	}
+	sessions := make([]string, len(sessionIDs))
+	for i, id := range sessionIDs {
+		sessions[i] = string(id)
+	}
+	return sessions, nil
 }
 
 // NewOrphanSessionCheck creates a new orphan session check.
@@ -61,7 +69,7 @@ func (c *OrphanSessionCheck) Run(ctx *CheckContext) *CheckResult {
 		lister = &realSessionLister{t: tmux.NewTmux()}
 	}
 
-	sessions, err := lister.ListSessions()
+	sessions, err := lister.List()
 	if err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
@@ -150,7 +158,7 @@ func (c *OrphanSessionCheck) Fix(ctx *CheckContext) error {
 		// Log pre-death event for crash investigation (before killing)
 		_ = events.LogFeed(events.TypeSessionDeath, sess,
 			events.SessionDeathPayload(sess, "unknown", "orphan cleanup", "gt doctor"))
-		if err := t.KillSession(sess); err != nil {
+		if err := t.Stop(session.SessionID(sess)); err != nil {
 			lastErr = err
 		}
 	}
@@ -300,9 +308,9 @@ func (r *realProcessLister) ListTmuxServerPIDs() ([]int, error) {
 func (r *realProcessLister) ListPanePIDs() ([]int, error) {
 	var pids []int
 	t := tmux.NewTmux()
-	sessions, _ := t.ListSessions()
-	for _, session := range sessions {
-		out, err := exec.Command("tmux", "list-panes", "-t", session, "-F", "#{pane_pid}").Output()
+	sessions, _ := t.List()
+	for _, sessionID := range sessions {
+		out, err := exec.Command("tmux", "list-panes", "-t", string(sessionID), "-F", "#{pane_pid}").Output()
 		if err != nil {
 			continue
 		}

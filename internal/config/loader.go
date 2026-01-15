@@ -1004,6 +1004,17 @@ func ResolveRoleAgentConfig(role, townRoot, rigPath string) *RuntimeConfig {
 	return ResolveAgentConfig(townRoot, rigPath)
 }
 
+// ResolveAgentForRole resolves the agent name for a role, merging command line override with config.
+// cmdOverride takes precedence if non-empty, otherwise falls back to configured agent.
+// This is the standard pattern for all agent startup paths.
+func ResolveAgentForRole(role, townRoot, rigPath, cmdOverride string) string {
+	if cmdOverride != "" {
+		return cmdOverride
+	}
+	name, _ := ResolveRoleAgentName(role, townRoot, rigPath)
+	return name
+}
+
 // ResolveRoleAgentName returns the agent name that would be used for a specific role.
 // This is useful for logging and diagnostics.
 // Returns the agent name and whether it came from role-specific configuration.

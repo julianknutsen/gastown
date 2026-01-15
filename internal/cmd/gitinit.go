@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	gitInitGitHub  string
-	gitInitPublic  bool
+	gitInitGitHub string
+	gitInitPublic bool
 )
 
 var gitInitCmd = &cobra.Command{

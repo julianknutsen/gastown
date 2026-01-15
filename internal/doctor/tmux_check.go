@@ -33,7 +33,7 @@ func NewLinkedPaneCheck() *LinkedPaneCheck {
 func (c *LinkedPaneCheck) Run(ctx *CheckContext) *CheckResult {
 	t := tmux.NewTmux()
 
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
@@ -45,9 +45,10 @@ func (c *LinkedPaneCheck) Run(ctx *CheckContext) *CheckResult {
 
 	// Filter to gt-* sessions only
 	var gtSessions []string
-	for _, session := range sessions {
-		if strings.HasPrefix(session, "gt-") {
-			gtSessions = append(gtSessions, session)
+	for _, sessionID := range sessions {
+		sessionName := string(sessionID)
+		if strings.HasPrefix(sessionName, "gt-") {
+			gtSessions = append(gtSessions, sessionName)
 		}
 	}
 
@@ -122,8 +123,8 @@ func (c *LinkedPaneCheck) Fix(ctx *CheckContext) error {
 	t := tmux.NewTmux()
 	var lastErr error
 
-	for _, session := range c.linkedSessions {
-		if err := t.KillSession(session); err != nil {
+	for _, sess := range c.linkedSessions {
+		if err := t.Stop(session.SessionID(sess)); err != nil {
 			lastErr = err
 		}
 	}

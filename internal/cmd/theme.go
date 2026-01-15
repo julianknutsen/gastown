@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	themeListFlag    bool
-	themeApplyFlag   bool
+	themeListFlag     bool
+	themeApplyFlag    bool
 	themeApplyAllFlag bool
 )
 
@@ -43,7 +43,7 @@ var themeApplyCmd = &cobra.Command{
 
 By default, only applies to sessions in the current rig.
 Use --all to apply to sessions across all rigs.`,
-	RunE:  runThemeApply,
+	RunE: runThemeApply,
 }
 
 func init() {
@@ -109,7 +109,7 @@ func runThemeApply(cmd *cobra.Command, args []string) error {
 	t := tmux.NewTmux()
 
 	// Get all sessions
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
@@ -123,7 +123,8 @@ func runThemeApply(cmd *cobra.Command, args []string) error {
 
 	// Apply to matching sessions
 	applied := 0
-	for _, sess := range sessions {
+	for _, sessID := range sessions {
+		sess := string(sessID)
 		if !strings.HasPrefix(sess, "gt-") {
 			continue
 		}

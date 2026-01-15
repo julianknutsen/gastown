@@ -1304,7 +1304,7 @@ func TestBuildAgentStartupCommand_UsesRoleAgents(t *testing.T) {
 	}
 
 	// BuildAgentStartupCommand passes role via GT_ROLE env var
-	cmd := BuildAgentStartupCommand(constants.RoleRefinery, "testrig/refinery", rigPath, "")
+	cmd := BuildAgentStartupCommand(constants.RoleRefinery, "testrig/refinery", townRoot, rigPath, "")
 	if !strings.Contains(cmd, "codex") {
 		t.Fatalf("expected codex for refinery role, got: %q", cmd)
 	}

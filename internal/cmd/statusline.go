@@ -158,7 +158,7 @@ func runWorkerStatusLine(t *tmux.Tmux, session, rigName, polecat, crew, issue st
 
 func runMayorStatusLine(t *tmux.Tmux) error {
 	// Count active sessions by listing tmux sessions
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return nil // Silent fail
 	}
@@ -210,7 +210,8 @@ func runMayorStatusLine(t *tmux.Tmux) error {
 
 	// Single pass: track rig status AND agent health
 	for _, s := range sessions {
-		agent := categorizeSession(s)
+		sessionStr := string(s)
+		agent := categorizeSession(sessionStr)
 		if agent == nil {
 			continue
 		}
@@ -234,7 +235,7 @@ func runMayorStatusLine(t *tmux.Tmux) error {
 		if health := healthByType[agent.Type]; health != nil {
 			health.total++
 			// Detect working state via ✻ symbol
-			if isSessionWorking(t, s) {
+			if isSessionWorking(t, sessionStr) {
 				health.working++
 			}
 		}
@@ -396,7 +397,7 @@ func runMayorStatusLine(t *tmux.Tmux) error {
 // Shows: active rigs, polecat count, hook or mail preview
 func runDeaconStatusLine(t *tmux.Tmux) error {
 	// Count active rigs and polecats
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return nil // Silent fail
 	}
@@ -423,7 +424,7 @@ func runDeaconStatusLine(t *tmux.Tmux) error {
 	rigs := make(map[string]bool)
 	polecatCount := 0
 	for _, s := range sessions {
-		agent := categorizeSession(s)
+		agent := categorizeSession(string(s))
 		if agent == nil {
 			continue
 		}
@@ -484,7 +485,7 @@ func runWitnessStatusLine(t *tmux.Tmux, rigName string) error {
 	}
 
 	// Count polecats and crew in this rig
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return nil // Silent fail
 	}
@@ -492,7 +493,7 @@ func runWitnessStatusLine(t *tmux.Tmux, rigName string) error {
 	polecatCount := 0
 	crewCount := 0
 	for _, s := range sessions {
-		agent := categorizeSession(s)
+		agent := categorizeSession(string(s))
 		if agent == nil {
 			continue
 		}

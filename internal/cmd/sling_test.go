@@ -751,20 +751,20 @@ func TestLooksLikeBeadID(t *testing.T) {
 		{"hq-00gyg", true},
 
 		// Short prefixes that match pattern (but may be formulas in practice)
-		{"mol-release", true},    // 3-char prefix matches pattern (formula check runs first in sling)
-		{"mol-abc123", true},     // 3-char prefix matches pattern
+		{"mol-release", true}, // 3-char prefix matches pattern (formula check runs first in sling)
+		{"mol-abc123", true},  // 3-char prefix matches pattern
 
 		// Non-bead strings - should return false
-		{"formula-name", false},  // "formula" is 7 chars (> 5)
-		{"mayor", false},         // no hyphen
-		{"gastown", false},       // no hyphen
-		{"deacon/dogs", false},   // contains slash
-		{"", false},              // empty
-		{"-abc", false},          // starts with hyphen
-		{"GT-abc", false},        // uppercase prefix
-		{"123-abc", false},       // numeric prefix
-		{"a-", false},            // nothing after hyphen
-		{"aaaaaa-b", false},      // prefix too long (6 chars)
+		{"formula-name", false}, // "formula" is 7 chars (> 5)
+		{"mayor", false},        // no hyphen
+		{"gastown", false},      // no hyphen
+		{"deacon/dogs", false},  // contains slash
+		{"", false},             // empty
+		{"-abc", false},         // starts with hyphen
+		{"GT-abc", false},       // uppercase prefix
+		{"123-abc", false},      // numeric prefix
+		{"a-", false},           // nothing after hyphen
+		{"aaaaaa-b", false},     // prefix too long (6 chars)
 	}
 
 	for _, tt := range tests {

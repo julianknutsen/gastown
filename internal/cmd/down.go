@@ -15,12 +15,14 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/daemon"
 	"github.com/steveyegge/gastown/internal/events"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -106,6 +108,15 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	rigs := discoverRigs(townRoot)
 
+	// Load rigs config for manager-based operations
+	rigsConfigPath := filepath.Join(townRoot, "mayor", "rigs.json")
+	rigsConfig, _ := config.LoadRigsConfig(rigsConfigPath)
+	if rigsConfig == nil {
+		rigsConfig = &config.RigsConfig{Rigs: make(map[string]config.RigEntry)}
+	}
+	g := git.NewGit(townRoot)
+	rigMgr := rig.NewManager(townRoot, rigsConfig, g)
+
 	// Phase 0.5: Stop polecats if --polecats
 	if downPolecats {
 		if downDryRun {
@@ -160,53 +171,69 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	// Phase 2a: Stop refineries
 	for _, rigName := range rigs {
-		sessionName := fmt.Sprintf("gt-%s-refinery", rigName)
+		r, err := rigMgr.GetRig(rigName)
+		if err != nil {
+			printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), false, err.Error())
+			allOK = false
+			continue
+		}
+
+		refMgr := factory.RefineryManager(r, townRoot, "")
 		if downDryRun {
-			if running, _ := t.HasSession(sessionName); running {
+			status, _ := refMgr.Status()
+			if status != nil && status.State == refinery.StateRunning {
 				printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), true, "would stop")
 			}
 			continue
 		}
-		wasRunning, err := stopSession(t, sessionName)
-		if err != nil {
+		err = refMgr.Stop()
+		if err == refinery.ErrNotRunning {
+			printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), true, "not running")
+		} else if err != nil {
 			printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), false, err.Error())
 			allOK = false
-		} else if wasRunning {
-			printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), true, "stopped")
 		} else {
-			printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), true, "not running")
+			printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), true, "stopped")
 		}
 	}
 
 	// Phase 2b: Stop witnesses
 	for _, rigName := range rigs {
-		sessionName := fmt.Sprintf("gt-%s-witness", rigName)
+		r, err := rigMgr.GetRig(rigName)
+		if err != nil {
+			printDownStatus(fmt.Sprintf("Witness (%s)", rigName), false, err.Error())
+			allOK = false
+			continue
+		}
+
+		witMgr := factory.WitnessManager(r, townRoot, "")
 		if downDryRun {
-			if running, _ := t.HasSession(sessionName); running {
+			status, _ := witMgr.Status()
+			if status != nil && status.State == witness.StateRunning {
 				printDownStatus(fmt.Sprintf("Witness (%s)", rigName), true, "would stop")
 			}
 			continue
 		}
-		wasRunning, err := stopSession(t, sessionName)
-		if err != nil {
+		err = witMgr.Stop()
+		if err == witness.ErrNotRunning {
+			printDownStatus(fmt.Sprintf("Witness (%s)", rigName), true, "not running")
+		} else if err != nil {
 			printDownStatus(fmt.Sprintf("Witness (%s)", rigName), false, err.Error())
 			allOK = false
-		} else if wasRunning {
-			printDownStatus(fmt.Sprintf("Witness (%s)", rigName), true, "stopped")
 		} else {
-			printDownStatus(fmt.Sprintf("Witness (%s)", rigName), true, "not running")
+			printDownStatus(fmt.Sprintf("Witness (%s)", rigName), true, "stopped")
 		}
 	}
 
 	// Phase 3: Stop town-level sessions (Mayor, Boot, Deacon)
-	for _, ts := range session.TownSessions() {
+	for _, ts := range session.TownSessionInfos() {
 		if downDryRun {
-			if running, _ := t.HasSession(ts.SessionID); running {
+			if running, _ := t.Exists(session.SessionID(ts.SessionID)); running {
 				printDownStatus(ts.Name, true, "would stop")
 			}
 			continue
 		}
-		stopped, err := session.StopTownSession(t, ts, downForce)
+		stopped, err := session.StopTownSessionInfo(t, ts, downForce)
 		if err != nil {
 			printDownStatus(ts.Name, false, err.Error())
 			allOK = false
@@ -334,7 +361,7 @@ func stopAllPolecats(t *tmux.Tmux, townRoot string, rigNames []string, force boo
 			continue
 		}
 
-		polecatMgr := polecat.NewSessionManager(t, r)
+		polecatMgr := factory.PolecatSessionManager(r, "")
 		infos, err := polecatMgr.List()
 		if err != nil {
 			continue
@@ -368,27 +395,6 @@ func printDownStatus(name string, ok bool, detail string) {
 	} else {
 		fmt.Printf("%s %s: %s\n", style.ErrorPrefix, name, detail)
 	}
-}
-
-// stopSession gracefully stops a tmux session.
-// Returns (wasRunning, error) - wasRunning is true if session existed and was stopped.
-func stopSession(t *tmux.Tmux, sessionName string) (bool, error) {
-	running, err := t.HasSession(sessionName)
-	if err != nil {
-		return false, err
-	}
-	if !running {
-		return false, nil // Already stopped
-	}
-
-	// Try graceful shutdown first (Ctrl-C, best-effort interrupt)
-	if !downForce {
-		_ = t.SendKeysRaw(sessionName, "C-c")
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	// Kill the session
-	return true, t.KillSession(sessionName)
 }
 
 // acquireShutdownLock prevents concurrent shutdowns.
@@ -430,11 +436,12 @@ func verifyShutdown(t *tmux.Tmux, townRoot string) []string {
 		respawned = append(respawned, fmt.Sprintf("bd activity (%d running)", count))
 	}
 
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err == nil {
 		for _, sess := range sessions {
-			if strings.HasPrefix(sess, "gt-") || strings.HasPrefix(sess, "hq-") {
-				respawned = append(respawned, fmt.Sprintf("tmux session %s", sess))
+			sessStr := string(sess)
+			if strings.HasPrefix(sessStr, "gt-") || strings.HasPrefix(sessStr, "hq-") {
+				respawned = append(respawned, fmt.Sprintf("tmux session %s", sessStr))
 			}
 		}
 	}

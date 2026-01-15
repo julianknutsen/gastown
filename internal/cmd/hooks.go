@@ -48,8 +48,8 @@ func init() {
 
 // ClaudeSettings represents the Claude Code settings.json structure.
 type ClaudeSettings struct {
-	EnabledPlugins map[string]bool                  `json:"enabledPlugins,omitempty"`
-	Hooks          map[string][]ClaudeHookMatcher   `json:"hooks,omitempty"`
+	EnabledPlugins map[string]bool                `json:"enabledPlugins,omitempty"`
+	Hooks          map[string][]ClaudeHookMatcher `json:"hooks,omitempty"`
 }
 
 // ClaudeHookMatcher represents a hook matcher entry.

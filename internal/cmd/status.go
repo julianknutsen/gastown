@@ -15,7 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/crew"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -218,9 +218,9 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 
 	// Pre-fetch all tmux sessions for O(1) lookup
 	allSessions := make(map[string]bool)
-	if sessions, err := t.ListSessions(); err == nil {
+	if sessions, err := t.List(); err == nil {
 		for _, s := range sessions {
-			allSessions[s] = true
+			allSessions[string(s)] = true
 		}
 	}
 
@@ -351,8 +351,8 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 			}
 
 			// Count crew workers
-			crewGit := git.NewGit(r.Path)
-			crewMgr := crew.NewManager(r, crewGit)
+			agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
+			crewMgr := factory.CrewManager(r, townRoot, agentName)
 			if workers, err := crewMgr.List(); err == nil {
 				for _, w := range workers {
 					rs.Crews = append(rs.Crews, w.Name)
@@ -612,8 +612,8 @@ func renderAgentDetails(agent AgentRuntime, indent string, hooks []AgentHookInfo
 	case "muted", "paused", "degraded":
 		// Other intentional non-observable states
 		stateInfo = style.Dim.Render(fmt.Sprintf(" [%s]", beadState))
-	// Ignore observable states: "running", "idle", "dead", "done", "stopped", ""
-	// These should be derived from tmux, not bead.
+		// Ignore observable states: "running", "idle", "dead", "done", "stopped", ""
+		// These should be derived from tmux, not bead.
 	}
 
 	// Build agent bead ID using canonical naming: prefix-rig-role-name
@@ -836,7 +836,7 @@ func buildStatusIndicator(agent AgentRuntime) string {
 		indicator += style.Dim.Render(" gate")
 	case "muted", "paused", "degraded":
 		indicator += style.Dim.Render(" " + beadState)
-	// Ignore observable states: running, idle, dead, done, stopped, ""
+		// Ignore observable states: running, idle, dead, done, stopped, ""
 	}
 
 	return indicator

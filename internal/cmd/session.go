@@ -11,7 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
@@ -230,8 +232,7 @@ func getSessionManager(rigName string) (*polecat.SessionManager, *rig.Rig, error
 		return nil, nil, err
 	}
 
-	t := tmux.NewTmux()
-	polecatMgr := polecat.NewSessionManager(t, r)
+	polecatMgr := factory.PolecatSessionManager(r, "")
 
 	return polecatMgr, r, nil
 }
@@ -261,12 +262,8 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%s", suggest.FormatSuggestion("Polecat", polecatName, suggestions, hint))
 	}
 
-	opts := polecat.SessionStartOptions{
-		Issue: sessionIssue,
-	}
-
 	fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-	if err := polecatMgr.Start(polecatName, opts); err != nil {
+	if err := polecatMgr.Start(polecatName); err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
 
@@ -377,11 +374,10 @@ func runSessionList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Collect sessions from all rigs
-	t := tmux.NewTmux()
 	var allSessions []SessionListItem
 
 	for _, r := range rigs {
-		polecatMgr := polecat.NewSessionManager(t, r)
+		polecatMgr := factory.PolecatSessionManager(r, "")
 		infos, err := polecatMgr.List()
 		if err != nil {
 			continue
@@ -520,8 +516,7 @@ func runSessionRestart(cmd *cobra.Command, args []string) error {
 
 	// Start fresh session
 	fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-	opts := polecat.SessionStartOptions{}
-	if err := polecatMgr.Start(polecatName, opts); err != nil {
+	if err := polecatMgr.Start(polecatName); err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
 
@@ -657,7 +652,7 @@ func runSessionCheck(cmd *cobra.Command, args []string) error {
 			totalChecked++
 
 			// Check if session exists
-			running, err := t.HasSession(sessionName)
+			running, err := t.Exists(session.SessionID(sessionName))
 			if err != nil {
 				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("⚠"), r.Name, polecatName, style.Dim.Render("error checking session"))
 				continue

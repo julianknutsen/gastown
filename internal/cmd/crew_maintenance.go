@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/crew"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -23,19 +24,20 @@ func runCrewRename(cmd *cobra.Command, args []string) error {
 	}
 	// Note: newName is just the new name, no rig prefix expected
 
-	crewMgr, r, err := getCrewManager(crewRig)
+	crewMgr, r, err := getCrewManager(crewRig, "")
 	if err != nil {
 		return err
 	}
 
 	// Kill any running session for the old name
 	t := tmux.NewTmux()
-	oldSessionID := crewSessionName(r.Name, oldName)
-	if hasSession, _ := t.HasSession(oldSessionID); hasSession {
-		if err := t.KillSession(oldSessionID); err != nil {
+	oldSessionName := crewSessionName(r.Name, oldName)
+	oldSessionID := session.SessionID(oldSessionName)
+	if hasSession, _ := t.Exists(oldSessionID); hasSession {
+		if err := t.Stop(oldSessionID); err != nil {
 			return fmt.Errorf("killing old session: %w", err)
 		}
-		fmt.Printf("Killed session %s\n", oldSessionID)
+		fmt.Printf("Killed session %s\n", oldSessionName)
 	}
 
 	// Perform the rename
@@ -57,7 +59,7 @@ func runCrewRename(cmd *cobra.Command, args []string) error {
 }
 
 func runCrewPristine(cmd *cobra.Command, args []string) error {
-	crewMgr, r, err := getCrewManager(crewRig)
+	crewMgr, r, err := getCrewManager(crewRig, "")
 	if err != nil {
 		return err
 	}

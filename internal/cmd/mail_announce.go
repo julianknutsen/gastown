@@ -184,7 +184,7 @@ func listAnnounceMessages(townRoot, channelName string) ([]announceMessage, erro
 		"--type", "message",
 		"--label", "announce_channel:" + channelName,
 		"--sort", "-created", // Newest first
-		"--limit", "0",       // No limit
+		"--limit", "0", // No limit
 		"--json",
 	}
 

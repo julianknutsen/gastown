@@ -53,13 +53,13 @@ func init() {
 
 // StepDoneResult is the result of a step done operation.
 type StepDoneResult struct {
-	StepID       string `json:"step_id"`
-	MoleculeID   string `json:"molecule_id"`
-	StepClosed   bool   `json:"step_closed"`
-	NextStepID   string `json:"next_step_id,omitempty"`
+	StepID        string `json:"step_id"`
+	MoleculeID    string `json:"molecule_id"`
+	StepClosed    bool   `json:"step_closed"`
+	NextStepID    string `json:"next_step_id,omitempty"`
 	NextStepTitle string `json:"next_step_title,omitempty"`
-	Complete     bool   `json:"complete"`
-	Action       string `json:"action"` // "continue", "done", "no_more_ready"
+	Complete      bool   `json:"complete"`
+	Action        string `json:"action"` // "continue", "done", "no_more_ready"
 }
 
 func runMoleculeStepDone(cmd *cobra.Command, args []string) error {
@@ -162,9 +162,10 @@ func runMoleculeStepDone(cmd *cobra.Command, args []string) error {
 // extractMoleculeIDFromStep extracts the molecule ID from a step ID.
 // Step IDs have format: mol-id.N where N is the step number.
 // Examples:
-//   gt-abc.1 -> gt-abc
-//   gt-xyz.3 -> gt-xyz
-//   bd-mol-abc.2 -> bd-mol-abc
+//
+//	gt-abc.1 -> gt-abc
+//	gt-xyz.3 -> gt-xyz
+//	bd-mol-abc.2 -> bd-mol-abc
 func extractMoleculeIDFromStep(stepID string) string {
 	// Find the last dot
 	lastDot := strings.LastIndex(stepID, ".")

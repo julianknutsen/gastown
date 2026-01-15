@@ -333,6 +333,20 @@ func RuntimeConfigFromPreset(preset AgentPreset) *RuntimeConfig {
 	}
 }
 
+// BuildAgentCommand builds a startup command for an already-resolved agent name.
+// This is the preferred method when the agent name has already been resolved
+// (e.g., via ResolveRoleAgentName at manager construction time).
+// Use this instead of BuildAgentStartupCommandWithAgentOverride to avoid
+// redundant agent resolution.
+// If prompt is empty, defaults to "gt prime" for propulsion.
+func BuildAgentCommand(agentName, prompt string) string {
+	rc := RuntimeConfigFromPreset(AgentPreset(agentName))
+	if prompt == "" {
+		prompt = "gt prime"
+	}
+	return rc.BuildCommandWithPrompt(prompt)
+}
+
 // BuildResumeCommand builds a command to resume an agent session.
 // Returns the full command string including any YOLO/autonomous flags.
 // If sessionID is empty or the agent doesn't support resume, returns empty string.
