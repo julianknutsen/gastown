@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -379,12 +378,15 @@ func runSling(cmd *cobra.Command, args []string) error {
 		// rig directory that owns the bead's database.
 		formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 
+		// Use BeadsOps interface for formula operations
+		// cmd.Dir = formulaWorkDir - REQUIRED for rig database access
+		// BEADS_DIR was N/A - not set
+		// NOTE: Using Run because --no-daemon bypasses daemon routing
+		bFormula := beads.New(formulaWorkDir)
+
 		// Step 1: Cook the formula (ensures proto exists)
 		// Cook runs from rig directory to access the correct formula database
-		cookCmd := exec.Command("bd", "--no-daemon", "cook", formulaName)
-		cookCmd.Dir = formulaWorkDir
-		cookCmd.Stderr = os.Stderr
-		if err := cookCmd.Run(); err != nil {
+		if _, err := bFormula.Run("--no-daemon", "cook", formulaName); err != nil {
 			return fmt.Errorf("cooking formula %s: %w", formulaName, err)
 		}
 
@@ -393,11 +395,8 @@ func runSling(cmd *cobra.Command, args []string) error {
 		featureVar := fmt.Sprintf("feature=%s", info.Title)
 		issueVar := fmt.Sprintf("issue=%s", beadID)
 		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--var", issueVar, "--json"}
-		wispCmd := exec.Command("bd", wispArgs...)
-		wispCmd.Dir = formulaWorkDir
-		wispCmd.Env = append(os.Environ(), "GT_ROOT="+townRoot)
-		wispCmd.Stderr = os.Stderr
-		wispOut, err := wispCmd.Output()
+		// NOTE: GT_ROOT env not supported by interface - potential gap
+		wispOut, err := bFormula.Run(wispArgs...)
 		if err != nil {
 			return fmt.Errorf("creating wisp for formula %s: %w", formulaName, err)
 		}
@@ -412,10 +411,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 		// Step 3: Bond wisp to original bead (creates compound)
 		// Use --no-daemon for mol bond (requires direct database access)
 		bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
-		bondCmd := exec.Command("bd", bondArgs...)
-		bondCmd.Dir = formulaWorkDir
-		bondCmd.Stderr = os.Stderr
-		bondOut, err := bondCmd.Output()
+		bondOut, err := bFormula.Run(bondArgs...)
 		if err != nil {
 			return fmt.Errorf("bonding formula to bead: %w", err)
 		}
@@ -440,10 +436,13 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 	// Hook the bead using bd update.
 	// See: https://github.com/steveyegge/gastown/issues/148
-	hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
-	hookCmd.Dir = beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
-	hookCmd.Stderr = os.Stderr
-	if err := hookCmd.Run(); err != nil {
+	// Use BeadsOps interface
+	// cmd.Dir = beads.ResolveHookDir(...) - REQUIRED for correct beads directory
+	// BEADS_DIR was N/A - not set
+	// NOTE: Using Run because --no-daemon bypasses daemon routing
+	hookDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
+	bHook := beads.New(hookDir)
+	if _, err := bHook.Run("--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent); err != nil {
 		return fmt.Errorf("hooking bead: %w", err)
 	}
 
