@@ -128,6 +128,9 @@ type BeadsOps interface {
 	// WispGC garbage collects old wisps.
 	WispGC() error
 
+	// MolBurn burns (deletes) wisps/molecules.
+	MolBurn(ids ...string) error
+
 	// MolBond bonds a wisp to a bead, creating a compound.
 	MolBond(wispID, beadID string) (*Issue, error)
 

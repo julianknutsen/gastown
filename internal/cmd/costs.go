@@ -434,22 +434,14 @@ func querySessionEventsFromLocation(location string) ([]CostEntry, error) {
 		ids = append(ids, issue.ID)
 	}
 
-	// Step 2: Get full details for all events using bd show
-	// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
-	showArgs := []string{"show", "--json"}
-	showArgs = append(showArgs, ids...)
-	showOutput, err := b.Run(showArgs...)
+	// Step 2: Get full details for all events using ShowMultiple
+	eventMap, err := b.ShowMultiple(ids)
 	if err != nil {
 		return nil, fmt.Errorf("showing events: %w", err)
 	}
 
-	var events []SessionEvent
-	if err := json.Unmarshal(showOutput, &events); err != nil {
-		return nil, fmt.Errorf("parsing event details: %w", err)
-	}
-
 	var entries []CostEntry
-	for _, event := range events {
+	for _, event := range eventMap {
 		// Filter for session.ended events only
 		if event.EventKind != "session.ended" {
 			continue
@@ -464,7 +456,7 @@ func querySessionEventsFromLocation(location string) ([]CostEntry, error) {
 		}
 
 		// Parse ended_at from payload, fall back to created_at
-		endedAt := event.CreatedAt
+		endedAt, _ := time.Parse(time.RFC3339, event.CreatedAt)
 		if payload.EndedAt != "" {
 			if parsed, err := time.Parse(time.RFC3339, payload.EndedAt); err == nil {
 				endedAt = parsed
@@ -514,18 +506,10 @@ func queryDigestBeads(days int) ([]CostEntry, error) {
 		ids = append(ids, issue.ID)
 	}
 
-	// Get full details for all events
-	// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
-	showArgs := []string{"show", "--json"}
-	showArgs = append(showArgs, ids...)
-	showOutput, err := b.Run(showArgs...)
+	// Get full details for all events using ShowMultiple
+	eventMap, err := b.ShowMultiple(ids)
 	if err != nil {
 		return nil, fmt.Errorf("showing events: %w", err)
-	}
-
-	var events []SessionEvent
-	if err := json.Unmarshal(showOutput, &events); err != nil {
-		return nil, fmt.Errorf("parsing event details: %w", err)
 	}
 
 	// Calculate date range
@@ -533,7 +517,7 @@ func queryDigestBeads(days int) ([]CostEntry, error) {
 	cutoff := now.AddDate(0, 0, -days)
 
 	var entries []CostEntry
-	for _, event := range events {
+	for _, event := range eventMap {
 		// Filter for costs.digest events only
 		if event.EventKind != "costs.digest" {
 			continue
@@ -782,39 +766,24 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 	}
 	b := beads.New(cwd)
 
-	// Build bd create command for ephemeral wisp
-	// Using --ephemeral creates a wisp that:
+	// Create ephemeral wisp for session cost:
 	// - Is stored locally only (not exported to JSONL)
 	// - Won't pollute git history with O(sessions/day) events
 	// - Will be aggregated into daily digests by 'gt costs digest'
-	// NOTE: Using Run because CreateOptions lacks event fields
-	bdArgs := []string{
-		"create",
-		"--ephemeral",
-		"--type=event",
-		"--title=" + title,
-		"--event-category=session.ended",
-		"--event-actor=" + agentPath,
-		"--event-payload=" + string(payloadJSON),
-		"--silent",
-	}
-
-	// Add work item as event target if specified
-	if recordWorkItem != "" {
-		bdArgs = append(bdArgs, "--event-target="+recordWorkItem)
-	}
-
-	// NOTE: We intentionally don't use --rig flag here because it causes
-	// event fields (event_kind, actor, payload) to not be stored properly.
-	// The bd command will auto-detect the correct rig from cwd.
-
-	// Execute bd create via BeadsOps
-	output, err := b.Run(bdArgs...)
+	wisp, err := b.Create(beads.CreateOptions{
+		Title:         title,
+		Type:          "event",
+		Ephemeral:     true,
+		EventCategory: "session.ended",
+		EventActor:    agentPath,
+		EventPayload:  string(payloadJSON),
+		EventTarget:   recordWorkItem, // Empty string if not specified
+	})
 	if err != nil {
-		return fmt.Errorf("creating session cost wisp: %w\nOutput: %s", err, string(output))
+		return fmt.Errorf("creating session cost wisp: %w", err)
 	}
 
-	wispID := strings.TrimSpace(string(output))
+	wispID := wisp.ID
 
 	// Auto-close session cost wisps immediately after creation.
 	// These are informational records that don't need to stay open.
@@ -1072,23 +1041,16 @@ func querySessionCostWisps(targetDate time.Time) ([]CostEntry, error) {
 		ids = append(ids, wisp.ID)
 	}
 
-	// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
-	showArgs := []string{"show", "--json"}
-	showArgs = append(showArgs, ids...)
-	showOutput, err := b.Run(showArgs...)
+	// Get full details for all events using ShowMultiple
+	eventMap, err := b.ShowMultiple(ids)
 	if err != nil {
 		return nil, fmt.Errorf("showing wisps: %w", err)
-	}
-
-	var events []SessionEvent
-	if err := json.Unmarshal(showOutput, &events); err != nil {
-		return nil, fmt.Errorf("parsing wisp details: %w", err)
 	}
 
 	var sessionCostWisps []CostEntry
 	targetDay := targetDate.Format("2006-01-02")
 
-	for _, event := range events {
+	for _, event := range eventMap {
 		// Filter for session.ended events only
 		if event.EventKind != "session.ended" {
 			continue
@@ -1106,7 +1068,7 @@ func querySessionCostWisps(targetDate time.Time) ([]CostEntry, error) {
 		}
 
 		// Parse ended_at and filter by target date
-		endedAt := event.CreatedAt
+		endedAt, _ := time.Parse(time.RFC3339, event.CreatedAt)
 		if payload.EndedAt != "" {
 			if parsed, err := time.Parse(time.RFC3339, payload.EndedAt); err == nil {
 				endedAt = parsed
@@ -1180,24 +1142,19 @@ func createCostDigestBead(digest CostDigest) (string, error) {
 	b := beads.New(cwd)
 
 	// Create the digest bead (NOT ephemeral - this is permanent)
-	// NOTE: Using Run because CreateOptions lacks event fields
 	title := fmt.Sprintf("Cost Report %s", digest.Date)
-	bdArgs := []string{
-		"create",
-		"--type=event",
-		"--title=" + title,
-		"--event-category=costs.digest",
-		"--event-payload=" + string(payloadJSON),
-		"--description=" + desc.String(),
-		"--silent",
-	}
-
-	output, err := b.Run(bdArgs...)
+	digestBead, err := b.Create(beads.CreateOptions{
+		Title:         title,
+		Type:          "event",
+		Description:   desc.String(),
+		EventCategory: "costs.digest",
+		EventPayload:  string(payloadJSON),
+	})
 	if err != nil {
-		return "", fmt.Errorf("creating digest bead: %w\nOutput: %s", err, string(output))
+		return "", fmt.Errorf("creating digest bead: %w", err)
 	}
 
-	digestID := strings.TrimSpace(string(output))
+	digestID := digestBead.ID
 
 	// Auto-close the digest (it's an audit record, not work)
 	_ = b.CloseWithReason("daily cost digest", digestID) // Best effort
@@ -1230,28 +1187,13 @@ func deleteSessionCostWisps(targetDate time.Time) (int, error) {
 
 	for _, wisp := range wisps {
 		// Get full wisp details to check if it's a session.ended event
-		// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
-		showOutput, err := b.Run("show", wisp.ID, "--json")
+		event, err := b.Show(wisp.ID)
 		if err != nil {
 			if costsVerbose {
 				fmt.Fprintf(os.Stderr, "[costs] bd show failed for wisp %s: %v\n", wisp.ID, err)
 			}
 			continue
 		}
-
-		var events []SessionEvent
-		if err := json.Unmarshal(showOutput, &events); err != nil {
-			if costsVerbose {
-				fmt.Fprintf(os.Stderr, "[costs] JSON unmarshal failed for wisp %s: %v\n", wisp.ID, err)
-			}
-			continue
-		}
-
-		if len(events) == 0 {
-			continue
-		}
-
-		event := events[0]
 
 		// Only delete session.ended wisps
 		if event.EventKind != "session.ended" {
@@ -1269,7 +1211,7 @@ func deleteSessionCostWisps(targetDate time.Time) (int, error) {
 			}
 		}
 
-		endedAt := event.CreatedAt
+		endedAt, _ := time.Parse(time.RFC3339, event.CreatedAt)
 		if payload.EndedAt != "" {
 			if parsed, err := time.Parse(time.RFC3339, payload.EndedAt); err == nil {
 				endedAt = parsed
@@ -1288,11 +1230,9 @@ func deleteSessionCostWisps(targetDate time.Time) (int, error) {
 		return 0, nil
 	}
 
-	// Batch delete all wisps in a single subprocess call
-	// NOTE: Using Run because no WispBurn method in interface
-	burnArgs := append([]string{"mol", "burn", "--force"}, wispIDsToDelete...)
-	if _, burnErr := b.Run(burnArgs...); burnErr != nil {
-		return 0, fmt.Errorf("batch burn failed: %w", burnErr)
+	// Batch delete all wisps using MolBurn
+	if err := b.MolBurn(wispIDsToDelete...); err != nil {
+		return 0, fmt.Errorf("batch burn failed: %w", err)
 	}
 
 	return len(wispIDsToDelete), nil
@@ -1329,24 +1269,16 @@ func runCostsMigrate(cmd *cobra.Command, args []string) error {
 		ids = append(ids, issue.ID)
 	}
 
-	// Get full details for all events
-	// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
-	showArgs := []string{"show", "--json"}
-	showArgs = append(showArgs, ids...)
-	showOutput, err := b.Run(showArgs...)
+	// Get full details for all events using ShowMultiple
+	eventMap, err := b.ShowMultiple(ids)
 	if err != nil {
 		return fmt.Errorf("showing events: %w", err)
 	}
 
-	var events []SessionEvent
-	if err := json.Unmarshal(showOutput, &events); err != nil {
-		return fmt.Errorf("parsing event details: %w", err)
-	}
-
 	// Find open session.ended events
-	var openEvents []SessionEvent
+	var openEvents []*beads.Issue
 	var closedCount int
-	for _, event := range events {
+	for _, event := range eventMap {
 		if event.EventKind != "session.ended" {
 			continue
 		}

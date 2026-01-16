@@ -196,6 +196,9 @@ func (b *Implementation) List(opts ListOptions) ([]*Issue, error) {
 	if opts.All {
 		args = append(args, "--all")
 	}
+	if opts.MolType != "" {
+		args = append(args, "--mol-type="+opts.MolType)
+	}
 
 	out, err := b.run(args...)
 	if err != nil {
@@ -295,6 +298,22 @@ func (b *Implementation) Create(opts CreateOptions) (*Issue, error) {
 	if actor != "" {
 		args = append(args, "--actor="+actor)
 	}
+	if opts.MolType != "" {
+		args = append(args, "--mol-type="+opts.MolType)
+	}
+	// Event-specific fields
+	if opts.EventCategory != "" {
+		args = append(args, "--event-category="+opts.EventCategory)
+	}
+	if opts.EventActor != "" {
+		args = append(args, "--event-actor="+opts.EventActor)
+	}
+	if opts.EventPayload != "" {
+		args = append(args, "--event-payload="+opts.EventPayload)
+	}
+	if opts.EventTarget != "" {
+		args = append(args, "--event-target="+opts.EventTarget)
+	}
 
 	out, err := b.run(args...)
 	if err != nil {
@@ -341,6 +360,22 @@ func (b *Implementation) CreateWithID(id string, opts CreateOptions) (*Issue, er
 	}
 	if actor != "" {
 		args = append(args, "--actor="+actor)
+	}
+	if opts.MolType != "" {
+		args = append(args, "--mol-type="+opts.MolType)
+	}
+	// Event-specific fields
+	if opts.EventCategory != "" {
+		args = append(args, "--event-category="+opts.EventCategory)
+	}
+	if opts.EventActor != "" {
+		args = append(args, "--event-actor="+opts.EventActor)
+	}
+	if opts.EventPayload != "" {
+		args = append(args, "--event-payload="+opts.EventPayload)
+	}
+	if opts.EventTarget != "" {
+		args = append(args, "--event-target="+opts.EventTarget)
 	}
 
 	out, err := b.run(args...)
@@ -825,6 +860,17 @@ func (b *Implementation) WispList(all bool) ([]*Issue, error) {
 // WispGC garbage collects old wisps.
 func (b *Implementation) WispGC() error {
 	_, err := b.run("mol", "wisp", "gc")
+	return err
+}
+
+// MolBurn burns (deletes) wisps/molecules with --force.
+func (b *Implementation) MolBurn(ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := []string{"mol", "burn", "--force"}
+	args = append(args, ids...)
+	_, err := b.run(args...)
 	return err
 }
 

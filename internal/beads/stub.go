@@ -36,6 +36,7 @@ type BeadsStub struct {
 	WispCreateWithOptionsErr error
 	WispListErr              error
 	WispGCErr           error
+	MolBurnErr          error
 	MolBondErr          error
 	GateShowErr         error
 	GateWaitErr         error
@@ -359,6 +360,14 @@ func (s *BeadsStub) WispGC() error {
 		return s.WispGCErr
 	}
 	return s.BeadsOps.WispGC()
+}
+
+// MolBurn delegates to the wrapped implementation unless MolBurnErr is set.
+func (s *BeadsStub) MolBurn(ids ...string) error {
+	if s.MolBurnErr != nil {
+		return s.MolBurnErr
+	}
+	return s.BeadsOps.MolBurn(ids...)
 }
 
 // MolBond delegates to the wrapped implementation unless MolBondErr is set.

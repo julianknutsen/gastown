@@ -1200,6 +1200,23 @@ func (d *Double) WispGC() error {
 	return nil
 }
 
+// MolBurn burns (deletes) wisps/molecules.
+func (d *Double) MolBurn(ids ...string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if !d.db.isActive {
+		return fmt.Errorf("not a beads repository")
+	}
+
+	for _, id := range ids {
+		db := d.getDB(id)
+		delete(db.issues, id)
+	}
+
+	return nil
+}
+
 // MolBond bonds a wisp to a bead, creating a compound.
 func (d *Double) MolBond(wispID, beadID string) (*Issue, error) {
 	d.mu.Lock()

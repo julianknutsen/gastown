@@ -43,6 +43,13 @@ type Issue struct {
 	// Detailed dependency info from show output
 	Dependencies []IssueDep `json:"dependencies,omitempty"`
 	Dependents   []IssueDep `json:"dependents,omitempty"`
+
+	// Event fields (type=event only)
+	EventKind     string `json:"event_kind,omitempty"`     // Event type (e.g., "session.ended")
+	EventCategory string `json:"event_category,omitempty"` // Event category
+	Actor         string `json:"actor,omitempty"`          // Who triggered the event (for events)
+	Target        string `json:"target,omitempty"`         // Target of the event (e.g., work item ID)
+	Payload       string `json:"payload,omitempty"`        // JSON payload string
 }
 
 // IssueDep represents a dependency or dependent issue with its relation.
@@ -70,18 +77,26 @@ type ListOptions struct {
 	Tag          string   // tag filter (e.g., "escalation")
 	CreatedAfter string   // filter for issues created after this time (e.g., "-1h", "-24h")
 	All          bool     // include closed issues
+	MolType      string   // molecule type filter (e.g., "swarm", "patrol")
 }
 
 // CreateOptions specifies options for creating an issue.
 type CreateOptions struct {
 	Title       string
-	Type        string // "task", "bug", "feature", "epic"
+	Type        string // "task", "bug", "feature", "epic", "event", "convoy"
 	Priority    int    // 0-4
 	Description string
 	Parent      string
 	Actor       string   // Who is creating this issue (populates created_by)
 	Ephemeral   bool     // Create as ephemeral (wisp) - not exported to JSONL
 	Labels      []string // Additional labels to add
+	MolType     string   // Molecule type (e.g., "swarm", "patrol")
+
+	// Event-specific fields (type=event only)
+	EventCategory string // Event category (e.g., "session.ended", "costs.digest")
+	EventActor    string // Who triggered the event
+	EventPayload  string // JSON payload string
+	EventTarget   string // Target of the event (e.g., work item ID)
 }
 
 // UpdateOptions specifies options for updating an issue.
@@ -136,11 +151,27 @@ type DaemonHealth struct {
 // Note: This is different from MoleculeStep in molecule.go which represents
 // parsed step definitions from molecule markdown.
 type MolCurrentOutput struct {
+	// Legacy fields (still used by some callers)
 	ID       string `json:"id"`
 	Title    string `json:"title"`
 	Status   string `json:"status"`
 	StepNum  int    `json:"step_num"`
 	StepName string `json:"step_name"`
+
+	// Extended fields from bd mol current output
+	MoleculeID    string          `json:"molecule_id"`
+	MoleculeTitle string          `json:"molecule_title"`
+	NextStep      *MolCurrentStep `json:"next_step"`
+	Completed     int             `json:"completed"`
+	Total         int             `json:"total"`
+}
+
+// MolCurrentStep represents the next step in a molecule.
+type MolCurrentStep struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
 }
 
 // MoleculeProto represents a molecule prototype.
