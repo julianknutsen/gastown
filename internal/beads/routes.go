@@ -247,3 +247,31 @@ func ResolveHookDir(townRoot, beadID, hookWorkDir string) string {
 	}
 	return townRoot
 }
+
+// ErrTownRootNotFound is returned when FindTownRoot cannot locate a town root.
+var ErrTownRootNotFound = fmt.Errorf("town root not found (no .beads/routes.jsonl marker)")
+
+// FindTownRoot walks up from startDir looking for a town root.
+// A town root is identified by the presence of .beads/routes.jsonl.
+// Returns ErrTownRootNotFound if no town root is found.
+func FindTownRoot(startDir string) (string, error) {
+	absDir, err := filepath.Abs(startDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving path: %w", err)
+	}
+
+	current := absDir
+	for {
+		routesFile := filepath.Join(current, ".beads", RoutesFileName)
+		if _, err := os.Stat(routesFile); err == nil {
+			return current, nil
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Reached filesystem root without finding town
+			return "", ErrTownRootNotFound
+		}
+		current = parent
+	}
+}
