@@ -52,6 +52,9 @@ type doubleDB struct {
 	syncAhead  int
 	syncBehind int
 	conflicts  []string
+
+	// Merge slot state
+	mergeSlot *MergeSlotStatus
 }
 
 // newDoubleDB creates a new in-memory database with the given prefix.
@@ -399,7 +402,9 @@ func (d *Double) Show(id string) (*Issue, error) {
 	if deps, ok := db.dependencies[id]; ok {
 		var depIDs []string
 		for _, dep := range deps {
-			if depIssue, ok := db.issues[dep.ID]; ok {
+			// Dependencies may be in a different database (cross-rig)
+			depDB := d.getDB(dep.ID)
+			if depIssue, ok := depDB.issues[dep.ID]; ok {
 				issueCopy.Dependencies = append(issueCopy.Dependencies, IssueDep{
 					ID:       depIssue.ID,
 					Title:    depIssue.Title,
@@ -492,11 +497,19 @@ func (d *Double) CreateWithID(id string, opts CreateOptions) (*Issue, error) {
 // Uses the current database (d.db).
 func (d *Double) createIssue(id string, opts CreateOptions) (*Issue, error) {
 	db := d.db
+	// Match Implementation behavior: Type from CreateOptions sets both:
+	// - issue_type field (via --type flag, required for slot operations)
+	// - gt:<type> label (via --labels, used for filtering by type)
 	labels := make([]string, 0, len(opts.Labels)+1)
 	if opts.Type != "" {
 		labels = append(labels, "gt:"+opts.Type)
 	}
 	labels = append(labels, opts.Labels...)
+
+	issueType := "task"
+	if opts.Type != "" {
+		issueType = opts.Type
+	}
 
 	issue := &Issue{
 		ID:          id,
@@ -504,12 +517,13 @@ func (d *Double) createIssue(id string, opts CreateOptions) (*Issue, error) {
 		Description: opts.Description,
 		Status:      "open",
 		Priority:    opts.Priority,
-		Type:        opts.Type,
+		Type:        issueType,
 		CreatedAt:   now(),
 		UpdatedAt:   now(),
 		CreatedBy:   opts.Actor,
 		Parent:      opts.Parent,
 		Labels:      labels,
+		Assignee:    opts.Assignee,
 	}
 
 	db.issues[id] = issue
@@ -776,6 +790,7 @@ func (d *Double) Blocked() ([]*Issue, error) {
 
 		// Check if blocked by any blocking dependencies (type "blocks")
 		// Non-blocking "tracks" and "depends-on" types do NOT cause an issue to be blocked
+		var blockedByIDs []string
 		if deps, ok := d.db.dependencies[id]; ok {
 			for _, dep := range deps {
 				// Only "blocks" type dependencies are blocking
@@ -784,12 +799,19 @@ func (d *Double) Blocked() ([]*Issue, error) {
 				}
 				if depIssue, ok := d.db.issues[dep.ID]; ok {
 					if depIssue.Status != "closed" {
-						issueCopy := *issue
-						result = append(result, &issueCopy)
-						break
+						blockedByIDs = append(blockedByIDs, dep.ID)
 					}
 				}
 			}
+		}
+
+		// Only include if actually blocked
+		if len(blockedByIDs) > 0 {
+			issueCopy := *issue
+			// Populate BlockedBy to match bd blocked --json output
+			issueCopy.BlockedBy = blockedByIDs
+			issueCopy.BlockedByCount = len(blockedByIDs)
+			result = append(result, &issueCopy)
 		}
 	}
 
@@ -1690,6 +1712,11 @@ func (d *Double) SlotShow(id string) (*Slot, error) {
 		return nil, ErrNotFound
 	}
 
+	// Match real bd behavior: slot operations require issue_type="agent"
+	if issue.Type != "agent" {
+		return nil, fmt.Errorf("%s is not an agent bead (type=%s)", id, issue.Type)
+	}
+
 	return &Slot{
 		ID:       id,
 		IssueID:  issue.HookBead,
@@ -1711,6 +1738,11 @@ func (d *Double) SlotSet(agentID, slotName, beadID string) error {
 	agent, ok := db.issues[agentID]
 	if !ok {
 		return ErrNotFound
+	}
+
+	// Match real bd behavior: slot operations require issue_type="agent"
+	if agent.Type != "agent" {
+		return fmt.Errorf("%s is not an agent bead (type=%s)", agentID, agent.Type)
 	}
 
 	// Verify the bead exists (may be in different db)
@@ -1744,6 +1776,11 @@ func (d *Double) SlotClear(agentID, slotName string) error {
 	agent, ok := db.issues[agentID]
 	if !ok {
 		return ErrNotFound
+	}
+
+	// Match real bd behavior: slot operations require issue_type="agent"
+	if agent.Type != "agent" {
+		return fmt.Errorf("%s is not an agent bead (type=%s)", agentID, agent.Type)
 	}
 
 	switch slotName {
@@ -2011,6 +2048,118 @@ func (d *Double) ReleaseWithReason(id, reason string) error {
 	}
 
 	return d.Update(id, opts)
+}
+
+// UpdateAgentActiveMR updates the active_mr field in an agent bead.
+func (d *Double) UpdateAgentActiveMR(id string, activeMR string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	db := d.getDB(id)
+	issue, ok := db.issues[id]
+	if !ok {
+		return ErrNotFound
+	}
+
+	// Parse and update the agent fields in description
+	fields := ParseAgentFields(issue.Description)
+	fields.ActiveMR = activeMR
+	issue.Description = FormatAgentDescription(issue.Title, fields)
+	issue.UpdatedAt = time.Now().Format(time.RFC3339)
+
+	return nil
+}
+
+// MergeSlotCreate creates the merge slot bead for the current rig.
+func (d *Double) MergeSlotCreate() (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	slotID := d.db.prefix + "-merge-slot"
+	d.db.mergeSlot = &MergeSlotStatus{
+		ID:        slotID,
+		Available: true,
+	}
+	return slotID, nil
+}
+
+// MergeSlotCheck checks the availability of the merge slot.
+func (d *Double) MergeSlotCheck() (*MergeSlotStatus, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	if d.db.mergeSlot == nil {
+		// Match real bd behavior: return status with error field, not Go error
+		return &MergeSlotStatus{
+			ID:        d.db.prefix + "-merge-slot",
+			Available: false,
+			Error:     "not found",
+		}, nil
+	}
+
+	// Return a copy
+	status := *d.db.mergeSlot
+	return &status, nil
+}
+
+// MergeSlotAcquire attempts to acquire the merge slot.
+func (d *Double) MergeSlotAcquire(holder string, addWaiter bool) (*MergeSlotStatus, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.db.mergeSlot == nil {
+		return nil, fmt.Errorf("merge slot not found")
+	}
+
+	if d.db.mergeSlot.Available {
+		// Acquire the slot
+		d.db.mergeSlot.Available = false
+		d.db.mergeSlot.Holder = holder
+		d.db.mergeSlot.Waiters = nil
+	} else if addWaiter && holder != "" {
+		// Add to waiters if slot is held
+		d.db.mergeSlot.Waiters = append(d.db.mergeSlot.Waiters, holder)
+	}
+
+	// Return a copy
+	status := *d.db.mergeSlot
+	return &status, nil
+}
+
+// MergeSlotRelease releases the merge slot.
+func (d *Double) MergeSlotRelease(holder string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.db.mergeSlot == nil {
+		return fmt.Errorf("merge slot not found")
+	}
+
+	// Verify holder matches if provided
+	if holder != "" && d.db.mergeSlot.Holder != holder {
+		return fmt.Errorf("slot held by %s, not %s", d.db.mergeSlot.Holder, holder)
+	}
+
+	d.db.mergeSlot.Available = true
+	d.db.mergeSlot.Holder = ""
+	return nil
+}
+
+// MergeSlotEnsureExists creates the merge slot if it doesn't exist.
+func (d *Double) MergeSlotEnsureExists() (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.db.mergeSlot != nil {
+		return d.db.mergeSlot.ID, nil
+	}
+
+	slotID := d.db.prefix + "-merge-slot"
+	d.db.mergeSlot = &MergeSlotStatus{
+		ID:        slotID,
+		Available: true,
+	}
+	return slotID, nil
 }
 
 // GetIssueByID returns an issue by ID (direct access for testing).

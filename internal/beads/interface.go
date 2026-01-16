@@ -43,6 +43,18 @@ type BeadsOps interface {
 	// Reopen reopens a closed issue.
 	Reopen(id string) error
 
+	// Release moves an in_progress issue back to open status.
+	Release(id string) error
+
+	// ReleaseWithReason moves an in_progress issue back to open with a reason.
+	ReleaseWithReason(id, reason string) error
+
+	// ListByAssignee returns issues assigned to a specific assignee.
+	ListByAssignee(assignee string) ([]*Issue, error)
+
+	// GetAssignedIssue returns the first open/in_progress issue for an assignee.
+	GetAssignedIssue(assignee string) (*Issue, error)
+
 	// === Dependency Operations ===
 
 	// Ready returns issues that are ready to work (not blocked).
@@ -50,6 +62,9 @@ type BeadsOps interface {
 
 	// ReadyWithLabel returns ready issues filtered by label.
 	ReadyWithLabel(label string, limit int) ([]*Issue, error)
+
+	// ReadyWithType returns ready issues filtered by type label.
+	ReadyWithType(issueType string) ([]*Issue, error)
 
 	// Blocked returns issues that are blocked by dependencies.
 	Blocked() ([]*Issue, error)
@@ -154,6 +169,23 @@ type BeadsOps interface {
 	// GateCheck evaluates all open gates and closes resolved ones.
 	GateCheck() error
 
+	// === Merge Slot Operations ===
+
+	// MergeSlotCreate creates the merge slot bead for the current rig.
+	MergeSlotCreate() (string, error)
+
+	// MergeSlotCheck checks the availability of the merge slot.
+	MergeSlotCheck() (*MergeSlotStatus, error)
+
+	// MergeSlotAcquire attempts to acquire the merge slot.
+	MergeSlotAcquire(holder string, addWaiter bool) (*MergeSlotStatus, error)
+
+	// MergeSlotRelease releases the merge slot.
+	MergeSlotRelease(holder string) error
+
+	// MergeSlotEnsureExists creates the merge slot if it doesn't exist.
+	MergeSlotEnsureExists() (string, error)
+
 	// === Swarm Operations ===
 
 	// SwarmStatus returns swarm status.
@@ -186,6 +218,9 @@ type BeadsOps interface {
 
 	// AgentState sets the state of an agent bead.
 	AgentState(beadID, state string) error
+
+	// UpdateAgentActiveMR updates the active_mr field in an agent bead.
+	UpdateAgentActiveMR(id string, activeMR string) error
 
 	// === Label Operations ===
 

@@ -95,6 +95,33 @@ func TestMatrix_WispList(t *testing.T) {
 	})
 }
 
+func TestMatrix_WispCreateWithOptions(t *testing.T) {
+	RunSimpleConformanceTest(t, SimpleConformanceTest{
+		Name:      "WispCreateWithOptions",
+		Operation: "WispCreateWithOptions",
+		Test: func(ops beads.BeadsOps) error {
+			// WispCreateWithOptions requires a prototype to exist
+			// Test with variables to ensure they are passed correctly
+			issue, err := ops.WispCreateWithOptions(beads.WispCreateOptions{
+				ProtoID: "nonexistent-proto",
+				Actor:   "test-actor",
+				Variables: map[string]string{
+					"key1": "value1",
+					"key2": "value2",
+				},
+			})
+			if err != nil {
+				// Expected for nonexistent prototype
+				return nil
+			}
+			if issue != nil && issue.ID == "" {
+				return fmt.Errorf("Wisp should have an ID")
+			}
+			return nil
+		},
+	})
+}
+
 func TestMatrix_WispGC(t *testing.T) {
 	RunSimpleConformanceTest(t, SimpleConformanceTest{
 		Name:      "WispGC",

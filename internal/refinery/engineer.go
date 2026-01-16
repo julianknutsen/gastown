@@ -92,7 +92,7 @@ type MRInfo struct {
 // and processes them according to the merge queue design.
 type Engineer struct {
 	rig     *rig.Rig
-	beads   *beads.Beads
+	beads   beads.BeadsOps
 	git     *git.Git
 	config  *MergeQueueConfig
 	workDir string
@@ -133,6 +133,12 @@ func NewEngineer(r *rig.Rig) *Engineer {
 // This is useful for testing or redirecting output.
 func (e *Engineer) SetOutput(w io.Writer) {
 	e.output = w
+}
+
+// SetBeads sets the BeadsOps implementation.
+// This is useful for testing with a Double.
+func (e *Engineer) SetBeads(b beads.BeadsOps) {
+	e.beads = b
 }
 
 // LoadConfig loads merge queue configuration from the rig's config.json.
@@ -819,37 +825,29 @@ func (e *Engineer) ListReadyMRs() ([]*MRInfo, error) {
 // ListBlockedMRs returns MRs that are blocked by open tasks.
 // Useful for monitoring/reporting.
 //
-// This queries beads for blocked merge-request issues.
+// This queries beads for blocked merge-request issues using bd blocked,
+// which properly populates the BlockedBy field (bd list does not).
 func (e *Engineer) ListBlockedMRs() ([]*MRInfo, error) {
-	// Query all merge-request issues (both ready and blocked)
-	issues, err := e.beads.List(beads.ListOptions{
-		Status:   "open",
-		Label:    "gt:merge-request",
-		Priority: -1, // No priority filter
-	})
+	// Use Blocked() to get issues with blocking dependencies.
+	// Note: bd list does not populate BlockedBy - only bd blocked does.
+	issues, err := e.beads.Blocked()
 	if err != nil {
-		return nil, fmt.Errorf("querying beads for merge-requests: %w", err)
+		return nil, fmt.Errorf("querying beads for blocked issues: %w", err)
 	}
 
-	// Filter for blocked issues (those with open blockers)
+	// Filter for merge-request type
 	var mrs []*MRInfo
 	for _, issue := range issues {
-		// Skip if not blocked
-		if len(issue.BlockedBy) == 0 {
-			continue
-		}
-
-		// Check if any blocker is still open
-		hasOpenBlocker := false
-		for _, blockerID := range issue.BlockedBy {
-			isOpen, err := e.IsBeadOpen(blockerID)
-			if err == nil && isOpen {
-				hasOpenBlocker = true
+		// Check if this is a merge-request by label
+		isMR := false
+		for _, label := range issue.Labels {
+			if label == "gt:merge-request" {
+				isMR = true
 				break
 			}
 		}
-		if !hasOpenBlocker {
-			continue // All blockers are closed, not blocked
+		if !isMR {
+			continue
 		}
 
 		fields := beads.ParseMRFields(issue)
@@ -873,14 +871,10 @@ func (e *Engineer) ListBlockedMRs() ([]*MRInfo, error) {
 			}
 		}
 
-		// Use the first open blocker as BlockedBy
+		// Use the first blocker as BlockedBy (bd blocked already filters to open blockers)
 		blockedBy := ""
-		for _, blockerID := range issue.BlockedBy {
-			isOpen, err := e.IsBeadOpen(blockerID)
-			if err == nil && isOpen {
-				blockedBy = blockerID
-				break
-			}
+		if len(issue.BlockedBy) > 0 {
+			blockedBy = issue.BlockedBy[0]
 		}
 
 		mr := &MRInfo{

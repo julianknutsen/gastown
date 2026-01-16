@@ -19,12 +19,17 @@ var BdRoutingBugs = map[string]bool{
 	"Show":        true,  // bd routes Show by prefix (verified with TrueRawBdOps)
 	"Update":      true,  // bd routes Update by prefix (verified with TrueRawBdOps)
 	"Close":       true,  // bd routes Close by prefix (verified with TrueRawBdOps)
-	"Delete":      false, // bd doesn't route Delete by prefix (verified with TrueRawBdOps)
-	"Reopen":      false, // bd doesn't route Reopen by prefix (verified with TrueRawBdOps)
+	"Delete":            false, // bd doesn't route Delete by prefix (verified with TrueRawBdOps)
+	"DeleteWithOptions": false, // Same as Delete
+	"Reopen":            false, // bd doesn't route Reopen by prefix (verified with TrueRawBdOps)
+	"Release":           true,  // Uses Update internally, which routes correctly
+	"ReleaseWithReason": true,  // Uses Update internally, which routes correctly
+	"CloseWithOptions":  true,  // Same as Close, which routes correctly
 	"LabelAdd":    false, // bd doesn't route LabelAdd by prefix (verified with TrueRawBdOps)
 	"LabelRemove": false, // bd doesn't route LabelRemove by prefix
-	"AgentState":  false, // bd doesn't route AgentState by prefix (not tested yet)
-	"Comment":     false, // bd doesn't route Comment by prefix
+	"AgentState":           false, // bd doesn't route AgentState by prefix (not tested yet)
+	"Comment":              false, // bd doesn't route Comment by prefix
+	"UpdateAgentActiveMR": false, // Uses Update internally, which bd doesn't route by prefix for cross-rig
 
 	// === Operations that don't need routing ===
 	// These either operate on the current database or bd handles them correctly.
@@ -64,10 +69,15 @@ var BdRoutingBugs = map[string]bool{
 	"GateResolve":      true,
 	"GateAddWaiter":    true,
 	"GateCheck":        true,
-	"SwarmStatus":      true,
-	"SwarmCreate":      true,
-	"SwarmList":        true,
-	"SwarmValidate":    true,
+	"MergeSlotCreate":       true, // Operates on current db (NOTE: bd has bugs, TrueRawBdOps stubs)
+	"MergeSlotCheck":        true, // Operates on current db (NOTE: bd has bugs, TrueRawBdOps stubs)
+	"MergeSlotAcquire":      true, // Operates on current db (NOTE: bd has bugs, TrueRawBdOps stubs)
+	"MergeSlotRelease":      true, // Operates on current db (NOTE: bd has bugs, TrueRawBdOps stubs)
+	"MergeSlotEnsureExists": true, // Operates on current db (NOTE: bd has bugs, TrueRawBdOps stubs)
+	"SwarmStatus":           true,
+	"SwarmCreate":           true,
+	"SwarmList":             true,
+	"SwarmValidate":         true,
 	"FormulaShow":      true,
 	"Cook":             true,
 	"LegAdd":           true,

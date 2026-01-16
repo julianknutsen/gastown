@@ -130,3 +130,50 @@ func TestMatrix_Comment(t *testing.T) {
 		},
 	})
 }
+
+func TestMatrix_UpdateAgentActiveMR(t *testing.T) {
+	RunConformanceTest(t, ConformanceTest{
+		Name:      "UpdateAgentActiveMR",
+		Operation: "UpdateAgentActiveMR",
+		Test: func(ops beads.BeadsOps, targetID string) error {
+			// UpdateAgentActiveMR requires an agent bead (gt:agent label).
+			// First add the gt:agent label to make it an agent bead.
+			err := ops.LabelAdd(targetID, "gt:agent")
+			if err != nil {
+				return fmt.Errorf("LabelAdd gt:agent to %s failed: %v", targetID, err)
+			}
+
+			// Set active MR (stores in description field)
+			err = ops.UpdateAgentActiveMR(targetID, "MR-123")
+			if err != nil {
+				return fmt.Errorf("UpdateAgentActiveMR(%s) failed: %v", targetID, err)
+			}
+
+			// Verify active_mr was set by parsing the description
+			issue, err := ops.Show(targetID)
+			if err != nil {
+				return fmt.Errorf("Show after UpdateAgentActiveMR failed: %v", err)
+			}
+			fields := beads.ParseAgentFields(issue.Description)
+			if fields.ActiveMR != "MR-123" {
+				return fmt.Errorf("ActiveMR = %q, want %q", fields.ActiveMR, "MR-123")
+			}
+
+			// Test clearing the active MR
+			err = ops.UpdateAgentActiveMR(targetID, "")
+			if err != nil {
+				return fmt.Errorf("UpdateAgentActiveMR (clear) failed: %v", err)
+			}
+			issue, err = ops.Show(targetID)
+			if err != nil {
+				return fmt.Errorf("Show after clear failed: %v", err)
+			}
+			fields = beads.ParseAgentFields(issue.Description)
+			if fields.ActiveMR != "" {
+				return fmt.Errorf("ActiveMR = %q after clear, want empty", fields.ActiveMR)
+			}
+
+			return nil
+		},
+	})
+}

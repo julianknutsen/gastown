@@ -282,8 +282,11 @@ func (b *Implementation) Create(opts CreateOptions) (*Issue, error) {
 	if opts.Title != "" {
 		args = append(args, "--title="+opts.Title)
 	}
-	// Type is deprecated: convert to gt:<type> label
+	// Type sets both the issue_type field AND adds a gt:<type> label.
+	// - --type= sets issue_type (required for slot operations which need issue_type="agent")
+	// - --labels=gt: adds a label (used for filtering by type)
 	if opts.Type != "" {
+		args = append(args, "--type="+opts.Type)
 		args = append(args, "--labels=gt:"+opts.Type)
 	}
 	if opts.Priority >= 0 {
@@ -351,8 +354,11 @@ func (b *Implementation) CreateWithID(id string, opts CreateOptions) (*Issue, er
 	if opts.Title != "" {
 		args = append(args, "--title="+opts.Title)
 	}
-	// Type is deprecated: convert to gt:<type> label
+	// Type sets both the issue_type field AND adds a gt:<type> label.
+	// - --type= sets issue_type (required for slot operations which need issue_type="agent")
+	// - --labels=gt: adds a label (used for filtering by type)
 	if opts.Type != "" {
+		args = append(args, "--type="+opts.Type)
 		args = append(args, "--labels=gt:"+opts.Type)
 	}
 	if opts.Priority >= 0 {
@@ -429,7 +435,8 @@ func (b *Implementation) Update(id string, opts UpdateOptions) error {
 		args = append(args, "--assignee="+*opts.Assignee)
 	}
 	if opts.Unassign {
-		args = append(args, "--unassign")
+		// bd doesn't have --unassign flag, so use --assignee="" to clear
+		args = append(args, "--assignee=")
 	}
 	if opts.Notes != "" {
 		args = append(args, "--notes="+opts.Notes)
@@ -600,24 +607,50 @@ func (b *Implementation) Blocked() ([]*Issue, error) {
 	return issues, nil
 }
 
+// ErrCrossRigDependency is returned when attempting to add a dependency
+// between beads in different rigs, which bd doesn't support.
+var ErrCrossRigDependency = errors.New("cross-rig dependencies not supported: bd dep add doesn't route across rigs")
+
 // AddDependency adds a dependency: issue depends on dependsOn.
-// bd doesn't route this by prefix, so we use routedImpl.
+// Returns ErrCrossRigDependency if issue and dependsOn are in different rigs.
 func (b *Implementation) AddDependency(issue, dependsOn string) error {
+	issuePrefix := ExtractPrefix(issue)
+	depPrefix := ExtractPrefix(dependsOn)
+
+	if issuePrefix != depPrefix {
+		return fmt.Errorf("%w: %s depends on %s", ErrCrossRigDependency, issue, dependsOn)
+	}
+
 	impl := b.routedImpl(issue)
 	_, err := impl.run("dep", "add", issue, dependsOn)
 	return err
 }
 
 // AddDependencyWithType adds a typed dependency (e.g., "tracks").
+// Returns ErrCrossRigDependency if issue and dependsOn are in different rigs.
 func (b *Implementation) AddDependencyWithType(issue, dependsOn, depType string) error {
+	issuePrefix := ExtractPrefix(issue)
+	depPrefix := ExtractPrefix(dependsOn)
+
+	if issuePrefix != depPrefix {
+		return fmt.Errorf("%w: %s depends on %s", ErrCrossRigDependency, issue, dependsOn)
+	}
+
 	impl := b.routedImpl(issue)
 	_, err := impl.run("dep", "add", issue, dependsOn, "--type="+depType)
 	return err
 }
 
 // RemoveDependency removes a dependency.
-// bd doesn't route this by prefix, so we use routedImpl.
+// Returns ErrCrossRigDependency if issue and dependsOn are in different rigs.
 func (b *Implementation) RemoveDependency(issue, dependsOn string) error {
+	issuePrefix := ExtractPrefix(issue)
+	depPrefix := ExtractPrefix(dependsOn)
+
+	if issuePrefix != depPrefix {
+		return fmt.Errorf("%w: %s depends on %s", ErrCrossRigDependency, issue, dependsOn)
+	}
+
 	impl := b.routedImpl(issue)
 	_, err := impl.run("dep", "remove", issue, dependsOn)
 	return err
@@ -1171,12 +1204,28 @@ func (b *Implementation) SlotShow(id string) (*Slot, error) {
 		return nil, err
 	}
 
-	var slot Slot
-	if err := json.Unmarshal(out, &slot); err != nil {
+	// bd outputs: {"agent": "...", "slots": {"hook": "...", "role": "..."}}
+	// We need to translate to Slot struct format
+	var result struct {
+		Agent string `json:"agent"`
+		Slots struct {
+			Hook *string `json:"hook"`
+			Role *string `json:"role"`
+		} `json:"slots"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
 		return nil, fmt.Errorf("parsing bd slot show output: %w", err)
 	}
 
-	return &slot, nil
+	slot := &Slot{
+		ID:    id,
+		Agent: result.Agent,
+	}
+	if result.Slots.Hook != nil {
+		slot.IssueID = *result.Slots.Hook
+	}
+
+	return slot, nil
 }
 
 // SlotSet sets a slot on an agent bead.

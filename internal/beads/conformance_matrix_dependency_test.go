@@ -342,6 +342,62 @@ func TestMatrix_Blocked_WithOpenDependency(t *testing.T) {
 	})
 }
 
+// TestMatrix_Blocked_PopulatesBlockedBy verifies that Blocked() populates the
+// BlockedBy field on returned issues. This is critical because bd list does NOT
+// populate this field - only bd blocked does. See DOUBLE_TESTING.md for details.
+func TestMatrix_Blocked_PopulatesBlockedBy(t *testing.T) {
+	RunSimpleConformanceTest(t, SimpleConformanceTest{
+		Name:      "Blocked_PopulatesBlockedBy",
+		Operation: "Blocked",
+		Test: func(ops beads.BeadsOps) error {
+			// Create blocker issue
+			blocker, err := ops.Create(beads.CreateOptions{Title: "Blocker", Type: "task"})
+			if err != nil {
+				return fmt.Errorf("Create blocker failed: %v", err)
+			}
+
+			// Create blocked issue
+			blocked, err := ops.Create(beads.CreateOptions{Title: "Blocked", Type: "task"})
+			if err != nil {
+				return fmt.Errorf("Create blocked failed: %v", err)
+			}
+
+			// Add dependency: blocked depends on blocker
+			if err := ops.AddDependency(blocked.ID, blocker.ID); err != nil {
+				return fmt.Errorf("AddDependency failed: %v", err)
+			}
+
+			// Get blocked issues
+			blockedList, err := ops.Blocked()
+			if err != nil {
+				return fmt.Errorf("Blocked failed: %v", err)
+			}
+
+			// Find the blocked issue and verify BlockedBy is populated
+			for _, b := range blockedList {
+				if b.ID == blocked.ID {
+					// Verify BlockedBy contains the blocker ID
+					if len(b.BlockedBy) == 0 {
+						return fmt.Errorf("BlockedBy should be populated but was empty")
+					}
+					found := false
+					for _, id := range b.BlockedBy {
+						if id == blocker.ID {
+							found = true
+							break
+						}
+					}
+					if !found {
+						return fmt.Errorf("BlockedBy should contain %s but got %v", blocker.ID, b.BlockedBy)
+					}
+					return nil
+				}
+			}
+			return fmt.Errorf("Blocked issue %s not found in Blocked() result", blocked.ID)
+		},
+	})
+}
+
 func TestMatrix_AddDependencyWithType(t *testing.T) {
 	RunSimpleConformanceTest(t, SimpleConformanceTest{
 		Name:      "AddDependencyWithType_Tracks",
