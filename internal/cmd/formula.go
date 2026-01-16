@@ -344,15 +344,12 @@ func executeConvoyFormula(f *formulaData, formulaName, targetRig string) error {
 		description += fmt.Sprintf("\nPR: #%d", formulaRunPR)
 	}
 
-	createArgs := []string{
-		"create",
-		"--type=convoy",
-		"--id=" + convoyID,
-		"--title=" + convoyTitle,
-		"--description=" + description,
-	}
-
-	if _, err := b.Run(createArgs...); err != nil {
+	_, err = b.CreateWithID(convoyID, beads.CreateOptions{
+		Type:        "convoy",
+		Title:       convoyTitle,
+		Description: description,
+	})
+	if err != nil {
 		return fmt.Errorf("creating convoy bead: %w", err)
 	}
 
@@ -371,15 +368,12 @@ func executeConvoyFormula(f *formulaData, formulaName, targetRig string) error {
 			}
 		}
 
-		legArgs := []string{
-			"create",
-			"--type=task",
-			"--id=" + legBeadID,
-			"--title=" + leg.Title,
-			"--description=" + legDesc,
-		}
-
-		if _, err := b.Run(legArgs...); err != nil {
+		_, err := b.CreateWithID(legBeadID, beads.CreateOptions{
+			Type:        "task",
+			Title:       leg.Title,
+			Description: legDesc,
+		})
+		if err != nil {
 			fmt.Printf("%s Failed to create leg bead for %s: %v\n",
 				style.Dim.Render("Warning:"), leg.ID, err)
 			continue
@@ -405,17 +399,14 @@ func executeConvoyFormula(f *formulaData, formulaName, targetRig string) error {
 			synDesc = "Synthesize findings from all legs into unified output"
 		}
 
-		synArgs := []string{
-			"create",
-			"--type=task",
-			"--id=" + synthesisBeadID,
-			"--title=" + f.Synthesis.Title,
-			"--description=" + synDesc,
-		}
-
-		if _, err := b.Run(synArgs...); err != nil {
+		_, synErr := b.CreateWithID(synthesisBeadID, beads.CreateOptions{
+			Type:        "task",
+			Title:       f.Synthesis.Title,
+			Description: synDesc,
+		})
+		if synErr != nil {
 			fmt.Printf("%s Failed to create synthesis bead: %v\n",
-				style.Dim.Render("Warning:"), err)
+				style.Dim.Render("Warning:"), synErr)
 		} else {
 			// Track synthesis with convoy
 			_ = b.AddDependencyWithType(convoyID, synthesisBeadID, "tracks")

@@ -716,35 +716,35 @@ func collectHandoffState() string {
 	}
 
 	// BeadsOps Migration: cmd.Dir N/A, BEADS_DIR N/A (runs from cwd)
-	// Using Run for human-readable text output format
 	cwd, _ := os.Getwd()
 	b := beads.New(cwd)
 
 	// Get ready beads
-	readyOutput, err := b.Run("ready")
-	if err == nil {
-		readyStr := strings.TrimSpace(string(readyOutput))
-		if readyStr != "" && !strings.Contains(readyStr, "No issues ready") {
-			// Limit to first 10 lines
-			lines := strings.Split(readyStr, "\n")
-			if len(lines) > 10 {
-				lines = append(lines[:10], "... (more issues)")
+	readyIssues, err := b.Ready()
+	if err == nil && len(readyIssues) > 0 {
+		var lines []string
+		for i, issue := range readyIssues {
+			if i >= 10 {
+				lines = append(lines, "... (more issues)")
+				break
 			}
-			parts = append(parts, "## Ready Work\n"+strings.Join(lines, "\n"))
+			lines = append(lines, fmt.Sprintf("- %s: %s", issue.ID, issue.Title))
 		}
+		parts = append(parts, "## Ready Work\n"+strings.Join(lines, "\n"))
 	}
 
 	// Get in-progress beads
-	inProgressOutput, err := b.Run("list", "--status=in_progress")
-	if err == nil {
-		ipStr := strings.TrimSpace(string(inProgressOutput))
-		if ipStr != "" && !strings.Contains(ipStr, "No issues") {
-			lines := strings.Split(ipStr, "\n")
-			if len(lines) > 5 {
-				lines = append(lines[:5], "... (more)")
+	inProgressIssues, err := b.List(beads.ListOptions{Status: "in_progress", Priority: -1})
+	if err == nil && len(inProgressIssues) > 0 {
+		var lines []string
+		for i, issue := range inProgressIssues {
+			if i >= 5 {
+				lines = append(lines, "... (more)")
+				break
 			}
-			parts = append(parts, "## In Progress\n"+strings.Join(lines, "\n"))
+			lines = append(lines, fmt.Sprintf("- %s: %s", issue.ID, issue.Title))
 		}
+		parts = append(parts, "## In Progress\n"+strings.Join(lines, "\n"))
 	}
 
 	if len(parts) == 0 {

@@ -672,6 +672,12 @@ func (d *Double) Delete(ids ...string) error {
 	return nil
 }
 
+// DeleteWithOptions permanently removes issues with options.
+func (d *Double) DeleteWithOptions(opts DeleteOptions, ids ...string) error {
+	// Force option is not relevant for the double - just delete
+	return d.Delete(ids...)
+}
+
 // Reopen reopens a closed issue.
 func (d *Double) Reopen(id string) error {
 	d.mu.Lock()

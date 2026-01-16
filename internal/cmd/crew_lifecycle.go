@@ -131,11 +131,12 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 
 		if crewPurge {
 			// --purge: DELETE the agent bead entirely (obliterate)
-			output, err := b.Run("delete", agentBeadID, "--force")
+			err := b.Delete(agentBeadID)
 			if err != nil {
 				// Non-fatal: bead might not exist
-				if !strings.Contains(string(output), "no issue found") &&
-					!strings.Contains(string(output), "not found") {
+				errStr := err.Error()
+				if !strings.Contains(errStr, "no issue found") &&
+					!strings.Contains(errStr, "not found") {
 					style.PrintWarning("could not delete agent bead %s: %v", agentBeadID, err)
 				}
 			} else {
@@ -144,15 +145,14 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 
 			// Unassign any beads assigned to this crew member
 			agentAddr := fmt.Sprintf("%s/crew/%s", r.Name, name)
-			listOutput, err := b.Run("list", "--assignee="+agentAddr, "--format=id")
+			assignedBeads, err := b.List(beads.ListOptions{
+				Assignee: agentAddr,
+				Priority: -1,
+			})
 			if err == nil {
-				ids := strings.Fields(strings.TrimSpace(string(listOutput)))
-				for _, id := range ids {
-					if id == "" {
-						continue
-					}
-					if _, err := b.Run("update", id, "--unassign"); err == nil {
-						fmt.Printf("Unassigned: %s\n", id)
+				for _, issue := range assignedBeads {
+					if err := b.Update(issue.ID, beads.UpdateOptions{Unassign: true}); err == nil {
+						fmt.Printf("Unassigned: %s\n", issue.ID)
 					}
 				}
 			}

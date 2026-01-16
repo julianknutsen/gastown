@@ -160,11 +160,12 @@ func (b *Implementation) List(opts ListOptions) ([]*Issue, error) {
 	if opts.Status != "" {
 		args = append(args, "--status="+opts.Status)
 	}
-	// Prefer Label over Type (Type is deprecated)
+	// Label filters by label value (e.g., "queue:inbox")
 	if opts.Label != "" {
 		args = append(args, "--label="+opts.Label)
-	} else if opts.Type != "" {
-		// Use --type for backward compatibility
+	}
+	// Type filters by issue_type field (e.g., "message", "task")
+	if opts.Type != "" {
 		args = append(args, "--type="+opts.Type)
 	}
 	// Multiple labels (all must match)
@@ -465,6 +466,22 @@ func (b *Implementation) Delete(ids ...string) error {
 	// Use --force to bypass confirmation and --hard to permanently delete
 	// (bypass tombstones so Show returns ErrNotFound after delete)
 	args := []string{"delete", "--force", "--hard"}
+	args = append(args, ids...)
+	_, err := impl.run(args...)
+	return err
+}
+
+// DeleteWithOptions permanently removes issues with options.
+// bd doesn't route this by prefix, so we use routedImpl.
+func (b *Implementation) DeleteWithOptions(opts DeleteOptions, ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	impl := b.routedImpl(ids[0])
+	args := []string{"delete", "--hard"}
+	if opts.Force {
+		args = append(args, "--force")
+	}
 	args = append(args, ids...)
 	_, err := impl.run(args...)
 	return err

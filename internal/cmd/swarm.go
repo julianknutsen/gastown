@@ -277,24 +277,18 @@ func runSwarmCreate(cmd *cobra.Command, args []string) error {
 	// Start if requested
 	if swarmStart {
 		// Get swarm status to find ready tasks (using same b instance from above)
-		statusOut, err := b.Run("swarm", "status", swarmEpic, "--json")
+		status, err := b.SwarmStatus(swarmEpic)
 		if err != nil {
 			return fmt.Errorf("getting swarm status: %w", err)
 		}
 
-		// Parse status to dispatch workers
-		var status struct {
-			Ready []struct {
-				ID    string `json:"id"`
-				Title string `json:"title"`
-			} `json:"ready"`
-		}
-		if err := json.Unmarshal(statusOut, &status); err == nil && len(status.Ready) > 0 {
-			fmt.Printf("\nReady front has %d tasks available\n", len(status.Ready))
+		// Dispatch workers for ready tasks
+		if len(status.ReadyTasks) > 0 {
+			fmt.Printf("\nReady front has %d tasks available\n", len(status.ReadyTasks))
 			if len(swarmWorkers) > 0 {
 				// Spawn workers for ready tasks
 				fmt.Printf("Spawning workers...\n")
-				_ = spawnSwarmWorkersFromBeads(r, townRoot, swarmEpic, swarmWorkers, status.Ready)
+				_ = spawnSwarmWorkersFromBeads(r, townRoot, swarmEpic, swarmWorkers, status.ReadyTasks)
 			}
 		}
 	} else {
@@ -331,44 +325,29 @@ func runSwarmStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get swarm status from beads
-	stdout, err := b.Run("swarm", "status", swarmID, "--json")
+	status, err := b.SwarmStatus(swarmID)
 	if err != nil {
 		return fmt.Errorf("getting swarm status: %w", err)
 	}
 
-	var status struct {
-		EpicID string `json:"epic_id"`
-		Ready  []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-		} `json:"ready"`
-		Active []struct {
-			ID       string `json:"id"`
-			Assignee string `json:"assignee"`
-		} `json:"active"`
-	}
-	if err := json.Unmarshal(stdout, &status); err != nil {
-		return fmt.Errorf("parsing swarm status: %w", err)
+	if len(status.ActiveTasks) > 0 {
+		fmt.Printf("Swarm already has %d active tasks\n", len(status.ActiveTasks))
 	}
 
-	if len(status.Active) > 0 {
-		fmt.Printf("Swarm already has %d active tasks\n", len(status.Active))
-	}
-
-	if len(status.Ready) == 0 {
+	if len(status.ReadyTasks) == 0 {
 		fmt.Println("No ready tasks to dispatch")
 		return nil
 	}
 
-	fmt.Printf("%s Swarm %s starting with %d ready tasks\n", style.Bold.Render("✓"), swarmID, len(status.Ready))
+	fmt.Printf("%s Swarm %s starting with %d ready tasks\n", style.Bold.Render("✓"), swarmID, len(status.ReadyTasks))
 
 	// If workers were specified in create, use them; otherwise prompt user
 	if len(swarmWorkers) > 0 {
 		fmt.Printf("\nSpawning workers...\n")
-		_ = spawnSwarmWorkersFromBeads(foundRig, townRoot, swarmID, swarmWorkers, status.Ready)
+		_ = spawnSwarmWorkersFromBeads(foundRig, townRoot, swarmID, swarmWorkers, status.ReadyTasks)
 	} else {
 		fmt.Printf("\nReady tasks:\n")
-		for _, task := range status.Ready {
+		for _, task := range status.ReadyTasks {
 			fmt.Printf("  ○ %s: %s\n", task.ID, task.Title)
 		}
 		fmt.Printf("\nUse 'gt sling <task-id> <rig>/<worker>' to assign tasks\n")
@@ -411,33 +390,16 @@ func runSwarmDispatch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get swarm/epic status to find ready tasks
-	stdout, err := b.Run("swarm", "status", epicID, "--json")
+	status, err := b.SwarmStatus(epicID)
 	if err != nil {
 		return fmt.Errorf("getting epic status: %w", err)
 	}
 
-	var status struct {
-		Ready []struct {
-			ID       string `json:"id"`
-			Title    string `json:"title"`
-			Assignee string `json:"assignee"`
-		} `json:"ready"`
-	}
-	if err := json.Unmarshal(stdout, &status); err != nil {
-		return fmt.Errorf("parsing epic status: %w", err)
-	}
-
 	// Filter to unassigned ready tasks
-	var unassigned []struct {
-		ID    string
-		Title string
-	}
-	for _, task := range status.Ready {
+	var unassigned []*beads.SwarmTask
+	for _, task := range status.ReadyTasks {
 		if task.Assignee == "" {
-			unassigned = append(unassigned, struct {
-				ID    string
-				Title string
-			}{task.ID, task.Title})
+			unassigned = append(unassigned, task)
 		}
 	}
 
@@ -474,10 +436,7 @@ func runSwarmDispatch(cmd *cobra.Command, args []string) error {
 }
 
 // spawnSwarmWorkersFromBeads spawns sessions for swarm workers using beads task list.
-func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, workers []string, tasks []struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-}) error { //nolint:unparam // error return kept for future use
+func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, workers []string, tasks []*beads.SwarmTask) error { //nolint:unparam // error return kept for future use
 	t := tmux.NewTmux()
 	polecatSessMgr := polecat.NewSessionManager(t, r)
 	polecatGit := git.NewGit(r.Path)
@@ -711,26 +670,15 @@ func runSwarmLand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check swarm status - all children should be closed
-	stdout, err := b.Run("swarm", "status", swarmID, "--json")
+	status, err := b.SwarmStatus(swarmID)
 	if err != nil {
 		return fmt.Errorf("getting swarm status: %w", err)
 	}
 
-	var status struct {
-		Ready       []struct{ ID string } `json:"ready"`
-		Active      []struct{ ID string } `json:"active"`
-		Blocked     []struct{ ID string } `json:"blocked"`
-		Completed   []struct{ ID string } `json:"completed"`
-		TotalIssues int                   `json:"total_issues"`
-	}
-	if err := json.Unmarshal(stdout, &status); err != nil {
-		return fmt.Errorf("parsing swarm status: %w", err)
-	}
-
 	// Check if all tasks are complete
-	if len(status.Ready) > 0 || len(status.Active) > 0 || len(status.Blocked) > 0 {
+	if len(status.ReadyTasks) > 0 || len(status.ActiveTasks) > 0 || len(status.BlockedTasks) > 0 {
 		return fmt.Errorf("swarm has incomplete tasks: %d ready, %d active, %d blocked",
-			len(status.Ready), len(status.Active), len(status.Blocked))
+			len(status.ReadyTasks), len(status.ActiveTasks), len(status.BlockedTasks))
 	}
 
 	fmt.Printf("Landing swarm %s to main...\n", swarmID)

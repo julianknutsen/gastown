@@ -37,6 +37,9 @@ type BeadsOps interface {
 	// Delete permanently removes issues.
 	Delete(ids ...string) error
 
+	// DeleteWithOptions permanently removes issues with options (e.g., --force).
+	DeleteWithOptions(opts DeleteOptions, ids ...string) error
+
 	// Reopen reopens a closed issue.
 	Reopen(id string) error
 

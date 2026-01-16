@@ -170,6 +170,11 @@ type CloseOptions struct {
 	Force   bool   // Force close even if pinned (--force)
 }
 
+// DeleteOptions specifies options for deleting issues.
+type DeleteOptions struct {
+	Force bool // Force delete even if issue has dependencies (--force)
+}
+
 // Gate represents a gate for synchronization.
 type Gate struct {
 	ID          string   `json:"id"`
@@ -199,8 +204,9 @@ type SwarmStatus struct {
 
 // SwarmTask represents a task in a swarm with basic info.
 type SwarmTask struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Assignee string `json:"assignee,omitempty"`
 }
 
 // SwarmWorker represents a worker in a swarm.
