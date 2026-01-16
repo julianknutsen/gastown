@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -72,13 +73,6 @@ type ReadySummary struct {
 	P4Count  int            `json:"p4_count"`
 }
 
-// isFormulaScaffold returns true if the issue ID looks like a formula scaffold.
-// Formula scaffolds are templates created when formulas are installed, not actual work.
-// Pattern: "mol-<name>" or "mol-<name>.<step-id>"
-func isFormulaScaffold(id string) bool {
-	return strings.HasPrefix(id, "mol-")
-}
-
 func runReady(cmd *cobra.Command, args []string) error {
 	// Find town root
 	townRoot, err := workspace.FindFromCwdOrError()
@@ -136,14 +130,9 @@ func runReady(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				src.Error = err.Error()
 			} else {
-				// Filter out formula scaffolds
-				var filtered []*beads.Issue
-				for _, issue := range issues {
-					if !isFormulaScaffold(issue.ID) {
-						filtered = append(filtered, issue)
-					}
-				}
-				src.Issues = filtered
+				// Filter out formula scaffolds (gt-579)
+				formulaNames := getFormulaNames(townBeadsPath)
+				src.Issues = filterFormulaScaffolds(issues, formulaNames)
 			}
 			sources = append(sources, src)
 		}()
@@ -165,14 +154,9 @@ func runReady(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				src.Error = err.Error()
 			} else {
-				// Filter out formula scaffolds
-				var filtered []*beads.Issue
-				for _, issue := range issues {
-					if !isFormulaScaffold(issue.ID) {
-						filtered = append(filtered, issue)
-					}
-				}
-				src.Issues = filtered
+				// Filter out formula scaffolds (gt-579)
+				formulaNames := getFormulaNames(rigBeadsPath)
+				src.Issues = filterFormulaScaffolds(issues, formulaNames)
 			}
 			sources = append(sources, src)
 		}(r)
@@ -309,4 +293,56 @@ func printReadyHuman(result ReadyResult) error {
 	}
 
 	return nil
+}
+
+// getFormulaNames reads the formulas directory and returns a set of formula names.
+// Formula names are derived from filenames by removing the ".formula.toml" suffix.
+func getFormulaNames(beadsPath string) map[string]bool {
+	formulasDir := filepath.Join(beadsPath, "formulas")
+	entries, err := os.ReadDir(formulasDir)
+	if err != nil {
+		return nil
+	}
+
+	names := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".formula.toml") {
+			// Remove suffix to get formula name
+			formulaName := strings.TrimSuffix(name, ".formula.toml")
+			names[formulaName] = true
+		}
+	}
+	return names
+}
+
+// filterFormulaScaffolds removes formula scaffold issues from the list.
+// Formula scaffolds are issues whose ID matches a formula name exactly
+// or starts with "<formula-name>." (step scaffolds).
+func filterFormulaScaffolds(issues []*beads.Issue, formulaNames map[string]bool) []*beads.Issue {
+	if formulaNames == nil || len(formulaNames) == 0 {
+		return issues
+	}
+
+	filtered := make([]*beads.Issue, 0, len(issues))
+	for _, issue := range issues {
+		// Check if this is a formula scaffold (exact match)
+		if formulaNames[issue.ID] {
+			continue
+		}
+
+		// Check if this is a step scaffold (formula-name.step-id)
+		if idx := strings.Index(issue.ID, "."); idx > 0 {
+			prefix := issue.ID[:idx]
+			if formulaNames[prefix] {
+				continue
+			}
+		}
+
+		filtered = append(filtered, issue)
+	}
+	return filtered
 }
