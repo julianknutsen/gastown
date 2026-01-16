@@ -577,7 +577,7 @@ func runPolecatSync(cmd *cobra.Command, args []string) error {
 		// Use BeadsOps interface
 		// cmd.Dir = p.ClonePath - REQUIRED for operating in polecat's clone path
 		// BEADS_DIR was N/A - not set
-		b := beads.New(p.ClonePath)
+		b := beads.ForRig(p.ClonePath)
 		var syncErr error
 		if polecatSyncFromMain {
 			syncErr = b.SyncFromMain()
@@ -954,7 +954,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	// Get cleanup_status from agent bead
 	// We need to read it directly from beads since manager doesn't expose it
 	rigPath := r.Path
-	bd := beads.New(rigPath)
+	bd := beads.ForRig(rigPath)
 	agentBeadID := beads.PolecatBeadID(rigName, polecatName)
 	_, fields, err := bd.GetAgentBead(agentBeadID)
 
@@ -1216,7 +1216,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		// cmd.Dir = filepath.Join(p.r.Path, "mayor", "rig") - REQUIRED for operating on specific path
 		// BEADS_DIR was N/A - not set
 		agentBeadID := beads.PolecatBeadID(p.rigName, p.polecatName)
-		bClose := beads.New(filepath.Join(p.r.Path, "mayor", "rig"))
+		bClose := beads.ForRig(filepath.Join(p.r.Path, "mayor", "rig"))
 		closeOpts := beads.CloseOptions{
 			Reason:  "nuked",
 			Session: runtime.SessionIDFromEnv(),

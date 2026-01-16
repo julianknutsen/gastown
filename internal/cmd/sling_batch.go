@@ -92,7 +92,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		// Hook the bead. See: https://github.com/steveyegge/gastown/issues/148
 		townRoot := filepath.Dir(townBeadsDir)
 		hookDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
-		bHook := beads.New(hookDir)
+		bHook := beads.ForRig(hookDir)
 		hookedStatus := "hooked"
 		if err := bHook.Update(beadID, beads.UpdateOptions{
 			Status:   &hookedStatus,

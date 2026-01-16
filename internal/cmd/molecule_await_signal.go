@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (
@@ -294,7 +296,8 @@ func waitForActivitySignal(ctx context.Context, workDir string) (*AwaitSignalRes
 // GetCurrentStepBackoff retrieves backoff config from the current step.
 // This is used by patrol agents to get the timeout for await-signal.
 func GetCurrentStepBackoff(workDir string) (*beads.BackoffConfig, error) {
-	b := beads.New(workDir)
+	// Use ForRig for local queries (currently not implemented)
+	b := beads.ForRig(workDir)
 
 	// Get current agent's hook
 	// This would need to query the pinned/hooked bead and parse its description
@@ -341,8 +344,9 @@ func setAgentIdleCycles(agentBead, beadsDir string, cycles int) error {
 	// Add new idle value
 	newLabels = append(newLabels, fmt.Sprintf("idle:%d", cycles))
 
-	// Use BeadsOps interface for update
-	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	// Use ForTown for ID-based Update operation
+	townRoot, _ := workspace.Find(filepath.Dir(beadsDir))
+	b := beads.ForTown(townRoot)
 	opts := beads.UpdateOptions{SetLabels: newLabels}
 	if err := b.Update(agentBead, opts); err != nil {
 		return fmt.Errorf("setting idle label: %w", err)

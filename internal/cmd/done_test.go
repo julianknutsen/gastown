@@ -14,8 +14,8 @@ import (
 // to the shared mayor/rig/.beads directory.
 //
 // The done.go file has two code paths that initialize beads:
-//   - Line 181: ExitCompleted path - bd := beads.New(beads.ResolveBeadsDir(cwd))
-//   - Line 277: ExitPhaseComplete path - bd := beads.New(beads.ResolveBeadsDir(cwd))
+//   - Line 181: ExitCompleted path - bd := beads.ForRig(beads.ResolveBeadsDir(cwd))
+//   - Line 277: ExitPhaseComplete path - bd := beads.ForRig(beads.ResolveBeadsDir(cwd))
 //
 // Both must use ResolveBeadsDir to properly handle redirects.
 func TestDoneUsesResolveBeadsDir(t *testing.T) {
@@ -57,8 +57,8 @@ func TestDoneUsesResolveBeadsDir(t *testing.T) {
 		}
 
 		// Verify the beads instance is created with the resolved path
-		// We use the same pattern as done.go: beads.New(beads.ResolveBeadsDir(cwd))
-		bd := beads.New(beads.ResolveBeadsDir(polecatDir))
+		// We use the same pattern as done.go: beads.ForRig(beads.ResolveBeadsDir(cwd))
+		bd := beads.ForRig(beads.ResolveBeadsDir(polecatDir))
 		if bd == nil {
 			t.Error("beads.New returned nil")
 		}
@@ -93,7 +93,7 @@ func TestDoneBeadsInitWithoutRedirect(t *testing.T) {
 	}
 
 	// Beads initialization should work the same way done.go does it
-	bd := beads.New(beads.ResolveBeadsDir(tmpDir))
+	bd := beads.ForRig(beads.ResolveBeadsDir(tmpDir))
 	if bd == nil {
 		t.Error("beads.New returned nil")
 	}
@@ -129,14 +129,14 @@ func TestDoneBeadsInitBothCodePaths(t *testing.T) {
 
 	t.Run("ExitCompleted path uses ResolveBeadsDir", func(t *testing.T) {
 		// This simulates the line 181 path in done.go:
-		// bd := beads.New(beads.ResolveBeadsDir(cwd))
+		// bd := beads.ForRig(beads.ResolveBeadsDir(cwd))
 		resolvedDir := beads.ResolveBeadsDir(crewDir)
 		if resolvedDir != mayorRigBeadsDir {
 			t.Errorf("ExitCompleted path: ResolveBeadsDir(%s) = %s, want %s",
 				crewDir, resolvedDir, mayorRigBeadsDir)
 		}
 
-		bd := beads.New(beads.ResolveBeadsDir(crewDir))
+		bd := beads.ForRig(beads.ResolveBeadsDir(crewDir))
 		if bd == nil {
 			t.Error("beads.New returned nil for ExitCompleted path")
 		}
@@ -144,14 +144,14 @@ func TestDoneBeadsInitBothCodePaths(t *testing.T) {
 
 	t.Run("ExitPhaseComplete path uses ResolveBeadsDir", func(t *testing.T) {
 		// This simulates the line 277 path in done.go:
-		// bd := beads.New(beads.ResolveBeadsDir(cwd))
+		// bd := beads.ForRig(beads.ResolveBeadsDir(cwd))
 		resolvedDir := beads.ResolveBeadsDir(crewDir)
 		if resolvedDir != mayorRigBeadsDir {
 			t.Errorf("ExitPhaseComplete path: ResolveBeadsDir(%s) = %s, want %s",
 				crewDir, resolvedDir, mayorRigBeadsDir)
 		}
 
-		bd := beads.New(beads.ResolveBeadsDir(crewDir))
+		bd := beads.ForRig(beads.ResolveBeadsDir(crewDir))
 		if bd == nil {
 			t.Error("beads.New returned nil for ExitPhaseComplete path")
 		}

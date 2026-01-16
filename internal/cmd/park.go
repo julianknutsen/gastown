@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Park command parks work on a gate, allowing agent to exit safely.
@@ -84,13 +85,12 @@ type ParkedWork struct {
 func runPark(cmd *cobra.Command, args []string) error {
 	gateID := args[0]
 
-	// Use BeadsOps interface
-	// cmd.Dir was N/A - ran from cwd
-	cwd, err := os.Getwd()
+	// Use ForTown for cross-rig routing on ID-based operations
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-	b := beads.New(cwd)
+	b := beads.ForTown(townRoot)
 
 	// Verify gate exists and is open
 	gateInfo, err := b.GateShow(gateID)
@@ -111,7 +111,7 @@ func runPark(cmd *cobra.Command, args []string) error {
 	var beadID, formula, hookContext string
 	workDir, err := findLocalBeadsDir()
 	if err == nil {
-		b := beads.New(workDir)
+		b := beads.ForRig(workDir)
 		pinnedBeads, err := b.List(beads.ListOptions{
 			Status:   beads.StatusPinned,
 			Assignee: agentID,

@@ -70,22 +70,18 @@ func runMoleculeStepDone(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting current directory: %w", err)
 	}
 
-	// Find town root
-	townRoot, err := workspace.FindFromCwd()
-	if err != nil {
-		return fmt.Errorf("finding workspace: %w", err)
-	}
-	if townRoot == "" {
-		return fmt.Errorf("not in a Gas Town workspace")
-	}
-
-	// Find beads directory
+	// Find beads directory for later use
 	workDir, err := findLocalBeadsDir()
 	if err != nil {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
 
-	b := beads.New(workDir)
+	// Use ForTown for ID-based Show operation
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+	b := beads.ForTown(townRoot)
 
 	// Step 1: Verify the step exists
 	step, err := b.Show(stepID)
@@ -288,7 +284,7 @@ func handleStepContinue(cwd, townRoot, _ string, nextStep *beads.Issue, dryRun b
 	// Use BeadsOps interface
 	// cmd.Dir = gitRoot - REQUIRED for operating on specific git root
 	// BEADS_DIR was N/A - not set
-	b := beads.New(gitRoot)
+	b := beads.ForRig(gitRoot)
 	pinnedStatus := beads.StatusPinned
 	if err := b.Update(nextStep.ID, beads.UpdateOptions{Status: &pinnedStatus, Assignee: &agentID}); err != nil {
 		return fmt.Errorf("pinning next step: %w", err)
@@ -367,7 +363,8 @@ func handleMoleculeComplete(cwd, townRoot, moleculeID string, dryRun bool) error
 	// Unpin the molecule bead (set status to open, will be closed by gt done or manually)
 	workDir, err := findLocalBeadsDir()
 	if err == nil {
-		b := beads.New(workDir)
+		// Use ForRig for List operation (non-ID, targets local rig)
+		b := beads.ForRig(workDir)
 		pinnedBeads, err := b.List(beads.ListOptions{
 			Status:   beads.StatusPinned,
 			Assignee: agentID,
@@ -378,7 +375,7 @@ func handleMoleculeComplete(cwd, townRoot, moleculeID string, dryRun bool) error
 			// Use BeadsOps interface
 			// cmd.Dir = gitRoot - REQUIRED for operating on specific git root
 			// BEADS_DIR was N/A - not set
-			bGit := beads.New(gitRoot)
+			bGit := beads.ForRig(gitRoot)
 			openStatus := "open"
 			if err := bGit.Update(pinnedBeads[0].ID, beads.UpdateOptions{Status: &openStatus}); err != nil {
 				style.PrintWarning("could not unpin bead: %v", err)

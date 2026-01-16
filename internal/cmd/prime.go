@@ -342,7 +342,8 @@ func detectRole(cwd, townRoot string) RoleInfo {
 // runBdPrime runs `bd prime` and outputs the result.
 // This provides beads workflow context to the agent.
 func runBdPrime(workDir string) {
-	b := beads.New(workDir)
+	// Use ForRig for Prime operation (local beads context)
+	b := beads.ForRig(workDir)
 	output, err := b.Prime()
 	if err != nil {
 		// Skip if bd prime fails (beads might not be available)
@@ -392,7 +393,8 @@ func checkSlungWork(ctx RoleContext) bool {
 	}
 
 	// Check for hooked beads (work on the agent's hook)
-	b := beads.New(ctx.WorkDir)
+	// Use ForRig for List operation (non-ID, targets local rig)
+	b := beads.ForRig(ctx.WorkDir)
 	hookedBeads, err := b.List(beads.ListOptions{
 		Status:   beads.StatusHooked,
 		Assignee: agentID,
@@ -660,10 +662,8 @@ func ensureBeadsRedirect(ctx RoleContext) {
 // checkPendingEscalations queries for open escalation beads and displays them prominently.
 // This is called on Mayor startup to surface issues needing human attention.
 func checkPendingEscalations(ctx RoleContext) {
-	// Query for open escalations using BeadsOps interface
-	// cmd.Dir = ctx.WorkDir - REQUIRED for operating on specific workDir
-	// BEADS_DIR was N/A - not set
-	b := beads.New(ctx.WorkDir)
+	// Use ForRig for List operation (non-ID, targets local rig)
+	b := beads.ForRig(ctx.WorkDir)
 	escalations, err := b.List(beads.ListOptions{
 		Status:   "open",
 		Tag:      "escalation",

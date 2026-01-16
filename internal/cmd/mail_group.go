@@ -120,7 +120,7 @@ func runGroupList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	groups, err := b.ListGroupBeads()
 	if err != nil {
 		return fmt.Errorf("listing groups: %w", err)
@@ -158,7 +158,7 @@ func runGroupShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	issue, fields, err := b.GetGroupBead(name)
 	if err != nil {
 		return fmt.Errorf("getting group: %w", err)
@@ -219,7 +219,7 @@ func runGroupCreate(cmd *cobra.Command, args []string) error {
 		createdBy = "unknown"
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 
 	// Check if group already exists
 	existing, _, err := b.GetGroupBead(name)
@@ -252,7 +252,7 @@ func runGroupAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	if err := b.AddGroupMember(name, member); err != nil {
 		return fmt.Errorf("adding member: %w", err)
 	}
@@ -270,7 +270,7 @@ func runGroupRemove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	if err := b.RemoveGroupMember(name, member); err != nil {
 		return fmt.Errorf("removing member: %w", err)
 	}
@@ -287,7 +287,7 @@ func runGroupDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 
 	// Check if group exists
 	existing, _, err := b.GetGroupBead(name)

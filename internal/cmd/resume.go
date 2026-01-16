@@ -94,7 +94,7 @@ func runResume(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check gate status
-	b := beads.New(cloneRoot)
+	b := beads.ForRig(cloneRoot)
 	gateInfo, err := b.GateShow(parked.GateID)
 	gateNotFound := false
 	if err != nil {

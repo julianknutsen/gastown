@@ -31,12 +31,12 @@ func runMoleculeAttach(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	workDir, err := findLocalBeadsDir()
+	// Use ForTown for ID-based operation (AttachMolecule)
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return fmt.Errorf("not in a beads workspace: %w", err)
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-
-	b := beads.New(workDir)
+	b := beads.ForTown(townRoot)
 
 	// Attach the molecule
 	issue, err := b.AttachMolecule(pinnedBeadID, moleculeID)
@@ -98,12 +98,12 @@ func detectAgentBeadID() (string, error) {
 func runMoleculeDetach(cmd *cobra.Command, args []string) error {
 	pinnedBeadID := args[0]
 
-	workDir, err := findLocalBeadsDir()
+	// Use ForTown for ID-based operation (GetAttachment)
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return fmt.Errorf("not in a beads workspace: %w", err)
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-
-	b := beads.New(workDir)
+	b := beads.ForTown(townRoot)
 
 	// Check current attachment first
 	attachment, err := b.GetAttachment(pinnedBeadID)
@@ -135,12 +135,12 @@ func runMoleculeDetach(cmd *cobra.Command, args []string) error {
 func runMoleculeAttachment(cmd *cobra.Command, args []string) error {
 	pinnedBeadID := args[0]
 
-	workDir, err := findLocalBeadsDir()
+	// Use ForTown for ID-based operation (Show)
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return fmt.Errorf("not in a beads workspace: %w", err)
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-
-	b := beads.New(workDir)
+	b := beads.ForTown(townRoot)
 
 	// Get the issue
 	issue, err := b.Show(pinnedBeadID)

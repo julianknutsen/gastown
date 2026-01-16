@@ -410,7 +410,7 @@ func (m *Manager) Pristine(name string) (*PristineResult, error) {
 // runBdSync runs bd sync in the given directory.
 func (m *Manager) runBdSync(dir string) error {
 	// BeadsOps Migration: cmd.Dir=dir (REQUIRED - crew beads location), BEADS_DIR N/A
-	b := beads.New(dir)
+	b := beads.ForRig(dir)
 	return b.Sync()
 }
 

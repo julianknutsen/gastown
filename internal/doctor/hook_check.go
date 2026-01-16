@@ -84,7 +84,7 @@ func (c *HookAttachmentValidCheck) Run(ctx *CheckContext) *CheckResult {
 func (c *HookAttachmentValidCheck) checkBeadsDir(beadsDir, _ string) []invalidAttachment { // location unused but kept for future diagnostic output
 	var invalid []invalidAttachment
 
-	b := beads.New(filepath.Dir(beadsDir))
+	b := beads.ForRig(filepath.Dir(beadsDir))
 
 	// List all pinned beads
 	pinnedBeads, err := b.List(beads.ListOptions{
@@ -173,7 +173,7 @@ func (c *HookAttachmentValidCheck) Fix(ctx *CheckContext) error {
 	var errors []string
 
 	for _, inv := range c.invalidAttachments {
-		b := beads.New(filepath.Dir(inv.pinnedBeadDir))
+		b := beads.ForRig(filepath.Dir(inv.pinnedBeadDir))
 
 		_, err := b.DetachMolecule(inv.pinnedBeadID)
 		if err != nil {
@@ -265,7 +265,7 @@ func (c *HookSingletonCheck) Run(ctx *CheckContext) *CheckResult {
 func (c *HookSingletonCheck) checkBeadsDir(beadsDir string) []duplicateHandoff {
 	var duplicates []duplicateHandoff
 
-	b := beads.New(filepath.Dir(beadsDir))
+	b := beads.ForRig(filepath.Dir(beadsDir))
 
 	// List all pinned beads
 	pinnedBeads, err := b.List(beads.ListOptions{
@@ -309,7 +309,7 @@ func (c *HookSingletonCheck) Fix(ctx *CheckContext) error {
 	var errors []string
 
 	for _, dup := range c.duplicates {
-		b := beads.New(filepath.Dir(dup.beadsDir))
+		b := beads.ForRig(filepath.Dir(dup.beadsDir))
 
 		// Close all but the first bead (keep the oldest/first one)
 		toClose := dup.beadIDs[1:]
@@ -399,7 +399,7 @@ func (c *OrphanedAttachmentsCheck) Run(ctx *CheckContext) *CheckResult {
 func (c *OrphanedAttachmentsCheck) checkBeadsDir(beadsDir, townRoot string) []orphanedHandoff {
 	var orphans []orphanedHandoff
 
-	b := beads.New(filepath.Dir(beadsDir))
+	b := beads.ForRig(filepath.Dir(beadsDir))
 
 	// List all pinned beads
 	pinnedBeads, err := b.List(beads.ListOptions{

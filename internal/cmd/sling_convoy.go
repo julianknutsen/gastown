@@ -73,7 +73,7 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 	convoyTitle := fmt.Sprintf("Work: %s", beadTitle)
 	description := fmt.Sprintf("Auto-created convoy tracking %s", beadID)
 
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 
 	// Create convoy with custom ID
 	_, err = b.CreateWithID(convoyID, beads.CreateOptions{

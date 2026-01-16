@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var releaseReason string
@@ -38,13 +38,13 @@ func init() {
 }
 
 func runRelease(cmd *cobra.Command, args []string) error {
-	// Get working directory for beads
-	cwd, err := os.Getwd()
+	// Get town root for cross-rig routing
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	bd := beads.New(cwd)
+	bd := beads.ForTown(townRoot)
 
 	// Release each issue
 	var released, failed int

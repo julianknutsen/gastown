@@ -105,8 +105,8 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
 	}
 
-	// Initialize beads for looking up source issue
-	bd := beads.New(cwd)
+	// Initialize beads with ForTown for cross-rig routing on ID-based operations
+	bd := beads.ForTown(townRoot)
 
 	// Determine target branch
 	target := defaultBranch

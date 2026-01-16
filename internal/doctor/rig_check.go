@@ -832,8 +832,7 @@ func (c *BeadsConfigValidCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// BeadsOps Migration: cmd.Dir=c.rigPath (REQUIRED - rig beads), BEADS_DIR N/A
-	b := beads.New(c.rigPath)
+	b := beads.ForRig(c.rigPath)
 
 	// Check if bd command works
 	if _, err := b.StatsJSON(); err != nil {
@@ -881,8 +880,7 @@ func (c *BeadsConfigValidCheck) Fix(ctx *CheckContext) error {
 		return nil
 	}
 
-	// BeadsOps Migration: cmd.Dir=c.rigPath (REQUIRED - rig beads), BEADS_DIR N/A
-	b := beads.New(c.rigPath)
+	b := beads.ForRig(c.rigPath)
 	if err := b.Sync(); err != nil {
 		return fmt.Errorf("bd sync failed: %v", err)
 	}
@@ -1045,8 +1043,7 @@ func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
 			return fmt.Errorf("creating .beads directory: %w", err)
 		}
 
-		// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig beads), BEADS_DIR N/A
-		b := beads.New(rigPath)
+		b := beads.ForRig(rigPath)
 
 		// Run bd init with the configured prefix
 		if err := b.Init(beads.InitOptions{Prefix: prefix}); err != nil {

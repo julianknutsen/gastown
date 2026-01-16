@@ -80,7 +80,7 @@ func (c *RigBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 	// Check each rig for its identity bead
 	for rigName, info := range rigSet {
 		rigBeadsPath := filepath.Join(ctx.TownRoot, info.beadsPath)
-		bd := beads.New(rigBeadsPath)
+		bd := beads.ForRig(rigBeadsPath)
 
 		rigBeadID := beads.RigBeadIDWithPrefix(info.prefix, rigName)
 		if _, err := bd.Show(rigBeadID); err != nil {
@@ -144,7 +144,7 @@ func (c *RigBeadsCheck) Fix(ctx *CheckContext) error {
 	// Create missing rig identity beads
 	for rigName, info := range rigSet {
 		rigBeadsPath := filepath.Join(ctx.TownRoot, info.beadsPath)
-		bd := beads.New(rigBeadsPath)
+		bd := beads.ForRig(rigBeadsPath)
 
 		rigBeadID := beads.RigBeadIDWithPrefix(info.prefix, rigName)
 		if _, err := bd.Show(rigBeadID); err != nil {

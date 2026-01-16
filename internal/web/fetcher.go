@@ -34,9 +34,8 @@ func NewLiveConvoyFetcher() (*LiveConvoyFetcher, error) {
 
 // FetchConvoys fetches all open convoys with their activity data.
 func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
-	// BeadsOps Migration: cmd.Dir=f.townBeads (REQUIRED - town beads location), BEADS_DIR N/A
-	// townBeads is .beads directory, New() expects parent, so we use filepath.Dir
-	b := beads.New(filepath.Dir(f.townBeads))
+	// townBeads is .beads directory, ForTown expects parent, so we use filepath.Dir
+	b := beads.ForTown(filepath.Dir(f.townBeads))
 	convoyIssues, err := b.List(beads.ListOptions{Type: "convoy", Status: "open"})
 	if err != nil {
 		return nil, fmt.Errorf("listing convoys: %w", err)
@@ -235,8 +234,7 @@ func (f *LiveConvoyFetcher) getIssueDetailsBatch(issueIDs []string) map[string]*
 		return result
 	}
 
-	// BeadsOps Migration: cmd.Dir was not set, running from townBeads parent
-	b := beads.New(filepath.Dir(f.townBeads))
+	b := beads.ForTown(filepath.Dir(f.townBeads))
 	issues, err := b.ShowMultiple(issueIDs)
 	if err != nil {
 		return result

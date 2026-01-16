@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/workspace"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -231,7 +232,7 @@ func runPolecatIdentityAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if identity already exists
-	bd := beads.New(r.Path)
+	bd := beads.ForRig(r.Path)
 	beadID := beads.PolecatBeadID(rigName, polecatName)
 	existingIssue, _, _ := bd.GetAgentBead(beadID)
 	if existingIssue != nil && existingIssue.Status != "closed" {
@@ -268,7 +269,7 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get all agent beads
-	bd := beads.New(r.Path)
+	bd := beads.ForRig(r.Path)
 	agentBeads, err := bd.ListAgentBeads()
 	if err != nil {
 		return fmt.Errorf("listing agent beads: %w", err)
@@ -384,7 +385,7 @@ func runPolecatIdentityShow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get identity bead
-	bd := beads.New(r.Path)
+	bd := beads.ForRig(r.Path)
 	beadID := beads.PolecatBeadID(rigName, polecatName)
 	issue, fields, err := bd.GetAgentBead(beadID)
 	if err != nil {
@@ -562,7 +563,7 @@ func runPolecatIdentityRename(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	bd := beads.New(r.Path)
+	bd := beads.ForRig(r.Path)
 	oldBeadID := beads.PolecatBeadID(rigName, oldName)
 	newBeadID := beads.PolecatBeadID(rigName, newName)
 
@@ -630,7 +631,7 @@ func runPolecatIdentityRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	bd := beads.New(r.Path)
+	bd := beads.ForRig(r.Path)
 	beadID := beads.PolecatBeadID(rigName, polecatName)
 
 	// Check identity exists
@@ -721,7 +722,9 @@ func buildCVSummary(rigPath, rigName, polecatName, identityBeadID, clonePath str
 	}
 
 	// Get agent bead info for creation date
-	bd := beads.New(beadsQueryPath)
+	// Use ForTown for ID-based GetAgentBead operation
+	townRoot, _ := workspace.Find(beadsQueryPath)
+	bd := beads.ForTown(townRoot)
 	agentBead, _, err := bd.GetAgentBead(identityBeadID)
 	if err == nil && agentBead != nil {
 		if agentBead.CreatedAt != "" && len(agentBead.CreatedAt) >= 10 {
@@ -799,9 +802,7 @@ type IssueInfo struct {
 
 // queryAssignedIssues queries beads for issues assigned to a specific agent.
 func queryAssignedIssues(rigPath, assignee, status string) ([]IssueInfo, error) {
-	// Use BeadsOps interface
-	// cmd.Dir was REQUIRED - operating on specific rig path
-	b := beads.New(rigPath)
+	b := beads.ForRig(rigPath)
 
 	issues, err := b.List(beads.ListOptions{
 		Assignee: assignee,

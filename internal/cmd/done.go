@@ -278,8 +278,8 @@ func runDone(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
 		}
 
-		// Initialize beads
-		bd := beads.New(beads.ResolveBeadsDir(cwd))
+		// Use ForRig for Create/List operations targeting rig beads
+		bd := beads.ForRig(beads.ResolveBeadsDir(cwd))
 
 		// Determine target branch (auto-detect integration branch if applicable)
 		target := defaultBranch
@@ -376,7 +376,7 @@ func runDone(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s\n", style.Dim.Render("Witness will dispatch new polecat when gate closes."))
 
 		// Register this polecat as a waiter on the gate
-		bd := beads.New(beads.ResolveBeadsDir(cwd))
+		bd := beads.ForRig(beads.ResolveBeadsDir(cwd))
 		if err := bd.AddGateWaiter(doneGate, sender); err != nil {
 			style.PrintWarning("could not register as gate waiter: %v", err)
 		} else {
@@ -538,17 +538,8 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 		return
 	}
 
-	// Use rig path for slot commands - bd slot doesn't route from town root
-	// IMPORTANT: Use the rig's directory (not polecat worktree) so bd commands
-	// work even if the polecat worktree is deleted.
-	var beadsPath string
-	switch ctx.Role {
-	case RoleMayor, RoleDeacon:
-		beadsPath = townRoot
-	default:
-		beadsPath = filepath.Join(townRoot, ctx.Rig)
-	}
-	bd := beads.New(beadsPath)
+	// Use ForTown for ID-based operations (Show, Close)
+	bd := beads.ForTown(townRoot)
 
 	// BUG FIX (gt-vwjz6): Close hooked beads before clearing the hook.
 	// Previously, the agent's hook_bead slot was cleared but the hooked bead itself
@@ -624,7 +615,9 @@ func getDispatcherFromBead(cwd, issueID string) string {
 		return ""
 	}
 
-	bd := beads.New(beads.ResolveBeadsDir(cwd))
+	// Use ForTown for cross-rig routing on ID-based operations
+	townRoot, _ := workspace.Find(cwd)
+	bd := beads.ForTown(townRoot)
 	issue, err := bd.Show(issueID)
 	if err != nil {
 		return ""

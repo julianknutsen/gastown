@@ -119,7 +119,7 @@ func NewEngineer(r *rig.Rig) *Engineer {
 
 	return &Engineer{
 		rig:     r,
-		beads:   beads.New(r.Path),
+		beads:   beads.ForRig(r.Path),
 		git:     git.NewGit(gitDir),
 		config:  cfg,
 		workDir: gitDir,

@@ -40,8 +40,7 @@ func NewManager(r *rig.Rig) *Manager {
 // LoadSwarm loads swarm state from beads by querying the epic.
 // This is the canonical way to get swarm state - no in-memory caching.
 func (m *Manager) LoadSwarm(epicID string) (*Swarm, error) {
-	// BeadsOps Migration: cmd.Dir=m.beadsDir (REQUIRED - rig beads location), BEADS_DIR N/A
-	b := beads.New(m.beadsDir)
+	b := beads.ForRig(m.beadsDir)
 	epic, err := b.Show(epicID)
 	if err != nil {
 		return nil, fmt.Errorf("bd show: %w", err)
@@ -110,8 +109,7 @@ func (m *Manager) GetSwarm(id string) (*Swarm, error) {
 
 // GetReadyTasks returns tasks ready to be assigned by querying beads.
 func (m *Manager) GetReadyTasks(swarmID string) ([]SwarmTask, error) {
-	// BeadsOps Migration: cmd.Dir=m.beadsDir (REQUIRED - rig beads location), BEADS_DIR N/A
-	b := beads.New(m.beadsDir)
+	b := beads.ForRig(m.beadsDir)
 	status, err := b.SwarmStatus(swarmID)
 	if err != nil {
 		return nil, ErrSwarmNotFound
@@ -134,8 +132,7 @@ func (m *Manager) GetReadyTasks(swarmID string) ([]SwarmTask, error) {
 
 // IsComplete checks if all tasks are closed by querying beads.
 func (m *Manager) IsComplete(swarmID string) (bool, error) {
-	// BeadsOps Migration: cmd.Dir=m.beadsDir (REQUIRED - rig beads location), BEADS_DIR N/A
-	b := beads.New(m.beadsDir)
+	b := beads.ForRig(m.beadsDir)
 	status, err := b.SwarmStatus(swarmID)
 	if err != nil {
 		return false, ErrSwarmNotFound
@@ -172,8 +169,7 @@ func isValidTransition(from, to SwarmState) bool {
 
 // loadTasksFromBeads loads child issues from beads CLI.
 func (m *Manager) loadTasksFromBeads(epicID string) ([]SwarmTask, error) {
-	// BeadsOps Migration: cmd.Dir=m.beadsDir (REQUIRED - rig beads location), BEADS_DIR N/A
-	b := beads.New(m.beadsDir)
+	b := beads.ForRig(m.beadsDir)
 	epic, err := b.Show(epicID)
 	if err != nil {
 		return nil, fmt.Errorf("bd show: %w", err)

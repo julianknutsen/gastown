@@ -7,6 +7,158 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 )
 
+// TestMatrix_AddDependency_CrossRig tests cross-rig routing for AddDependency.
+// The scenario: working from gt rig, add dependency between two issues in ap rig.
+// Without routedImpl, bd would fail because dep.go has NO routing support.
+//
+// This test uses a custom setup to create two issues in the ap rig, then tests
+// adding a dependency between them while operating from the gt rig.
+func TestMatrix_AddDependency_CrossRig(t *testing.T) {
+	if !isBdInstalled() {
+		t.Skip("bd not installed")
+	}
+
+	env := setupTestEnv(t)
+	initRealBd(t, env)
+
+	// Create two issues in the ap rig
+	apOps := beads.ForRig(env.AIPlatDir)
+	parent, err := apOps.Create(beads.CreateOptions{Title: "CrossRig Parent", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create parent in ap failed: %v", err)
+	}
+	child, err := apOps.Create(beads.CreateOptions{Title: "CrossRig Child", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create child in ap failed: %v", err)
+	}
+
+	// Test with Implementation (has routedImpl) - should pass
+	t.Run("Implementation/cross-rig", func(t *testing.T) {
+		// Implementation is configured for gt rig but has routedImpl to handle ap- prefix
+		impl := beads.NewWithTownRoot(env.GastownDir, env.TownRoot)
+		err := impl.AddDependency(child.ID, parent.ID)
+		if err != nil {
+			t.Errorf("Implementation AddDependency failed: %v", err)
+		}
+	})
+
+	// Test with RawBd (no routedImpl) - should fail for cross-rig
+	t.Run("RawBd/cross-rig", func(t *testing.T) {
+		// Create new issues for this test to avoid interference
+		parent2, _ := apOps.Create(beads.CreateOptions{Title: "CrossRig Parent2", Type: "task"})
+		child2, _ := apOps.Create(beads.CreateOptions{Title: "CrossRig Child2", Type: "task"})
+
+		rawBd := &TrueRawBdOps{workDir: env.GastownDir, testHome: env.TestHome}
+		err := rawBd.AddDependency(child2.ID, parent2.ID)
+
+		// RawBd should fail because bd has no routing for dep command
+		if err == nil {
+			t.Log("WARNING: RawBd AddDependency passed in cross-rig context - bd may have been fixed!")
+		} else {
+			t.Logf("Verified: bd routing bug for AddDependency still exists (%v)", err)
+		}
+	})
+}
+
+// TestMatrix_AddDependencyWithType_CrossRig tests cross-rig routing for AddDependencyWithType.
+func TestMatrix_AddDependencyWithType_CrossRig(t *testing.T) {
+	if !isBdInstalled() {
+		t.Skip("bd not installed")
+	}
+
+	env := setupTestEnv(t)
+	initRealBd(t, env)
+
+	// Create two issues in the ap rig
+	apOps := beads.ForRig(env.AIPlatDir)
+	parent, err := apOps.Create(beads.CreateOptions{Title: "TypedDep Parent", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create parent in ap failed: %v", err)
+	}
+	child, err := apOps.Create(beads.CreateOptions{Title: "TypedDep Child", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create child in ap failed: %v", err)
+	}
+
+	// Test with Implementation (has routedImpl) - should pass
+	t.Run("Implementation/cross-rig", func(t *testing.T) {
+		impl := beads.NewWithTownRoot(env.GastownDir, env.TownRoot)
+		err := impl.AddDependencyWithType(child.ID, parent.ID, "tracks")
+		if err != nil {
+			t.Errorf("Implementation AddDependencyWithType failed: %v", err)
+		}
+	})
+
+	// Test with RawBd (no routedImpl) - should fail for cross-rig
+	t.Run("RawBd/cross-rig", func(t *testing.T) {
+		parent2, _ := apOps.Create(beads.CreateOptions{Title: "TypedDep Parent2", Type: "task"})
+		child2, _ := apOps.Create(beads.CreateOptions{Title: "TypedDep Child2", Type: "task"})
+
+		rawBd := &TrueRawBdOps{workDir: env.GastownDir, testHome: env.TestHome}
+		err := rawBd.AddDependencyWithType(child2.ID, parent2.ID, "tracks")
+
+		// RawBd should fail because bd has no routing for dep command
+		if err == nil {
+			t.Log("WARNING: RawBd AddDependencyWithType passed in cross-rig context - bd may have been fixed!")
+		} else {
+			t.Logf("Verified: bd routing bug for AddDependencyWithType still exists (%v)", err)
+		}
+	})
+}
+
+// TestMatrix_RemoveDependency_CrossRig tests cross-rig routing for RemoveDependency.
+func TestMatrix_RemoveDependency_CrossRig(t *testing.T) {
+	if !isBdInstalled() {
+		t.Skip("bd not installed")
+	}
+
+	env := setupTestEnv(t)
+	initRealBd(t, env)
+
+	// Create two issues in the ap rig and add a dependency
+	apOps := beads.ForRig(env.AIPlatDir)
+	parent, err := apOps.Create(beads.CreateOptions{Title: "RemoveDep Parent", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create parent in ap failed: %v", err)
+	}
+	child, err := apOps.Create(beads.CreateOptions{Title: "RemoveDep Child", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create child in ap failed: %v", err)
+	}
+
+	// Add the dependency using apOps (same rig, will work)
+	if err := apOps.AddDependency(child.ID, parent.ID); err != nil {
+		t.Fatalf("Setup AddDependency failed: %v", err)
+	}
+
+	// Test with Implementation (has routedImpl) - should pass
+	t.Run("Implementation/cross-rig", func(t *testing.T) {
+		impl := beads.NewWithTownRoot(env.GastownDir, env.TownRoot)
+		err := impl.RemoveDependency(child.ID, parent.ID)
+		if err != nil {
+			t.Errorf("Implementation RemoveDependency failed: %v", err)
+		}
+	})
+
+	// Test with RawBd (no routedImpl) - should fail for cross-rig
+	t.Run("RawBd/cross-rig", func(t *testing.T) {
+		// Create new issues and dependency for this test
+		parent2, _ := apOps.Create(beads.CreateOptions{Title: "RemoveDep Parent2", Type: "task"})
+		child2, _ := apOps.Create(beads.CreateOptions{Title: "RemoveDep Child2", Type: "task"})
+		_ = apOps.AddDependency(child2.ID, parent2.ID)
+
+		rawBd := &TrueRawBdOps{workDir: env.GastownDir, testHome: env.TestHome}
+		err := rawBd.RemoveDependency(child2.ID, parent2.ID)
+
+		// RawBd should fail because bd has no routing for dep command
+		if err == nil {
+			t.Log("WARNING: RawBd RemoveDependency passed in cross-rig context - bd may have been fixed!")
+		} else {
+			t.Logf("Verified: bd routing bug for RemoveDependency still exists (%v)", err)
+		}
+	})
+}
+
 func TestMatrix_Dependencies(t *testing.T) {
 	RunSimpleConformanceTest(t, SimpleConformanceTest{
 		Name:      "Dependencies",

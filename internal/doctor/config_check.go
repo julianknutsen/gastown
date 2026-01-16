@@ -581,8 +581,7 @@ func (c *CustomTypesCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(ctx.TownRoot)
+	b := beads.ForTown(ctx.TownRoot)
 
 	// Get current custom types configuration
 	configValue, err := b.ConfigGet("types.custom")
@@ -657,8 +656,7 @@ func parseConfigOutput(output []byte) string {
 
 // Fix registers the missing custom types.
 func (c *CustomTypesCheck) Fix(ctx *CheckContext) error {
-	// BeadsOps Migration: cmd.Dir=c.townRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(c.townRoot)
+	b := beads.ForTown(c.townRoot)
 	if err := b.ConfigSet("types.custom", constants.BeadsCustomTypes); err != nil {
 		return fmt.Errorf("bd config set types.custom: %v", err)
 	}

@@ -20,16 +20,6 @@ type Implementation struct {
 	townRoot string // Town root for prefix-based routing (auto-detected)
 }
 
-// New creates a new Implementation wrapper for the given directory.
-// It automatically detects the town root by walking up from workDir.
-// Returns an error if no town root is found (indicated by .beads/routes.jsonl).
-func New(workDir string) *Implementation {
-	townRoot, _ := FindTownRoot(workDir)
-	// Note: We don't error here - townRoot may be empty for standalone use.
-	// Routing will fail gracefully if townRoot is empty.
-	return &Implementation{workDir: workDir, townRoot: townRoot}
-}
-
 // NewWithTownRoot creates an Implementation with an explicit town root.
 // Use this when you already know the town root to avoid directory traversal.
 func NewWithTownRoot(workDir, townRoot string) *Implementation {
@@ -41,6 +31,21 @@ func NewWithTownRoot(workDir, townRoot string) *Implementation {
 func NewWithBeadsDir(workDir, beadsDir string) *Implementation {
 	townRoot, _ := FindTownRoot(workDir)
 	return &Implementation{workDir: workDir, beadsDir: beadsDir, townRoot: townRoot}
+}
+
+// ForTown creates an Implementation targeting the town-level beads database.
+// Use this for operations on town beads (hq- prefix) like mail, synthesis, agents, etc.
+// The townRoot parameter is the town's root directory (e.g., ~/repos/towns/mytown).
+func ForTown(townRoot string) *Implementation {
+	return &Implementation{workDir: townRoot, townRoot: townRoot}
+}
+
+// ForRig creates an Implementation targeting a specific rig's beads database.
+// Use this for operations on rig beads (gt-, ap- prefix) like tasks, molecules, etc.
+// The rigPath parameter is the rig's root directory (e.g., ~/repos/gastown).
+func ForRig(rigPath string) *Implementation {
+	townRoot, _ := FindTownRoot(rigPath)
+	return &Implementation{workDir: rigPath, townRoot: townRoot}
 }
 
 // routedImpl returns an Implementation routed to the correct rig for the given bead ID.
@@ -599,7 +604,7 @@ func (b *Implementation) Blocked() ([]*Issue, error) {
 }
 
 // AddDependency adds a dependency: issue depends on dependsOn.
-// bd now routes this command by prefix natively, but we keep routedImpl for reliability.
+// bd doesn't route this by prefix, so we use routedImpl.
 func (b *Implementation) AddDependency(issue, dependsOn string) error {
 	impl := b.routedImpl(issue)
 	_, err := impl.run("dep", "add", issue, dependsOn)
@@ -614,7 +619,7 @@ func (b *Implementation) AddDependencyWithType(issue, dependsOn, depType string)
 }
 
 // RemoveDependency removes a dependency.
-// bd now routes this command by prefix natively, but we keep routedImpl for reliability.
+// bd doesn't route this by prefix, so we use routedImpl.
 func (b *Implementation) RemoveDependency(issue, dependsOn string) error {
 	impl := b.routedImpl(issue)
 	_, err := impl.run("dep", "remove", issue, dependsOn)
@@ -1111,7 +1116,7 @@ func (b *Implementation) AgentState(beadID, state string) error {
 // === Label Operations ===
 
 // LabelAdd adds a label to an issue.
-// bd now routes this command by prefix natively, but we keep routedImpl for reliability.
+// bd doesn't route this by prefix, so we use routedImpl.
 func (b *Implementation) LabelAdd(id, label string) error {
 	impl := b.routedImpl(id)
 	_, err := impl.run("label", "add", id, label)
@@ -1119,7 +1124,7 @@ func (b *Implementation) LabelAdd(id, label string) error {
 }
 
 // LabelRemove removes a label from an issue.
-// bd now routes this command by prefix natively, but we keep routedImpl for reliability.
+// bd doesn't route this by prefix, so we use routedImpl.
 func (b *Implementation) LabelRemove(id, label string) error {
 	impl := b.routedImpl(id)
 	_, err := impl.run("label", "remove", id, label)
@@ -1286,7 +1291,7 @@ func (b *Implementation) Burn(opts BurnOptions) error {
 }
 
 // Comment adds a comment to an issue.
-// bd now routes this command by prefix natively, but we keep routedImpl for reliability.
+// bd doesn't route this by prefix, so we use routedImpl.
 func (b *Implementation) Comment(id, message string) error {
 	impl := b.routedImpl(id)
 	_, err := impl.run("comment", id, message)

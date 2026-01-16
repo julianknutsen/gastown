@@ -134,7 +134,7 @@ func (c *WispGCCheck) Fix(ctx *CheckContext) error {
 	for rigName := range c.abandonedRigs {
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
 
-		b := beads.New(rigPath)
+		b := beads.ForRig(rigPath)
 		if err := b.WispGC(); err != nil {
 			lastErr = fmt.Errorf("%s: %v", rigName, err)
 		}

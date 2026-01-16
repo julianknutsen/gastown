@@ -389,7 +389,7 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 
 	// Create rig identity bead
 	if newRig.Config.Prefix != "" && beadsWorkDir != "" {
-		bd := beads.New(beadsWorkDir)
+		bd := beads.ForRig(beadsWorkDir)
 		rigBeadID := beads.RigBeadIDWithPrefix(newRig.Config.Prefix, name)
 		fields := &beads.RigFields{
 			Repo:   gitURL,
@@ -555,9 +555,9 @@ func runRigReset(cmd *cobra.Command, args []string) error {
 	resetAll := !rigResetHandoff && !rigResetMail && !rigResetStale
 
 	// Town beads for handoff/mail operations
-	townBd := beads.New(townRoot)
+	townBd := beads.ForTown(townRoot)
 	// Rig beads for issue operations (uses cwd to find .beads/)
-	rigBd := beads.New(cwd)
+	rigBd := beads.ForRig(cwd)
 
 	// Reset handoff content
 	if resetAll || rigResetHandoff {

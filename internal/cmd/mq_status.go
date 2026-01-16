@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // MRStatusOutput is the JSON output structure for gt mq status.
@@ -51,15 +52,9 @@ type DependencyInfo struct {
 func runMqStatus(cmd *cobra.Command, args []string) error {
 	mrID := args[0]
 
-	// Use current working directory for beads operations
-	// (beads repos are per-rig, not per-workspace)
-	workDir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getting current directory: %w", err)
-	}
-
-	// Initialize beads client
-	bd := beads.New(workDir)
+	// Use ForTown for ID-based Show operation
+	townRoot, _ := workspace.FindFromCwd()
+	bd := beads.ForTown(townRoot)
 
 	// Fetch the issue
 	issue, err := bd.Show(mrID)

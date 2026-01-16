@@ -220,7 +220,8 @@ func runCheckpointClear(cmd *cobra.Command, args []string) error {
 
 // detectMoleculeContext tries to detect the current molecule and step from beads.
 func detectMoleculeContext(workDir string, ctx RoleInfo) (moleculeID, stepID, stepTitle string) {
-	b := beads.New(workDir)
+	// Use ForRig for List operation (non-ID, targets local rig)
+	b := beads.ForRig(workDir)
 
 	// Get agent identity for query
 	roleCtx := RoleContext{
@@ -263,7 +264,8 @@ func detectMoleculeContext(workDir string, ctx RoleInfo) (moleculeID, stepID, st
 
 // detectHookedBead finds the currently hooked bead for the agent.
 func detectHookedBead(workDir string, ctx RoleInfo) string {
-	b := beads.New(workDir)
+	// Use ForRig for List operation (non-ID, targets local rig)
+	b := beads.ForRig(workDir)
 
 	// Get agent identity
 	roleCtx := RoleContext{

@@ -67,7 +67,7 @@ func NeedsRoutingWorkaround(command string) bool {
 // Use only if "update" is in KnownBrokenRouting.
 func (b *Implementation) WorkaroundUpdate(townRoot, id string, opts UpdateOptions) error {
 	workDir := ResolveHookDir(townRoot, id, b.workDir)
-	routed := New(workDir)
+	routed := ForRig(workDir)
 	return routed.Update(id, opts)
 }
 
@@ -78,7 +78,7 @@ func (b *Implementation) WorkaroundClose(townRoot string, ids ...string) error {
 		return nil
 	}
 	workDir := ResolveHookDir(townRoot, ids[0], b.workDir)
-	routed := New(workDir)
+	routed := ForRig(workDir)
 	return routed.Close(ids...)
 }
 
@@ -86,7 +86,7 @@ func (b *Implementation) WorkaroundClose(townRoot string, ids ...string) error {
 // Use only if "show" is in KnownBrokenRouting.
 func (b *Implementation) WorkaroundShow(townRoot, id string) (*Issue, error) {
 	workDir := ResolveHookDir(townRoot, id, b.workDir)
-	routed := New(workDir)
+	routed := ForRig(workDir)
 	return routed.Show(id)
 }
 
@@ -94,7 +94,7 @@ func (b *Implementation) WorkaroundShow(townRoot, id string) (*Issue, error) {
 // Use only if "reopen" is in KnownBrokenRouting.
 func (b *Implementation) WorkaroundReopen(townRoot, id string) error {
 	workDir := ResolveHookDir(townRoot, id, b.workDir)
-	routed := New(workDir)
+	routed := ForRig(workDir)
 	return routed.Reopen(id)
 }
 
@@ -105,7 +105,7 @@ func (b *Implementation) WorkaroundDelete(townRoot string, ids ...string) error 
 		return nil
 	}
 	workDir := ResolveHookDir(townRoot, ids[0], b.workDir)
-	routed := New(workDir)
+	routed := ForRig(workDir)
 	return routed.Delete(ids...)
 }
 
@@ -113,6 +113,6 @@ func (b *Implementation) WorkaroundDelete(townRoot string, ids ...string) error 
 // Use only if "depends" is in KnownBrokenRouting.
 func (b *Implementation) WorkaroundAddDependency(townRoot, issue, dependsOn string) error {
 	workDir := ResolveHookDir(townRoot, issue, b.workDir)
-	routed := New(workDir)
+	routed := ForRig(workDir)
 	return routed.AddDependency(issue, dependsOn)
 }

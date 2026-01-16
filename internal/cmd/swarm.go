@@ -235,7 +235,7 @@ func runSwarmCreate(cmd *cobra.Command, args []string) error {
 	// First check if the epic already exists (it may be pre-created)
 	// BeadsOps Migration: cmd.Dir=beadsPath (REQUIRED - rig beads), BEADS_DIR N/A
 	beadsPath := r.BeadsPath()
-	b := beads.New(beadsPath)
+	b := beads.ForRig(beadsPath)
 	if _, err := b.Show(swarmEpic); err != nil {
 		// Epic doesn't exist, create it as a swarm molecule
 		if _, err := b.Create(beads.CreateOptions{
@@ -309,7 +309,7 @@ func runSwarmStart(cmd *cobra.Command, args []string) error {
 	var b beads.BeadsOps
 	for _, r := range rigs {
 		// Check if swarm exists in this rig by querying beads
-		rb := beads.New(r.BeadsPath())
+		rb := beads.ForRig(r.BeadsPath())
 		if _, err := rb.Show(swarmID); err == nil {
 			foundRig = r
 			b = rb
@@ -371,7 +371,7 @@ func runSwarmDispatch(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		// Use BeadsPath() to ensure we read from git-synced location
-		rb := beads.New(r.BeadsPath())
+		rb := beads.ForRig(r.BeadsPath())
 		if _, err := rb.Show(epicID); err == nil {
 			foundRig = r
 			b = rb
@@ -506,7 +506,7 @@ func runSwarmStatus(cmd *cobra.Command, args []string) error {
 	var b beads.BeadsOps
 	for _, r := range rigs {
 		// Use BeadsPath() to ensure we read from git-synced location
-		rb := beads.New(r.BeadsPath())
+		rb := beads.ForRig(r.BeadsPath())
 		if _, err := rb.Show(swarmID); err == nil {
 			foundRig = r
 			b = rb
@@ -611,7 +611,7 @@ func runSwarmList(cmd *cobra.Command, args []string) error {
 	var allSwarms []swarmListEntry
 
 	for _, r := range rigs {
-		b := beads.New(r.BeadsPath())
+		b := beads.ForRig(r.BeadsPath())
 		issues, err := b.List(beads.ListOptions{
 			Type:     "epic",
 			MolType:  "swarm",
@@ -672,7 +672,7 @@ func runSwarmLand(cmd *cobra.Command, args []string) error {
 	var b beads.BeadsOps
 	for _, r := range rigs {
 		// Use BeadsPath() for git-synced beads
-		rb := beads.New(r.BeadsPath())
+		rb := beads.ForRig(r.BeadsPath())
 		if _, err := rb.Show(swarmID); err == nil {
 			foundRig = r
 			b = rb
@@ -747,7 +747,7 @@ func runSwarmCancel(cmd *cobra.Command, args []string) error {
 	var b beads.BeadsOps
 	for _, r := range rigs {
 		// Use BeadsPath() for git-synced beads
-		rb := beads.New(r.BeadsPath())
+		rb := beads.ForRig(r.BeadsPath())
 		if _, err := rb.Show(swarmID); err == nil {
 			foundRig = r
 			b = rb

@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -50,8 +49,11 @@ func trimJSONForError(jsonOutput []byte) string {
 // verifyFormulaExists checks that the formula exists using bd formula show.
 // Formulas are TOML files (.formula.toml).
 func verifyFormulaExists(formulaName string) error {
-	cwd, _ := os.Getwd()
-	b := beads.New(cwd)
+	workDir, err := findLocalBeadsDir()
+	if err != nil {
+		return fmt.Errorf("not in a rig with formulas: %w", err)
+	}
+	b := beads.ForRig(workDir)
 
 	// Try bd formula show (handles all formula file formats)
 	if _, err := b.FormulaShow(formulaName); err == nil {
@@ -175,8 +177,11 @@ func runSlingFormula(args []string) error {
 		return nil
 	}
 
-	cwd, _ := os.Getwd()
-	b := beads.New(cwd)
+	workDir, err := findLocalBeadsDir()
+	if err != nil {
+		return fmt.Errorf("not in a rig: %w", err)
+	}
+	b := beads.ForRig(workDir)
 
 	// Step 1: Cook the formula (ensures proto exists)
 	fmt.Printf("  Cooking formula...\n")
@@ -209,7 +214,7 @@ func runSlingFormula(args []string) error {
 	// Step 3: Hook the wisp bead using bd update.
 	// See: https://github.com/steveyegge/gastown/issues/148
 	hookDir := beads.ResolveHookDir(townRoot, wispRootID, "")
-	bHook := beads.New(hookDir)
+	bHook := beads.ForRig(hookDir)
 	status := beads.StatusHooked
 	if err := bHook.Update(wispRootID, beads.UpdateOptions{Status: &status, Assignee: &targetAgent}); err != nil {
 		return fmt.Errorf("hooking wisp bead: %w", err)

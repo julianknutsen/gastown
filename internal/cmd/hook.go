@@ -142,7 +142,8 @@ func runHook(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
 
-	b := beads.New(workDir)
+	// Use ForRig for List operation (non-ID, targets local rig)
+	b := beads.ForRig(workDir)
 
 	// Check for existing hooked bead for this agent
 	existingPinned, err := b.List(beads.ListOptions{
@@ -283,7 +284,8 @@ func runHookShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
 
-	b := beads.New(workDir)
+	// Use ForRig for List operation (non-ID, targets local rig)
+	b := beads.ForRig(workDir)
 
 	// Query for hooked beads assigned to the target
 	hookedBeads, err := b.List(beads.ListOptions{

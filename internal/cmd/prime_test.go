@@ -397,7 +397,7 @@ func TestDetectSessionState(t *testing.T) {
 		}
 
 		// Create a hooked bead assigned to beads/polecats/jade
-		b := beads.New(workDir)
+		b := beads.ForRig(workDir)
 		issue, err := b.Create(beads.CreateOptions{
 			Title:    "Test hooked bead",
 			Priority: 2,

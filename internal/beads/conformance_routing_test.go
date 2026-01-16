@@ -298,7 +298,7 @@ func TestConformance_IsBeadsRepo_NotInitialized(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// No .beads directory
-	impl := beads.New(tmpDir)
+	impl := beads.ForRig(tmpDir)
 	if impl.IsBeadsRepo() {
 		t.Error("IsBeadsRepo should return false for uninitialized directory")
 	}
@@ -309,7 +309,7 @@ func TestConformance_IsBeadsRepo_Initialized(t *testing.T) {
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	_ = os.MkdirAll(beadsDir, 0755)
 
-	impl := beads.New(tmpDir)
+	impl := beads.ForRig(tmpDir)
 	if !impl.IsBeadsRepo() {
 		t.Error("IsBeadsRepo should return true for initialized directory")
 	}
@@ -320,7 +320,7 @@ func TestConformance_IsBeadsRepo_WithRedirect(t *testing.T) {
 
 	// From crew dir (which has redirect), should still be considered a beads repo
 	// because the redirect points to a valid beads directory
-	impl := beads.New(env.CrewDir)
+	impl := beads.ForRig(env.CrewDir)
 	if !impl.IsBeadsRepo() {
 		t.Error("IsBeadsRepo should return true for directory with valid redirect")
 	}

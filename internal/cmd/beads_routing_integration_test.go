@@ -186,7 +186,7 @@ func TestBeadsRoutingFromTownRoot(t *testing.T) {
 		{testrigIssue.ID, testrigIssue.Title},
 	}
 
-	townBeads := beads.New(townRoot)
+	townBeads := beads.ForTown(townRoot)
 	for _, tc := range tests {
 		t.Run(tc.id, func(t *testing.T) {
 			issue, err := townBeads.Show(tc.id)
@@ -321,7 +321,7 @@ func TestBeadsListFromPolecatDirectory(t *testing.T) {
 
 	issue := createTestIssue(t, rigPath, "Polecat list redirect test")
 
-	issues, err := beads.New(polecatDir).List(beads.ListOptions{
+	issues, err := beads.ForRig(polecatDir).List(beads.ListOptions{
 		Status:   "open",
 		Priority: -1,
 	})
@@ -349,7 +349,7 @@ func TestBeadsListFromCrewDirectory(t *testing.T) {
 
 	issue := createTestIssue(t, rigPath, "Crew list redirect test")
 
-	issues, err := beads.New(crewDir).List(beads.ListOptions{
+	issues, err := beads.ForRig(crewDir).List(beads.ListOptions{
 		Status:   "open",
 		Priority: -1,
 	})

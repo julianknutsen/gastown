@@ -156,9 +156,8 @@ func registerCustomTypes(workDir string) error {
 		return nil // no beads DB yet, skip silently
 	}
 
-	// Use BeadsOps interface for config set
-	// cmd.Dir was N/A - workDir is the current working directory
-	b := beads.New(workDir)
+	// Use ForRig for ConfigSet operation (local config)
+	b := beads.ForRig(workDir)
 	if err := b.ConfigSet("types.custom", constants.BeadsCustomTypes); err != nil {
 		// Check for common expected errors
 		errStr := err.Error()

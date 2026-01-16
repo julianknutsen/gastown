@@ -436,7 +436,7 @@ func shouldNudgeTarget(townRoot, targetAddress string, force bool) (bool, string
 		return true, "", nil
 	}
 
-	bd := beads.New(townRoot)
+	bd := beads.ForTown(townRoot)
 	level, err := bd.GetAgentNotificationLevel(agentBeadID)
 	if err != nil {
 		// Agent bead might not exist, allow the nudge

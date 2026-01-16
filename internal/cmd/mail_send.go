@@ -112,7 +112,7 @@ func runMailSend(cmd *cobra.Command, args []string) error {
 
 	// Use address resolver for new address types
 	townRoot, _ := workspace.FindFromCwd()
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	resolver := mail.NewResolver(b, townRoot)
 
 	recipients, err := resolver.Resolve(to)

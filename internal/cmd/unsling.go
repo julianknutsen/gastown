@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
@@ -92,17 +90,8 @@ func runUnsling(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("finding town root: %w", err)
 	}
 
-	// Extract rig name from agent ID (e.g., "gastown/crew/joe" -> "gastown")
-	// For town-level agents like "mayor/", use town root
-	rigName := strings.Split(agentID, "/")[0]
-	var beadsPath string
-	if rigName == "mayor" || rigName == "deacon" {
-		beadsPath = townRoot
-	} else {
-		beadsPath = filepath.Join(townRoot, rigName)
-	}
-
-	b := beads.New(beadsPath)
+	// Use ForTown for ID-based operations (Show, ClearHookBead)
+	b := beads.ForTown(townRoot)
 
 	// Convert agent ID to agent bead ID and look up the agent bead
 	agentBeadID := agentIDToBeadID(agentID, townRoot)

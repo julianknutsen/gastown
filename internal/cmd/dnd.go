@@ -65,7 +65,7 @@ func runDnd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not determine agent bead ID for role %s", roleInfo.Role)
 	}
 
-	bd := beads.New(townRoot)
+	bd := beads.ForTown(townRoot)
 
 	// Get current level
 	currentLevel, err := bd.GetAgentNotificationLevel(agentBeadID)

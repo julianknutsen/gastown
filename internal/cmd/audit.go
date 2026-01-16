@@ -259,8 +259,9 @@ func collectBeadsActivity(townRoot, actor string, since time.Time) ([]AuditEntry
 	var entries []AuditEntry
 
 	// Find the gastown beads path (where gt- prefix issues live)
+	// Use ForRig for List operation (non-ID, targets specific rig's database)
 	gastownBeadsPath := filepath.Join(townRoot, "gastown", "mayor", "rig")
-	b := beads.New(gastownBeadsPath)
+	b := beads.ForRig(gastownBeadsPath)
 
 	// List all issues to filter by created_by and assignee
 	issues, err := b.List(beads.ListOptions{

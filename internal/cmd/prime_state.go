@@ -48,7 +48,8 @@ func detectSessionState(ctx RoleContext) SessionState {
 	// Check for hooked work (autonomous state)
 	agentID := getAgentIdentity(ctx)
 	if agentID != "" {
-		b := beads.New(ctx.WorkDir)
+		// Use ForRig for List operation (non-ID, targets local rig)
+		b := beads.ForRig(ctx.WorkDir)
 		hookedBeads, err := b.List(beads.ListOptions{
 			Status:   beads.StatusHooked,
 			Assignee: agentID,

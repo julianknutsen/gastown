@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -134,10 +135,8 @@ type queueMessage struct {
 // listUnclaimedQueueMessages lists unclaimed messages in a queue.
 // Unclaimed messages have queue:<name> label but no claimed-by label.
 func listUnclaimedQueueMessages(beadsDir, queueName string) ([]queueMessage, error) {
-	// Use BeadsOps interface
-	// cmd.Dir was N/A - ran from cwd
-	// BEADS_DIR = beadsDir - REQUIRED for explicit beads directory
-	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	// Use ForRig for List operation (non-ID, targets local database)
+	b := beads.ForRig(filepath.Dir(beadsDir))
 
 	// List messages with queue:<name> label and status=open
 	issues, err := b.List(beads.ListOptions{
@@ -197,11 +196,9 @@ func parseTime(s string) time.Time {
 
 // claimQueueMessage claims a message by adding claimed-by and claimed-at labels.
 func claimQueueMessage(beadsDir, messageID, claimant string) error {
-	// Use BeadsOps interface
-	// cmd.Dir was N/A - ran from cwd
-	// BEADS_DIR = beadsDir - REQUIRED for explicit beads directory
-	// NOTE: BD_ACTOR was set to claimant, but not supported by interface - omitted
-	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	// Use ForTown for ID-based LabelAdd operation
+	townRoot, _ := workspace.Find(filepath.Dir(beadsDir))
+	b := beads.ForTown(townRoot)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 
@@ -270,10 +267,9 @@ type queueMessageInfo struct {
 
 // getQueueMessageInfo retrieves information about a queue message.
 func getQueueMessageInfo(beadsDir, messageID string) (*queueMessageInfo, error) {
-	// Use BeadsOps interface
-	// cmd.Dir was N/A - ran from cwd
-	// BEADS_DIR = beadsDir - REQUIRED for explicit beads directory
-	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	// Use ForTown for ID-based Show operation
+	townRoot, _ := workspace.Find(filepath.Dir(beadsDir))
+	b := beads.ForTown(townRoot)
 
 	issue, err := b.Show(messageID)
 	if err != nil {
@@ -308,11 +304,9 @@ func getQueueMessageInfo(beadsDir, messageID string) (*queueMessageInfo, error) 
 
 // releaseQueueMessage releases a claimed message by removing claim labels.
 func releaseQueueMessage(beadsDir, messageID, actor string) error {
-	// Use BeadsOps interface
-	// cmd.Dir was N/A - ran from cwd
-	// BEADS_DIR = beadsDir - REQUIRED for explicit beads directory
-	// NOTE: BD_ACTOR was set to actor, but not supported by interface - omitted
-	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	// Use ForTown for ID-based LabelRemove operation
+	townRoot, _ := workspace.Find(filepath.Dir(beadsDir))
+	b := beads.ForTown(townRoot)
 
 	// Get current message info to find the exact claim labels
 	info, err := getQueueMessageInfo(beadsDir, messageID)

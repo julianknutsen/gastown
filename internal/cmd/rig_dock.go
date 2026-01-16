@@ -80,7 +80,7 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 
 	// Find the rig identity bead
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
-	bd := beads.New(r.BeadsPath())
+	bd := beads.ForRig(r.BeadsPath())
 
 	// Check if rig bead exists, create if not
 	rigBead, err := bd.Show(rigBeadID)
@@ -145,7 +145,7 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sync beads to propagate to other clones
-	// Use BeadsOps interface (bd variable is already beads.New(r.BeadsPath()))
+	// Use BeadsOps interface (bd variable is beads.ForRig(r.BeadsPath()))
 	// cmd.Dir = r.BeadsPath() - REQUIRED for operating on specific rig's beads path
 	// BEADS_DIR was N/A - not set
 	fmt.Printf("  Syncing beads...\n")
@@ -181,7 +181,7 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 
 	// Find the rig identity bead
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
-	bd := beads.New(r.BeadsPath())
+	bd := beads.ForRig(r.BeadsPath())
 
 	// Check if rig bead exists, create if not
 	rigBead, err := bd.Show(rigBeadID)
@@ -212,7 +212,7 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sync beads to propagate to other clones
-	// Use BeadsOps interface (bd variable is already beads.New(r.BeadsPath()))
+	// Use BeadsOps interface (bd variable is beads.ForRig(r.BeadsPath()))
 	// cmd.Dir = r.BeadsPath() - REQUIRED for operating on specific rig's beads path
 	// BEADS_DIR was N/A - not set
 	fmt.Printf("  Syncing beads...\n")
@@ -238,7 +238,7 @@ func IsRigDocked(townRoot, rigName, prefix string) bool {
 		beadsPath = rigPath
 	}
 
-	bd := beads.New(beadsPath)
+	bd := beads.ForRig(beadsPath)
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
 
 	rigBead, err := bd.Show(rigBeadID)

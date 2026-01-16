@@ -730,7 +730,8 @@ func getHookedWork(identity string, maxLen int, beadsDir string) string {
 		}
 	}
 
-	b := beads.New(beadsDir)
+	// Use ForRig for List operation (non-ID, targets local rig)
+	b := beads.ForRig(beadsDir)
 
 	// Query for hooked beads assigned to this agent
 	hookedBeads, err := b.List(beads.ListOptions{
@@ -766,8 +767,8 @@ func getCurrentWork(t *tmux.Tmux, session string, maxLen int) string {
 		return ""
 	}
 
-	// Query beads for in_progress issues
-	b := beads.New(workDir)
+	// Use ForRig for List operation (non-ID, targets local rig)
+	b := beads.ForRig(workDir)
 	issues, err := b.List(beads.ListOptions{
 		Status:   "in_progress",
 		Priority: -1,

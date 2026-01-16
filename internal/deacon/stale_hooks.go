@@ -121,8 +121,7 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 
 // listHookedBeads returns all beads with status=hooked.
 func listHookedBeads(townRoot string) ([]*HookedBead, error) {
-	// BeadsOps Migration: cmd.Dir=townRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	issues, err := b.List(beads.ListOptions{Status: "hooked", Limit: 0})
 	if err != nil {
 		// No hooked beads is not an error
@@ -198,8 +197,7 @@ func assigneeToSessionName(assignee string) string {
 
 // unhookBead sets a bead's status back to 'open'.
 func unhookBead(townRoot, beadID string) error {
-	// BeadsOps Migration: cmd.Dir=townRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	status := "open"
 	return b.Update(beadID, beads.UpdateOptions{Status: &status})
 }

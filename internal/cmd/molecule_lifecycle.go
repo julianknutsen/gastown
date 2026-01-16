@@ -52,13 +52,8 @@ func runMoleculeBurn(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Find beads directory
-	workDir, err := findLocalBeadsDir()
-	if err != nil {
-		return fmt.Errorf("not in a beads workspace: %w", err)
-	}
-
-	b := beads.New(workDir)
+	// Use ForTown for ID-based operations (FindHandoffBead, DetachMoleculeWithAudit)
+	b := beads.ForTown(townRoot)
 
 	// Find agent's pinned bead (handoff bead)
 	parts := strings.Split(target, "/")
@@ -156,13 +151,8 @@ func runMoleculeSquash(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Find beads directory
-	workDir, err := findLocalBeadsDir()
-	if err != nil {
-		return fmt.Errorf("not in a beads workspace: %w", err)
-	}
-
-	b := beads.New(workDir)
+	// Use ForTown for ID-based operations (FindHandoffBead, DetachMoleculeWithAudit)
+	b := beads.ForTown(townRoot)
 
 	// Find agent's pinned bead (handoff bead)
 	parts := strings.Split(target, "/")

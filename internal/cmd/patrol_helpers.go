@@ -26,7 +26,7 @@ type PatrolConfig struct {
 // findActivePatrol finds an active patrol molecule for the role.
 // Returns the patrol ID, display line, and whether one was found.
 func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool) {
-	b := beads.New(cfg.BeadsDir)
+	b := beads.ForRig(cfg.BeadsDir)
 
 	// Check for in-progress patrol first (if configured)
 	if cfg.CheckInProgress {
@@ -82,7 +82,7 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 // autoSpawnPatrol creates and pins a new patrol wisp.
 // Returns the patrol ID or an error.
 func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
-	b := beads.New(cfg.BeadsDir)
+	b := beads.ForRig(cfg.BeadsDir)
 
 	// Find the proto ID for the patrol molecule
 	protos, err := b.MolCatalog()

@@ -313,7 +313,7 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 	convoyID := fmt.Sprintf("hq-cv-%s", generateShortID())
 
 	// Use BeadsOps interface for create
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	_, err = b.CreateWithID(convoyID, beads.CreateOptions{
 		Title:       name,
 		Type:        "convoy",
@@ -368,7 +368,7 @@ func runConvoyAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate convoy exists and get its status using BeadsOps
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	issue, err := b.Show(convoyID)
 	if err != nil {
 		return fmt.Errorf("convoy '%s' not found", convoyID)
@@ -444,7 +444,7 @@ func runConvoyClose(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get convoy details using BeadsOps
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	issue, err := b.Show(convoyID)
 	if err != nil {
 		return fmt.Errorf("convoy '%s' not found", convoyID)
@@ -565,7 +565,7 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 	blockedIssues := getBlockedIssueIDs()
 
 	// List all open convoys using BeadsOps
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	issues, err := b.List(beads.ListOptions{
 		Type:   "convoy",
 		Status: "open",
@@ -617,13 +617,13 @@ func getBlockedIssueIDs() map[string]bool {
 	blocked := make(map[string]bool)
 
 	// Get cwd for beads operations
-	cwd, err := os.Getwd()
-	if err != nil {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil || townRoot == "" {
 		return blocked
 	}
 
-	// Use BeadsOps interface for blocked issues
-	b := beads.New(cwd)
+	// Use ForTown for cross-rig routing on ID-based operations
+	b := beads.ForTown(townRoot)
 	issues, err := b.Blocked()
 	if err != nil {
 		return blocked // Return empty set on error
@@ -679,7 +679,7 @@ func checkAndCloseCompletedConvoys(townBeads string) ([]struct{ ID, Title string
 	var closed []struct{ ID, Title string }
 
 	// List all open convoys using BeadsOps
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	issues, err := b.List(beads.ListOptions{
 		Type:   "convoy",
 		Status: "open",
@@ -724,7 +724,7 @@ func checkAndCloseCompletedConvoys(townBeads string) ([]struct{ ID, Title string
 // notifyConvoyCompletion sends notifications to owner and any notify addresses.
 func notifyConvoyCompletion(townBeads, convoyID, title string) {
 	// Get convoy description to find owner and notify addresses using BeadsOps
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	issue, err := b.Show(convoyID)
 	if err != nil {
 		return
@@ -777,7 +777,7 @@ func runConvoyStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get convoy details using BeadsOps
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	convoy, err := b.Show(convoyID)
 	if err != nil {
 		return fmt.Errorf("convoy '%s' not found", convoyID)
@@ -872,7 +872,7 @@ func runConvoyStatus(cmd *cobra.Command, args []string) error {
 
 func showAllConvoyStatus(townBeads string) error {
 	// List all convoy-type issues using BeadsOps
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	convoys, err := b.List(beads.ListOptions{
 		Type:   "convoy",
 		Status: "open",
@@ -909,7 +909,7 @@ func runConvoyList(cmd *cobra.Command, args []string) error {
 	}
 
 	// List convoy-type issues using BeadsOps
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	listOpts := beads.ListOptions{Type: "convoy"}
 	if convoyListStatus != "" {
 		listOpts.Status = convoyListStatus
@@ -1128,14 +1128,14 @@ func getIssueDetailsBatch(issueIDs []string) map[string]*issueDetails {
 		return result
 	}
 
-	// Get cwd for beads operations
-	cwd, err := os.Getwd()
-	if err != nil {
+	// Get town root for cross-rig routing
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil || townRoot == "" {
 		return result
 	}
 
-	// Use BeadsOps interface for batch show
-	b := beads.New(cwd)
+	// Use ForTown for cross-rig routing on ID-based operations
+	b := beads.ForTown(townRoot)
 	issuesMap, err := b.ShowMultiple(issueIDs)
 	if err != nil {
 		// Batch failed - fall back to individual lookups for robustness
@@ -1164,14 +1164,14 @@ func getIssueDetailsBatch(issueIDs []string) map[string]*issueDetails {
 // getIssueDetails fetches issue details by trying to show it via bd.
 // Prefer getIssueDetailsBatch for multiple issues to avoid N+1 subprocess calls.
 func getIssueDetails(issueID string) *issueDetails {
-	// Get cwd for beads operations
-	cwd, err := os.Getwd()
-	if err != nil {
+	// Get town root for cross-rig routing
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil || townRoot == "" {
 		return nil
 	}
 
-	// Use BeadsOps interface for show
-	b := beads.New(cwd)
+	// Use ForTown for cross-rig routing on ID-based operations
+	b := beads.ForTown(townRoot)
 	issue, err := b.Show(issueID)
 	if err != nil {
 		return nil
@@ -1357,7 +1357,7 @@ func runConvoyTUI() error {
 // Numbers correspond to the order shown in 'gt convoy list'.
 func resolveConvoyNumber(townBeads string, n int) (string, error) {
 	// Get convoy list (same query as runConvoyList) using BeadsOps
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 	convoys, err := b.List(beads.ListOptions{Type: "convoy"})
 	if err != nil {
 		return "", fmt.Errorf("listing convoys: %w", err)

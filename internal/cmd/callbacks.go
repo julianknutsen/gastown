@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
@@ -339,8 +338,7 @@ func handleMergeCompleted(townRoot string, msg *mail.Message, dryRun bool) (stri
 
 	// Close the source issue if we have it
 	if sourceIssue != "" {
-		cwd, _ := os.Getwd()
-		bd := beads.New(cwd)
+		bd := beads.ForTown(townRoot)
 		reason := fmt.Sprintf("Merged in %s", mergeCommit)
 		if err := bd.Close(sourceIssue, reason); err != nil {
 			// Non-fatal: issue might already be closed or not exist

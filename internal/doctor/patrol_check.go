@@ -90,8 +90,7 @@ func (c *PatrolMoleculesExistCheck) Run(ctx *CheckContext) *CheckResult {
 
 // checkPatrolMolecules returns missing patrol molecule titles for a rig.
 func (c *PatrolMoleculesExistCheck) checkPatrolMolecules(rigPath string) []string {
-	// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig beads), BEADS_DIR N/A
-	b := beads.New(rigPath)
+	b := beads.ForRig(rigPath)
 
 	// List molecules using bd
 	issues, err := b.List(beads.ListOptions{Type: "molecule"})
@@ -119,7 +118,7 @@ func (c *PatrolMoleculesExistCheck) Fix(ctx *CheckContext) error {
 	for rigName, missing := range c.missingMols {
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
 		// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig beads), BEADS_DIR N/A
-		b := beads.New(rigPath)
+		b := beads.ForRig(rigPath)
 		for _, mol := range missing {
 			desc := getPatrolMoleculeDesc(mol)
 			if _, err := b.Create(beads.CreateOptions{

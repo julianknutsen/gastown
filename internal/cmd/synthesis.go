@@ -320,11 +320,8 @@ func runSynthesisClose(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Close the convoy
-	// Use BeadsOps interface
-	// cmd.Dir = townBeads - REQUIRED for town beads operations
-	// BEADS_DIR was N/A - not set
-	b := beads.New(townBeads)
+	// Close the convoy - target town beads
+	b := beads.ForTown(townBeads)
 	closeOpts := beads.CloseOptions{
 		Reason:  "synthesis complete",
 		Session: runtime.SessionIDFromEnv(),
@@ -348,10 +345,8 @@ func getConvoyMeta(convoyID string) (*ConvoyMeta, error) {
 		return nil, err
 	}
 
-	// Use BeadsOps interface
-	// cmd.Dir = townBeads - REQUIRED for town beads operations
-	// BEADS_DIR was N/A - not set
-	b := beads.New(townBeads)
+	// Target town beads for convoy lookup
+	b := beads.ForTown(townBeads)
 	convoy, err := b.Show(convoyID)
 	if err != nil {
 		return nil, fmt.Errorf("convoy '%s' not found", convoyID)
@@ -517,10 +512,8 @@ func createSynthesisBead(convoyID string, meta *ConvoyMeta, f *formula.Formula,
 		return "", err
 	}
 
-	// Use BeadsOps interface
-	// cmd.Dir = townBeads - REQUIRED for town beads operations
-	// BEADS_DIR was N/A - not set
-	b := beads.New(townBeads)
+	// Target town beads for synthesis creation
+	b := beads.ForTown(townBeads)
 	issue, err := b.Create(beads.CreateOptions{
 		Title:       title,
 		Type:        "task",

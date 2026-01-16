@@ -933,9 +933,7 @@ func agentAddressToIDs(address string) (beadID, sessionName string, err error) {
 
 // getAgentBeadUpdateTime gets the update time from an agent bead.
 func getAgentBeadUpdateTime(townRoot, beadID string) (time.Time, error) {
-	// Use BeadsOps interface
-	// cmd.Dir was REQUIRED - operating on townRoot
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	issue, err := b.Show(beadID)
 	if err != nil {
 		return time.Time{}, err
@@ -962,9 +960,7 @@ func updateAgentBeadState(townRoot, agent, state, _ string) { // reason unused b
 		return
 	}
 
-	// Use BeadsOps interface
-	// cmd.Dir was REQUIRED - operating on townRoot
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	_ = b.AgentState(beadID, state) // Best effort
 }
 

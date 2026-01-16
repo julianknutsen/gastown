@@ -279,7 +279,7 @@ func (m *SessionManager) Stop(polecat string, force bool) error {
 // syncBeads runs bd sync in the given directory.
 func (m *SessionManager) syncBeads(workDir string) error {
 	// BeadsOps Migration: cmd.Dir=workDir (REQUIRED - polecat beads location), BEADS_DIR N/A
-	b := beads.New(workDir)
+	b := beads.ForRig(workDir)
 	return b.Sync()
 }
 
@@ -452,7 +452,7 @@ func (m *SessionManager) StopAll(force bool) error {
 // hookIssue pins an issue to a polecat's hook using bd update.
 func (m *SessionManager) hookIssue(issueID, agentID, workDir string) error {
 	// BeadsOps Migration: cmd.Dir=workDir (REQUIRED - polecat beads location), BEADS_DIR N/A
-	b := beads.New(workDir)
+	b := beads.ForRig(workDir)
 	status := "hooked"
 	if err := b.Update(issueID, beads.UpdateOptions{
 		Status:   &status,

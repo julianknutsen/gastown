@@ -30,7 +30,7 @@ func verifyBeadExists(beadID string) error {
 	if err != nil {
 		townRoot, _ = os.Getwd()
 	}
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	_, err = b.Show(beadID)
 	if err != nil {
 		return fmt.Errorf("bead '%s' not found", beadID)
@@ -45,7 +45,7 @@ func getBeadInfo(beadID string) (*beadInfo, error) {
 	if err != nil {
 		townRoot, _ = os.Getwd()
 	}
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	issue, err := b.Show(beadID)
 	if err != nil {
 		return nil, fmt.Errorf("bead '%s' not found", beadID)
@@ -60,8 +60,8 @@ func getBeadInfo(beadID string) (*beadInfo, error) {
 // storeArgsInBead stores args in the bead's description using attached_args field.
 // This enables no-tmux mode where agents discover args via gt prime / bd show.
 func storeArgsInBead(beadID, args string) error {
-	cwd, _ := os.Getwd()
-	b := beads.New(cwd)
+	townRoot, _ := workspace.FindFromCwd()
+	b := beads.ForTown(townRoot)
 
 	// Get the bead to preserve existing description content
 	issue, err := b.Show(beadID)
@@ -96,8 +96,8 @@ func storeDispatcherInBead(beadID, dispatcher string) error {
 		return nil
 	}
 
-	cwd, _ := os.Getwd()
-	b := beads.New(cwd)
+	townRoot, _ := workspace.FindFromCwd()
+	b := beads.ForTown(townRoot)
 
 	// Get the bead to preserve existing description content
 	issue, err := b.Show(beadID)
@@ -306,7 +306,7 @@ func updateAgentHookBead(agentID, beadID, workDir, townBeadsDir string) {
 	// Set hook_bead to the slung work (gt-zecmc: removed agent_state update).
 	// Agent liveness is observable from tmux - no need to record it in bead.
 	// For cross-database scenarios, slot set may fail gracefully (warning only).
-	bd := beads.New(bdWorkDir)
+	bd := beads.ForRig(bdWorkDir)
 	if err := bd.SetHookBead(agentBeadID, beadID); err != nil {
 		// Log warning instead of silent ignore - helps debug cross-beads issues
 		fmt.Fprintf(os.Stderr, "Warning: couldn't set agent %s hook: %v\n", agentBeadID, err)
@@ -365,7 +365,7 @@ func attachPolecatWorkMolecule(targetAgent, hookWorkDir, townRoot string) error 
 	// This fixes issue #197: polecat fails to hook when slinging with molecule.
 	rigDir := beads.ResolveHookDir(townRoot, prefix+"-"+polecatName, hookWorkDir)
 
-	b := beads.New(rigDir)
+	b := beads.ForRig(rigDir)
 
 	// Check if molecule is already attached (avoid duplicate attach)
 	attachment, err := b.GetAttachment(agentBeadID)

@@ -84,12 +84,12 @@ type GateWakeResult struct {
 func runGateWake(cmd *cobra.Command, args []string) error {
 	gateID := args[0]
 
-	// Use BeadsOps interface (runs from cwd)
-	cwd, err := os.Getwd()
+	// Use ForTown for cross-rig routing on ID-based operations
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-	b := beads.New(cwd)
+	b := beads.ForTown(townRoot)
 
 	// Get gate info
 	gateInfo, err := b.GateShow(gateID)
@@ -123,12 +123,7 @@ func runGateWake(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Find town root for mail routing
-	townRoot, err := workspace.FindFromCwd()
-	if err != nil {
-		return fmt.Errorf("finding town root: %w", err)
-	}
-
+	// Use town root for mail routing (already found above)
 	router := mail.NewRouter(townRoot)
 
 	result := GateWakeResult{

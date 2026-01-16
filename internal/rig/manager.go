@@ -370,8 +370,7 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		// beads.db is gitignored so it won't exist after clone - we need to create it.
 		// bd init --prefix will create the database and auto-import from issues.jsonl.
 		if _, err := os.Stat(sourceBeadsDB); os.IsNotExist(err) {
-			// BeadsOps Migration: cmd.Dir=mayorRigPath (REQUIRED - mayor's beads), BEADS_DIR N/A
-			bMayor := beads.New(mayorRigPath)
+			bMayor := beads.ForRig(mayorRigPath)
 			if _, err := bMayor.Run("init", "--prefix", opts.BeadsPrefix); err != nil {
 				fmt.Printf("  Warning: Could not init bd database: %v\n", err)
 			}
@@ -1026,8 +1025,7 @@ func (m *Manager) createPatrolHooks(workspacePath string, runtimeConfig *config.
 // seedPatrolMolecules creates patrol molecule prototypes in the rig's beads database.
 // These molecules define the work loops for Deacon, Witness, and Refinery roles.
 func (m *Manager) seedPatrolMolecules(rigPath string) error {
-	// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig's beads), BEADS_DIR N/A
-	bRig := beads.New(rigPath)
+	bRig := beads.ForRig(rigPath)
 	if _, err := bRig.Run("mol", "seed", "--patrol"); err != nil {
 		// Fallback: bd mol seed might not support --patrol yet
 		// Try creating them individually via bd create
@@ -1038,8 +1036,7 @@ func (m *Manager) seedPatrolMolecules(rigPath string) error {
 
 // seedPatrolMoleculesManually creates patrol molecules using bd create commands.
 func (m *Manager) seedPatrolMoleculesManually(rigPath string) error {
-	// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig's beads), BEADS_DIR N/A
-	bRig := beads.New(rigPath)
+	bRig := beads.ForRig(rigPath)
 
 	// Patrol molecule definitions for seeding
 	patrolMols := []struct {

@@ -67,7 +67,7 @@ func runEscalate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create escalation bead
-	bd := beads.New(beads.ResolveBeadsDir(townRoot))
+	bd := beads.ForTown(beads.ResolveBeadsDir(townRoot))
 	fields := &beads.EscalationFields{
 		Severity:    severity,
 		Reason:      escalateReason,
@@ -158,7 +158,7 @@ func runEscalateList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	bd := beads.New(beads.ResolveBeadsDir(townRoot))
+	bd := beads.ForTown(beads.ResolveBeadsDir(townRoot))
 
 	var issues []*beads.Issue
 	if escalateListAll {
@@ -224,7 +224,7 @@ func runEscalateAck(cmd *cobra.Command, args []string) error {
 		ackedBy = "unknown"
 	}
 
-	bd := beads.New(beads.ResolveBeadsDir(townRoot))
+	bd := beads.ForTown(beads.ResolveBeadsDir(townRoot))
 	if err := bd.AckEscalation(escalationID, ackedBy); err != nil {
 		return fmt.Errorf("acknowledging escalation: %w", err)
 	}
@@ -253,7 +253,7 @@ func runEscalateClose(cmd *cobra.Command, args []string) error {
 		closedBy = "unknown"
 	}
 
-	bd := beads.New(beads.ResolveBeadsDir(townRoot))
+	bd := beads.ForTown(beads.ResolveBeadsDir(townRoot))
 	if err := bd.CloseEscalation(escalationID, closedBy, escalateCloseReason); err != nil {
 		return fmt.Errorf("closing escalation: %w", err)
 	}
@@ -285,7 +285,7 @@ func runEscalateStale(cmd *cobra.Command, args []string) error {
 	threshold := escalationConfig.GetStaleThreshold()
 	maxReescalations := escalationConfig.GetMaxReescalations()
 
-	bd := beads.New(beads.ResolveBeadsDir(townRoot))
+	bd := beads.ForTown(beads.ResolveBeadsDir(townRoot))
 	stale, err := bd.ListStaleEscalations(threshold)
 	if err != nil {
 		return fmt.Errorf("listing stale escalations: %w", err)
@@ -466,7 +466,7 @@ func runEscalateShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	bd := beads.New(beads.ResolveBeadsDir(townRoot))
+	bd := beads.ForTown(beads.ResolveBeadsDir(townRoot))
 	issue, fields, err := bd.GetEscalationBead(escalationID)
 	if err != nil {
 		return fmt.Errorf("getting escalation: %w", err)

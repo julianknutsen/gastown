@@ -410,8 +410,8 @@ func querySessionEvents() []CostEntry {
 
 // querySessionEventsFromLocation queries a single beads location for session.ended events.
 func querySessionEventsFromLocation(location string) ([]CostEntry, error) {
-	// Use BeadsOps interface for this location
-	b := beads.New(location)
+	// Use ForRig to query this specific location's database
+	b := beads.ForRig(location)
 
 	// Step 1: Get list of event IDs
 	issues, err := b.List(beads.ListOptions{
@@ -479,12 +479,12 @@ func querySessionEventsFromLocation(location string) ([]CostEntry, error) {
 
 // queryDigestBeads queries costs.digest events from the past N days and extracts session entries.
 func queryDigestBeads(days int) ([]CostEntry, error) {
-	// Use BeadsOps interface (runs from cwd)
-	cwd, err := os.Getwd()
+	// Use ForRig to query local digest beads
+	workDir, err := findLocalBeadsDir()
 	if err != nil {
 		return nil, nil
 	}
-	b := beads.New(cwd)
+	b := beads.ForRig(workDir)
 
 	// Get list of event IDs
 	issues, err := b.List(beads.ListOptions{
@@ -759,12 +759,12 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("marshaling payload: %w", err)
 	}
 
-	// Use BeadsOps interface (runs from cwd)
-	cwd, err := os.Getwd()
+	// Use ForRig to create local session cost wisp
+	workDir, err := findLocalBeadsDir()
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+		return fmt.Errorf("not in a rig: %w", err)
 	}
-	b := beads.New(cwd)
+	b := beads.ForRig(workDir)
 
 	// Create ephemeral wisp for session cost:
 	// - Is stored locally only (not exported to JSONL)
@@ -1014,12 +1014,12 @@ func runCostsDigest(cmd *cobra.Command, args []string) error {
 
 // querySessionCostWisps queries ephemeral session.ended events for a target date.
 func querySessionCostWisps(targetDate time.Time) ([]CostEntry, error) {
-	// Use BeadsOps interface (runs from cwd)
-	cwd, err := os.Getwd()
+	// Use ForRig to query local session cost wisps
+	workDir, err := findLocalBeadsDir()
 	if err != nil {
 		return nil, nil
 	}
-	b := beads.New(cwd)
+	b := beads.ForRig(workDir)
 
 	// List all wisps including closed ones
 	wisps, err := b.WispList(true) // true = all (including closed)
@@ -1134,12 +1134,12 @@ func createCostDigestBead(digest CostDigest) (string, error) {
 		return "", fmt.Errorf("marshaling digest payload: %w", err)
 	}
 
-	// Use BeadsOps interface (runs from cwd)
-	cwd, err := os.Getwd()
+	// Use ForRig to create local digest bead
+	workDir, err := findLocalBeadsDir()
 	if err != nil {
-		return "", fmt.Errorf("getting working directory: %w", err)
+		return "", fmt.Errorf("not in a rig: %w", err)
 	}
-	b := beads.New(cwd)
+	b := beads.ForRig(workDir)
 
 	// Create the digest bead (NOT ephemeral - this is permanent)
 	title := fmt.Sprintf("Cost Report %s", digest.Date)
@@ -1164,12 +1164,12 @@ func createCostDigestBead(digest CostDigest) (string, error) {
 
 // deleteSessionCostWisps deletes ephemeral session.ended wisps for a target date.
 func deleteSessionCostWisps(targetDate time.Time) (int, error) {
-	// Use BeadsOps interface (runs from cwd)
-	cwd, err := os.Getwd()
+	// Use ForRig to delete local session cost wisps
+	workDir, err := findLocalBeadsDir()
 	if err != nil {
 		return 0, nil
 	}
-	b := beads.New(cwd)
+	b := beads.ForRig(workDir)
 
 	// List all wisps
 	wisps, err := b.WispList(true) // true = all (including closed)
@@ -1240,12 +1240,12 @@ func deleteSessionCostWisps(targetDate time.Time) (int, error) {
 
 // runCostsMigrate migrates legacy session.ended beads to the new architecture.
 func runCostsMigrate(cmd *cobra.Command, args []string) error {
-	// Use BeadsOps interface (runs from cwd)
-	cwd, err := os.Getwd()
+	// Use ForRig to migrate local session beads
+	workDir, err := findLocalBeadsDir()
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+		return fmt.Errorf("not in a rig: %w", err)
 	}
-	b := beads.New(cwd)
+	b := beads.ForRig(workDir)
 
 	// Query all session.ended events (both open and closed)
 	issues, err := b.List(beads.ListOptions{

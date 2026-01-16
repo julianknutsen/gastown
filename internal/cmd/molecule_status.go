@@ -143,12 +143,12 @@ type MoleculeCurrentInfo struct {
 func runMoleculeProgress(cmd *cobra.Command, args []string) error {
 	rootID := args[0]
 
-	workDir, err := findLocalBeadsDir()
+	// Use ForTown for ID-based operations (Show, List with parent filter)
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return fmt.Errorf("not in a beads workspace: %w", err)
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-
-	b := beads.New(workDir)
+	b := beads.ForTown(townRoot)
 
 	// Get the root issue
 	root, err := b.Show(rootID)
@@ -309,13 +309,8 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Find beads directory
-	workDir, err := findLocalBeadsDir()
-	if err != nil {
-		return fmt.Errorf("not in a beads workspace: %w", err)
-	}
-
-	b := beads.New(workDir)
+	// Use ForTown for ID-based operations (Show, FindHandoffBead, etc.)
+	b := beads.ForTown(townRoot)
 
 	// Build status info
 	status := MoleculeStatusInfo{
@@ -710,13 +705,8 @@ func runMoleculeCurrent(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Find beads directory
-	workDir, err := findLocalBeadsDir()
-	if err != nil {
-		return fmt.Errorf("not in a beads workspace: %w", err)
-	}
-
-	b := beads.New(workDir)
+	// Use ForTown for ID-based operations (FindHandoffBead)
+	b := beads.ForTown(townRoot)
 
 	// Extract role from target for handoff bead lookup
 	parts := strings.Split(target, "/")
@@ -920,7 +910,7 @@ func scanAllRigsForHookedBeads(townRoot, target string) []*beads.Issue {
 			continue
 		}
 
-		b := beads.New(rigBeadsDir)
+		b := beads.ForRig(rigBeadsDir)
 
 		// First check for hooked beads
 		hookedBeads, err := b.List(beads.ListOptions{

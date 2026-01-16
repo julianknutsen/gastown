@@ -115,7 +115,7 @@ func runChannelList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	channels, err := b.ListChannelBeads()
 	if err != nil {
 		return fmt.Errorf("listing channels: %w", err)
@@ -159,7 +159,7 @@ func runChannelShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 
 	// Check if channel exists
 	_, fields, err := b.GetChannelBead(channelName)
@@ -242,7 +242,7 @@ func runChannelCreate(cmd *cobra.Command, args []string) error {
 		createdBy = "unknown"
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 
 	// Check if channel already exists
 	existing, _, err := b.GetChannelBead(name)
@@ -284,7 +284,7 @@ func runChannelDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 
 	// Check if channel exists
 	existing, _, err := b.GetChannelBead(name)

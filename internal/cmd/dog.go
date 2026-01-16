@@ -252,7 +252,7 @@ func runDogAdd(cmd *cobra.Command, args []string) error {
 	// Create agent bead for the dog
 	townRoot, _ := workspace.FindFromCwd()
 	if townRoot != "" {
-		b := beads.New(townRoot)
+		b := beads.ForTown(townRoot)
 		location := filepath.Join("deacon", "dogs", name)
 
 		issue, err := b.CreateDogAgentBead(name, location)
@@ -294,7 +294,7 @@ func runDogRemove(cmd *cobra.Command, args []string) error {
 	townRoot, _ := workspace.FindFromCwd()
 	var b *beads.Beads
 	if townRoot != "" {
-		b = beads.New(townRoot)
+		b = beads.ForTown(townRoot)
 	}
 
 	for _, name := range names {
@@ -706,7 +706,7 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 					dogCreated = true
 
 					// Create agent bead for the dog
-					b := beads.New(townRoot)
+					b := beads.ForTown(townRoot)
 					location := filepath.Join("deacon", "dogs", newName)
 					if _, beadErr := b.CreateDogAgentBead(newName, location); beadErr != nil {
 						// Non-fatal warning

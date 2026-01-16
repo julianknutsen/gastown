@@ -355,10 +355,7 @@ func writeJSON(path string, data interface{}) error {
 // initTownBeads initializes town-level beads database using bd init.
 // Town beads use the "hq-" prefix for mayor mail and cross-rig coordination.
 func initTownBeads(townPath string) error {
-	// Use BeadsOps interface
-	// cmd.Dir = townPath - REQUIRED for operating on specific townPath
-	// BEADS_DIR was N/A - not set
-	b := beads.New(townPath)
+	b := beads.ForTown(townPath)
 
 	// Run: bd init --prefix hq
 	err := b.Init(beads.InitOptions{Prefix: "hq"})
@@ -417,10 +414,8 @@ func initTownBeads(townPath string) error {
 // has a repository fingerprint. Legacy databases (pre-0.17.5) lack this, which
 // prevents the daemon from starting properly.
 func ensureRepoFingerprint(beadsPath string) error {
-	// Use BeadsOps interface
-	// cmd.Dir = beadsPath - REQUIRED for operating on specific beadsPath
-	// BEADS_DIR was N/A - not set
-	b := beads.New(beadsPath)
+	// Use ForRig for Migrate operation (targets specific database)
+	b := beads.ForRig(beadsPath)
 	if err := b.Migrate(beads.MigrateOptions{UpdateRepoID: true}); err != nil {
 		return fmt.Errorf("bd migrate --update-repo-id: %w", err)
 	}
@@ -432,10 +427,8 @@ func ensureRepoFingerprint(beadsPath string) error {
 // Gas Town needs custom types: agent, role, rig, convoy, slot.
 // This is idempotent - safe to call multiple times.
 func ensureCustomTypes(beadsPath string) error {
-	// Use BeadsOps interface
-	// cmd.Dir = beadsPath - REQUIRED for operating on specific beadsPath
-	// BEADS_DIR was N/A - not set
-	b := beads.New(beadsPath)
+	// Use ForRig for ConfigSet operation (targets specific database)
+	b := beads.ForRig(beadsPath)
 	if err := b.ConfigSet("types.custom", constants.BeadsCustomTypes); err != nil {
 		return fmt.Errorf("bd config set types.custom: %w", err)
 	}
@@ -461,7 +454,7 @@ func ensureCustomTypes(beadsPath string) error {
 // that define role characteristics but are not required for agent operation -
 // agents can function without their role bead existing.
 func initTownAgentBeads(townPath string) error {
-	bd := beads.New(townPath)
+	bd := beads.ForTown(townPath)
 
 	// bd init doesn't enable "custom" issue types by default, but Gas Town uses
 	// agent/role beads during install and runtime. Ensure these types are enabled
@@ -552,10 +545,8 @@ func ensureBeadsCustomTypes(workDir string, types []string) error {
 		return nil
 	}
 
-	// Use BeadsOps interface
-	// cmd.Dir = workDir - REQUIRED for operating on specific workDir
-	// BEADS_DIR was N/A - not set
-	b := beads.New(workDir)
+	// Use ForRig for ConfigSet operation (targets specific database)
+	b := beads.ForRig(workDir)
 	if err := b.ConfigSet("types.custom", strings.Join(types, ",")); err != nil {
 		return fmt.Errorf("bd config set types.custom failed: %w", err)
 	}

@@ -586,8 +586,7 @@ func sendHandoffMail(subject, message string) (string, error) {
 
 	// Create mail bead using BeadsOps interface
 	// Mail goes to town-level beads (hq- prefix)
-	// BeadsOps Migration: cmd.Dir=townRoot (REQUIRED - town-level mail), BEADS_DIR (SUPERFLUOUS)
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	issue, err := b.Create(beads.CreateOptions{
 		Title:       subject,
 		Type:        "message",
@@ -655,9 +654,9 @@ func looksLikeBeadID(s string) bool {
 
 // hookBeadForHandoff attaches a bead to the current agent's hook.
 func hookBeadForHandoff(beadID string) error {
-	// BeadsOps Migration: cmd.Dir N/A, BEADS_DIR N/A (runs from cwd)
-	cwd, _ := os.Getwd()
-	b := beads.New(cwd)
+	// Use ForTown for cross-rig routing on ID-based operations
+	townRoot, _ := workspace.FindFromCwd()
+	b := beads.ForTown(townRoot)
 
 	// Verify the bead exists first
 	if _, err := b.Show(beadID); err != nil {
@@ -715,9 +714,9 @@ func collectHandoffState() string {
 		}
 	}
 
-	// BeadsOps Migration: cmd.Dir N/A, BEADS_DIR N/A (runs from cwd)
+	// Use ForRig for Ready() which is a non-ID operation targeting local rig
 	cwd, _ := os.Getwd()
-	b := beads.New(cwd)
+	b := beads.ForRig(cwd)
 
 	// Get ready beads
 	readyIssues, err := b.Ready()

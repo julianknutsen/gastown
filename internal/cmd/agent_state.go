@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (
@@ -203,8 +205,10 @@ func modifyAgentState(agentBead, beadsDir string, hasIncr bool) error {
 		finalLabels = append(finalLabels, key+":"+value)
 	}
 
-	// Use BeadsOps interface for update
-	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	// Use ForTown for ID-based Update operation
+	// beadsDir is the .beads path; use parent to find townRoot
+	townRoot, _ := workspace.Find(filepath.Dir(beadsDir))
+	b := beads.ForTown(townRoot)
 	opts := beads.UpdateOptions{SetLabels: finalLabels}
 	// If no labels, set to empty to clear all
 	if len(finalLabels) == 0 {
@@ -243,7 +247,9 @@ func getAgentLabels(agentBead, beadsDir string) (map[string]string, error) {
 
 // getAllAgentLabels retrieves all labels (including non-state) from an agent bead.
 func getAllAgentLabels(agentBead, beadsDir string) ([]string, error) {
-	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	// Use ForTown for ID-based Show operation
+	townRoot, _ := workspace.Find(filepath.Dir(beadsDir))
+	b := beads.ForTown(townRoot)
 	issue, err := b.Show(agentBead)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {

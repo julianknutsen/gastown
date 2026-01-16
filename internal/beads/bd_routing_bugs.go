@@ -37,8 +37,9 @@ var BdRoutingBugs = map[string]bool{
 	"Ready":            true, // Lists from current db
 	"ReadyWithLabel":   true, // Lists from current db
 	"Blocked":          true, // Lists from current db
-	"AddDependency":    true, // Both IDs should be in same db
-	"RemoveDependency": true, // Both IDs should be in same db
+	"AddDependency":         false, // bd doesn't route dep add by prefix (verified with TrueRawBdOps)
+	"AddDependencyWithType": false, // bd doesn't route dep add by prefix
+	"RemoveDependency":      false, // bd doesn't route dep remove by prefix
 	"Sync":             true,
 	"SyncFromMain":     true,
 	"SyncImportOnly":   true,

@@ -667,7 +667,7 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 
 		// Check if this polecat has a pinned bead (work attached)
 		agentID := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
-		b := beads.New(polecatPath)
+		b := beads.ForRig(polecatPath)
 		pinnedBeads, err := b.List(beads.ListOptions{
 			Status:   beads.StatusPinned,
 			Assignee: agentID,

@@ -8,12 +8,15 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // showMoleculeExecutionPrompt calls bd mol current and shows the current step
 // with execution instructions. This is the core of the Propulsion Principle.
 func showMoleculeExecutionPrompt(workDir, moleculeID string) {
-	b := beads.New(workDir)
+	// Use ForTown for ID-based MolCurrent operation
+	townRoot, _ := workspace.Find(workDir)
+	b := beads.ForTown(townRoot)
 	output, err := b.MolCurrent(moleculeID)
 
 	if err != nil || output == nil {
@@ -92,7 +95,8 @@ func outputMoleculeContext(ctx RoleContext) {
 	}
 
 	// Check for in-progress issues
-	b := beads.New(ctx.WorkDir)
+	// Use ForRig for List operation (non-ID, targets local rig)
+	b := beads.ForRig(ctx.WorkDir)
 	issues, err := b.List(beads.ListOptions{
 		Status:   "in_progress",
 		Assignee: ctx.Polecat,

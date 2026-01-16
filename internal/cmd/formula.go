@@ -171,8 +171,9 @@ func init() {
 
 // runFormulaList delegates to bd formula list
 func runFormulaList(cmd *cobra.Command, args []string) error {
+	// Use ForRig for FormulaList which is a non-ID operation
 	cwd, _ := os.Getwd()
-	b := beads.New(cwd)
+	b := beads.ForRig(cwd)
 
 	formulas, err := b.FormulaList()
 	if err != nil {
@@ -245,8 +246,9 @@ func truncateDesc(s string, maxLen int) string {
 
 // runFormulaShow delegates to bd formula show
 func runFormulaShow(cmd *cobra.Command, args []string) error {
+	// Use ForRig for FormulaShow which operates on local formulas
 	cwd, _ := os.Getwd()
-	b := beads.New(cwd)
+	b := beads.ForRig(cwd)
 
 	formulaName := args[0]
 	formula, err := b.FormulaShow(formulaName)
@@ -408,8 +410,7 @@ func executeConvoyFormula(f *formulaData, formulaName, targetRig string) error {
 	}
 	townBeads := filepath.Join(townRoot, ".beads")
 
-	// BeadsOps Migration: cmd.Dir=townBeads (REQUIRED - town-level beads), BEADS_DIR N/A
-	b := beads.New(townBeads)
+	b := beads.ForTown(townBeads)
 
 	// Step 1: Create convoy bead
 	convoyID := fmt.Sprintf("hq-cv-%s", generateFormulaShortID())

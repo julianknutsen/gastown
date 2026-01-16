@@ -56,7 +56,7 @@ func runMQNext(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create beads wrapper for the rig
-	b := beads.New(r.BeadsPath())
+	b := beads.ForRig(r.BeadsPath())
 
 	// Query for open merge-requests (ready to process)
 	opts := beads.ListOptions{

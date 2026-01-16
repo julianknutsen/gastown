@@ -127,8 +127,7 @@ func (c *BeadsDatabaseCheck) Fix(ctx *CheckContext) error {
 			return err
 		}
 
-		// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
-		b := beads.New(ctx.TownRoot)
+		b := beads.ForTown(ctx.TownRoot)
 		if err := b.SyncFromMain(); err != nil {
 			return err
 		}
@@ -149,7 +148,7 @@ func (c *BeadsDatabaseCheck) Fix(ctx *CheckContext) error {
 			}
 
 			// BeadsOps Migration: cmd.Dir=ctx.RigPath() (REQUIRED - rig beads), BEADS_DIR N/A
-			bRig := beads.New(ctx.RigPath())
+			bRig := beads.ForRig(ctx.RigPath())
 			if err := bRig.SyncFromMain(); err != nil {
 				return err
 			}
@@ -447,8 +446,7 @@ type labelAdder interface {
 type realLabelAdder struct{}
 
 func (r *realLabelAdder) AddLabel(townRoot, id, label string) error {
-	// BeadsOps Migration: cmd.Dir=townRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(townRoot)
+	b := beads.ForTown(townRoot)
 	if err := b.LabelAdd(id, label); err != nil {
 		return fmt.Errorf("adding %s label to %s: %v", label, id, err)
 	}
@@ -521,7 +519,7 @@ func (c *RoleLabelCheck) Run(ctx *CheckContext) *CheckResult {
 	// Use injected beadShower or create real one
 	shower := c.beadShower
 	if shower == nil {
-		shower = beads.New(ctx.TownRoot)
+		shower = beads.ForTown(ctx.TownRoot)
 	}
 
 	var missingLabel []string

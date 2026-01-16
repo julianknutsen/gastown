@@ -373,7 +373,7 @@ func TestWorkaroundPattern_WhenNeeded(t *testing.T) {
 	}
 
 	// Step 3: Use workaround method (only if command is in KnownBrokenRouting)
-	// impl := beads.New(env.GastownDir)
+	// impl := beads.ForRig(env.GastownDir)
 	// if beads.NeedsRoutingWorkaround("update") {
 	//     err := impl.WorkaroundUpdate(env.TownRoot, beadID, opts)
 	// } else {

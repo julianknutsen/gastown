@@ -186,7 +186,7 @@ func runMqIntegrationCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize beads for the rig
-	bd := beads.New(r.Path)
+	bd := beads.ForRig(r.Path)
 
 	// 1. Verify epic exists
 	epic, err := bd.Show(epicID)
@@ -324,7 +324,7 @@ func runMqIntegrationLand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize beads and git for the rig
-	bd := beads.New(r.Path)
+	bd := beads.ForRig(r.Path)
 	g := git.NewGit(r.Path)
 
 	// Show what we're about to do
@@ -599,7 +599,7 @@ func runMqIntegrationStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize beads for the rig
-	bd := beads.New(r.Path)
+	bd := beads.ForRig(r.Path)
 
 	// Fetch epic to get stored branch name
 	epic, err := bd.Show(epicID)

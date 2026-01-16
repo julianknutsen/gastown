@@ -38,7 +38,7 @@ func (c *RoleBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 	c.missing = nil // Reset
 
 	townBeadsPath := beads.GetTownBeadsPath(ctx.TownRoot)
-	bd := beads.New(townBeadsPath)
+	bd := beads.ForTown(townBeadsPath)
 
 	var missing []string
 	roleDefs := beads.AllRoleBeadDefs()
@@ -90,8 +90,7 @@ func (c *RoleBeadsCheck) Fix(ctx *CheckContext) error {
 		roleDefMap[role.ID] = role
 	}
 
-	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(ctx.TownRoot)
+	b := beads.ForTown(ctx.TownRoot)
 
 	// Create missing role beads
 	for _, id := range c.missing {

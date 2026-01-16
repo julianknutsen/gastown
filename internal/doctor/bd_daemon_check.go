@@ -28,8 +28,7 @@ func NewBdDaemonCheck() *BdDaemonCheck {
 
 // Run checks if the bd daemon is running and healthy.
 func (c *BdDaemonCheck) Run(ctx *CheckContext) *CheckResult {
-	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(ctx.TownRoot)
+	b := beads.ForTown(ctx.TownRoot)
 
 	// Check daemon status
 	status, err := b.DaemonStatus()
@@ -74,8 +73,7 @@ func (c *BdDaemonCheck) Run(ctx *CheckContext) *CheckResult {
 
 // tryStartDaemon attempts to start the bd daemon and returns any error output.
 func (c *BdDaemonCheck) tryStartDaemon(ctx *CheckContext) *startError {
-	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(ctx.TownRoot)
+	b := beads.ForTown(ctx.TownRoot)
 	if err := b.DaemonStart(); err != nil {
 		return &startError{
 			output:   err.Error(),
@@ -171,8 +169,7 @@ func (c *BdDaemonCheck) parseStartError(err *startError) *CheckResult {
 
 // Fix attempts to start the bd daemon.
 func (c *BdDaemonCheck) Fix(ctx *CheckContext) error {
-	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(ctx.TownRoot)
+	b := beads.ForTown(ctx.TownRoot)
 
 	// First check if it's a legacy database issue
 	startErr := c.tryStartDaemon(ctx)

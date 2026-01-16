@@ -287,8 +287,7 @@ func (m *Manager) Stop() error {
 // Uses beads merge-request issues as the source of truth (not git branches).
 func (m *Manager) Queue() ([]QueueItem, error) {
 	// Query beads for open merge-request type issues
-	// BeadsPath() returns the git-synced beads location
-	b := beads.New(m.rig.BeadsPath())
+	b := beads.ForRig(m.rig.BeadsPath())
 	issues, err := b.List(beads.ListOptions{
 		Type:     "merge-request",
 		Status:   "open",
@@ -753,7 +752,7 @@ func (m *Manager) RejectMR(idOrBranch string, reason string, notify bool) (*Merg
 	}
 
 	// Close the bead in storage with the rejection reason
-	b := beads.New(m.rig.BeadsPath())
+	b := beads.ForRig(m.rig.BeadsPath())
 	if err := b.CloseWithReason("rejected: "+reason, mr.ID); err != nil {
 		return nil, fmt.Errorf("failed to close MR bead: %w", err)
 	}

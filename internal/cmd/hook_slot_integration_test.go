@@ -95,7 +95,7 @@ func TestHookSlot_BasicHook(t *testing.T) {
 	rigDir := filepath.Join(polecatDir, "..", "..", "mayor", "rig")
 	initBeadsDB(t, rigDir)
 
-	b := beads.New(rigDir)
+	b := beads.ForRig(rigDir)
 
 	// Create a test bead
 	issue, err := b.Create(beads.CreateOptions{
@@ -149,7 +149,7 @@ func TestHookSlot_Singleton(t *testing.T) {
 	rigDir := filepath.Join(polecatDir, "..", "..", "mayor", "rig")
 	initBeadsDB(t, rigDir)
 
-	b := beads.New(rigDir)
+	b := beads.ForRig(rigDir)
 	agentID := "gastown/polecats/toast"
 	status := beads.StatusHooked
 
@@ -223,7 +223,7 @@ func TestHookSlot_Unhook(t *testing.T) {
 	rigDir := filepath.Join(polecatDir, "..", "..", "mayor", "rig")
 	initBeadsDB(t, rigDir)
 
-	b := beads.New(rigDir)
+	b := beads.ForRig(rigDir)
 	agentID := "gastown/polecats/toast"
 
 	// Create and hook a bead
@@ -284,7 +284,7 @@ func TestHookSlot_DifferentAgents(t *testing.T) {
 	rigDir := filepath.Join(polecatDir, "..", "..", "mayor", "rig")
 	initBeadsDB(t, rigDir)
 
-	b := beads.New(rigDir)
+	b := beads.ForRig(rigDir)
 	agent1 := "gastown/polecats/toast"
 	agent2 := "gastown/polecats/nux"
 	status := beads.StatusHooked
@@ -374,7 +374,7 @@ func TestHookSlot_HookPersistence(t *testing.T) {
 	status := beads.StatusHooked
 
 	// Create first beads instance and hook a bead
-	b1 := beads.New(rigDir)
+	b1 := beads.ForRig(rigDir)
 	issue, err := b1.Create(beads.CreateOptions{
 		Title:    "Persistent task",
 		Type:     "task",
@@ -392,7 +392,7 @@ func TestHookSlot_HookPersistence(t *testing.T) {
 	}
 
 	// Create new beads instance (simulates session restart)
-	b2 := beads.New(rigDir)
+	b2 := beads.ForRig(rigDir)
 
 	// Verify hook persists
 	hookedBeads, err := b2.List(beads.ListOptions{
@@ -425,7 +425,7 @@ func TestHookSlot_StatusTransitions(t *testing.T) {
 	rigDir := filepath.Join(polecatDir, "..", "..", "mayor", "rig")
 	initBeadsDB(t, rigDir)
 
-	b := beads.New(rigDir)
+	b := beads.ForRig(rigDir)
 	agentID := "gastown/polecats/toast"
 
 	// Create a bead

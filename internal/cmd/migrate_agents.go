@@ -103,7 +103,7 @@ func runMigrateAgents(cmd *cobra.Command, args []string) error {
 
 	// Source beads (rig beads where old agent beads are)
 	sourceBeadsDir := filepath.Join(townRoot, sourceRigPath, ".beads")
-	sourceBd := beads.New(sourceBeadsDir)
+	sourceBd := beads.ForRig(sourceBeadsDir)
 
 	// Target beads (town beads where new agent beads should go)
 	targetBd := beads.NewWithBeadsDir(townRoot, townBeadsDir)

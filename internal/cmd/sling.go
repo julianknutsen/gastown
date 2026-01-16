@@ -378,7 +378,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 		formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 
 		// Use BeadsOps interface for formula operations
-		bFormula := beads.New(formulaWorkDir)
+		bFormula := beads.ForRig(formulaWorkDir)
 
 		// Step 1: Cook the formula (ensures proto exists)
 		if _, err := bFormula.Cook(formulaName); err != nil {
@@ -421,7 +421,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	// BEADS_DIR was N/A - not set
 	// NOTE: Using Run because --no-daemon bypasses daemon routing
 	hookDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
-	bHook := beads.New(hookDir)
+	bHook := beads.ForRig(hookDir)
 	if _, err := bHook.Run("--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent); err != nil {
 		return fmt.Errorf("hooking bead: %w", err)
 	}

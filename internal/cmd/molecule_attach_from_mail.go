@@ -71,13 +71,9 @@ func runMoleculeAttachFromMail(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no attached_molecule field found in mail body")
 	}
 
-	// Find local beads directory
-	workDir, err := findLocalBeadsDir()
-	if err != nil {
-		return fmt.Errorf("not in a beads workspace: %w", err)
-	}
-
-	b := beads.New(workDir)
+	// Use ForTown for ID-based operations (Show, AttachMolecule)
+	// townRoot is already available from the beginning of the function
+	b := beads.ForTown(townRoot)
 
 	// Find the agent's pinned bead (hook)
 	pinnedBeads, err := b.List(beads.ListOptions{

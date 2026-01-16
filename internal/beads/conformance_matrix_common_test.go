@@ -196,7 +196,7 @@ func getTestContexts() []TestContext {
 				}
 
 				// For real bd: create in ai_platform directory
-				apOps := beads.New(env.AIPlatDir)
+				apOps := beads.ForRig(env.AIPlatDir)
 				issue, err := apOps.Create(beads.CreateOptions{
 					Title: "Cross-rig target",
 					Type:  "task",

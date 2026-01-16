@@ -236,7 +236,7 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 
 	// Fetch town-level agent beads (Mayor, Deacon) from town beads
 	townBeadsPath := beads.GetTownBeadsPath(townRoot)
-	townBeadsClient := beads.New(townBeadsPath)
+	townBeadsClient := beads.ForTown(townBeadsPath)
 	townAgentBeads, _ := townBeadsClient.ListAgentBeads()
 	for id, issue := range townAgentBeads {
 		allAgentBeads[id] = issue
@@ -266,7 +266,7 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 	// Fetch rig-level agent beads
 	for _, r := range rigs {
 		rigBeadsPath := filepath.Join(r.Path, "mayor", "rig")
-		rigBeads := beads.New(rigBeadsPath)
+		rigBeads := beads.ForRig(rigBeadsPath)
 		rigAgentBeads, _ := rigBeads.ListAgentBeads()
 		if rigAgentBeads == nil {
 			continue
@@ -879,7 +879,7 @@ func discoverRigHooks(r *rig.Rig, crews []string) []AgentHookInfo {
 	var hooks []AgentHookInfo
 
 	// Create beads instance for the rig
-	b := beads.New(r.Path)
+	b := beads.ForRig(r.Path)
 
 	// Check polecats
 	for _, name := range r.Polecats {
@@ -1138,7 +1138,7 @@ func getMQSummary(r *rig.Rig) *MQSummary {
 	}
 
 	// Create beads instance for the rig
-	b := beads.New(r.BeadsPath())
+	b := beads.ForRig(r.BeadsPath())
 
 	// Query for all open merge-request type issues
 	opts := beads.ListOptions{

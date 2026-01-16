@@ -120,7 +120,7 @@ func runReady(cmd *cobra.Command, args []string) error {
 		go func() {
 			defer wg.Done()
 			townBeadsPath := beads.GetTownBeadsPath(townRoot)
-			townBeads := beads.New(townBeadsPath)
+			townBeads := beads.ForTown(townBeadsPath)
 			issues, err := townBeads.Ready()
 
 			mu.Lock()
@@ -142,7 +142,7 @@ func runReady(cmd *cobra.Command, args []string) error {
 			defer wg.Done()
 			// Use mayor/rig path where rig-level beads are stored
 			rigBeadsPath := constants.RigMayorPath(r.Path)
-			rigBeads := beads.New(rigBeadsPath)
+			rigBeads := beads.ForRig(rigBeadsPath)
 			issues, err := rigBeads.Ready()
 
 			mu.Lock()

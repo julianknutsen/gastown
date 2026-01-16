@@ -75,7 +75,7 @@ func (c *AgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 	// Check global agents (Mayor, Deacon) in town beads
 	// These use hq- prefix and are stored in ~/gt/.beads/
 	townBeadsPath := beads.GetTownBeadsPath(ctx.TownRoot)
-	townBd := beads.New(townBeadsPath)
+	townBd := beads.ForTown(townBeadsPath)
 
 	deaconID := beads.DeaconBeadIDTown()
 	mayorID := beads.MayorBeadIDTown()
@@ -112,7 +112,7 @@ func (c *AgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 	for prefix, info := range prefixToRig {
 		// Get beads client for this rig using the route path directly
 		rigBeadsPath := filepath.Join(ctx.TownRoot, info.beadsPath)
-		bd := beads.New(rigBeadsPath)
+		bd := beads.ForRig(rigBeadsPath)
 		rigName := info.name
 
 		// Check rig-specific agents (using canonical naming: prefix-rig-role-name)
@@ -162,7 +162,7 @@ func (c *AgentBeadsCheck) Fix(ctx *CheckContext) error {
 	// Create global agents (Mayor, Deacon) in town beads
 	// These use hq- prefix and are stored in ~/gt/.beads/
 	townBeadsPath := beads.GetTownBeadsPath(ctx.TownRoot)
-	townBd := beads.New(townBeadsPath)
+	townBd := beads.ForTown(townBeadsPath)
 
 	deaconID := beads.DeaconBeadIDTown()
 	if _, err := townBd.Show(deaconID); err != nil {
@@ -221,7 +221,7 @@ func (c *AgentBeadsCheck) Fix(ctx *CheckContext) error {
 	for prefix, info := range prefixToRig {
 		// Use the route path directly instead of hardcoding /mayor/rig
 		rigBeadsPath := filepath.Join(ctx.TownRoot, info.beadsPath)
-		bd := beads.New(rigBeadsPath)
+		bd := beads.ForRig(rigBeadsPath)
 		rigName := info.name
 
 		// Create rig-specific agents if missing (using canonical naming: prefix-rig-role-name)

@@ -235,7 +235,7 @@ func outputHandoffContent(ctx RoleContext) {
 	// Get role key for handoff bead lookup
 	roleKey := string(ctx.Role)
 
-	bd := beads.New(ctx.TownRoot)
+	bd := beads.ForTown(ctx.TownRoot)
 	issue, err := bd.FindHandoffBead(roleKey)
 	if err != nil {
 		// Silently skip if beads lookup fails (might not be a beads repo)
@@ -338,8 +338,8 @@ func outputAttachmentStatus(ctx RoleContext) {
 		return
 	}
 
-	// Check for pinned beads with attachments
-	b := beads.New(ctx.WorkDir)
+	// Use ForRig for List operation targeting local rig beads
+	b := beads.ForRig(ctx.WorkDir)
 
 	// Build assignee string based on role (same as getAgentIdentity)
 	assignee := getAgentIdentity(ctx)

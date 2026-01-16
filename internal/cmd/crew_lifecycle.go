@@ -124,10 +124,8 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 		prefix := beads.GetPrefixForRig(townRoot, r.Name)
 		agentBeadID := beads.CrewBeadIDWithPrefix(prefix, r.Name, name)
 
-		// Use BeadsOps interface
-		// cmd.Dir = r.Path - REQUIRED for operating on rig path
-		// BEADS_DIR was N/A - not set
-		b := beads.New(r.Path)
+		// Use BeadsOps interface for rig beads
+		b := beads.ForRig(r.Path)
 
 		if crewPurge {
 			// --purge: DELETE the agent bead entirely (obliterate)

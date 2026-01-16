@@ -10,11 +10,11 @@ import (
 	"testing"
 )
 
-// TestNew verifies the constructor.
-func TestNew(t *testing.T) {
-	b := New("/some/path")
+// TestForRig verifies the ForRig constructor.
+func TestForRig(t *testing.T) {
+	b := ForRig("/some/path")
 	if b == nil {
-		t.Fatal("New returned nil")
+		t.Fatal("ForRig returned nil")
 	}
 	if b.workDir != "/some/path" {
 		t.Errorf("workDir = %q, want /some/path", b.workDir)
@@ -75,7 +75,7 @@ func TestIsBeadsRepo(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	b := New(tmpDir)
+	b := ForRig(tmpDir)
 	// This should return false since there's no .beads directory
 	// and bd list will fail
 	if b.IsBeadsRepo() {
@@ -88,7 +88,7 @@ func TestIsBeadsRepo(t *testing.T) {
 // ZFC: Only test ErrNotFound detection. ErrNotARepo and ErrSyncConflict
 // were removed as per ZFC - agents should handle those errors directly.
 func TestWrapError(t *testing.T) {
-	b := New("/test")
+	b := ForRig("/test")
 
 	tests := []struct {
 		stderr  string
@@ -146,7 +146,7 @@ func TestIntegration(t *testing.T) {
 		t.Skip("no beads.db found (JSONL-only repo)")
 	}
 
-	b := New(dir)
+	b := ForRig(dir)
 
 	// Sync database with JSONL before testing to avoid "Database out of sync" errors.
 	// This can happen when JSONL is updated (e.g., by git pull) but the SQLite database
@@ -1822,7 +1822,7 @@ func TestAgentBeadTombstoneBug(t *testing.T) {
 	}
 
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	bd := New(beadsDir)
+	bd := ForRig(beadsDir)
 
 	agentID := "test-testrig-polecat-tombstone"
 
@@ -1906,7 +1906,7 @@ func TestAgentBeadCloseReopenWorkaround(t *testing.T) {
 	}
 
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	bd := New(beadsDir)
+	bd := ForRig(beadsDir)
 
 	agentID := "test-testrig-polecat-closereopen"
 
@@ -1967,7 +1967,7 @@ func TestCreateOrReopenAgentBead_ClosedBead(t *testing.T) {
 	}
 
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	bd := New(beadsDir)
+	bd := ForRig(beadsDir)
 
 	agentID := "test-testrig-polecat-lifecycle"
 
@@ -2055,7 +2055,7 @@ func TestCloseAndClearAgentBead_FieldClearing(t *testing.T) {
 	}
 
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	bd := New(beadsDir)
+	bd := ForRig(beadsDir)
 
 	// Test cases for field clearing permutations
 	tests := []struct {
@@ -2212,7 +2212,7 @@ func TestCloseAndClearAgentBead_NonExistent(t *testing.T) {
 	}
 
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	bd := New(beadsDir)
+	bd := ForRig(beadsDir)
 
 	// Attempt to close non-existent bead
 	err := bd.CloseAndClearAgentBead("test-nonexistent-polecat-xyz", "should fail")
@@ -2234,7 +2234,7 @@ func TestCloseAndClearAgentBead_AlreadyClosed(t *testing.T) {
 	}
 
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	bd := New(beadsDir)
+	bd := ForRig(beadsDir)
 
 	agentID := "test-testrig-polecat-doubleclosed"
 
@@ -2288,7 +2288,7 @@ func TestCloseAndClearAgentBead_ReopenHasCleanState(t *testing.T) {
 	}
 
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	bd := New(beadsDir)
+	bd := ForRig(beadsDir)
 
 	agentID := "test-testrig-polecat-cleanreopen"
 
@@ -2356,7 +2356,7 @@ func TestCloseAndClearAgentBead_ReasonVariations(t *testing.T) {
 	}
 
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	bd := New(beadsDir)
+	bd := ForRig(beadsDir)
 
 	tests := []struct {
 		name   string

@@ -68,7 +68,7 @@ func (c *RepoFingerprintCheck) Run(ctx *CheckContext) *CheckResult {
 // checkBeadsDir checks a single beads directory for repo fingerprint using bd doctor.
 func (c *RepoFingerprintCheck) checkBeadsDir(workDir, location string) *CheckResult {
 	// BeadsOps Migration: cmd.Dir=workDir (REQUIRED - beads location), BEADS_DIR N/A
-	b := beads.New(workDir)
+	b := beads.ForRig(workDir)
 
 	// Run bd doctor to get fingerprint status
 	report, err := b.Doctor()
@@ -141,7 +141,7 @@ func (c *RepoFingerprintCheck) Fix(ctx *CheckContext) error {
 
 	// BeadsOps Migration: cmd.Dir=parent of .beads (REQUIRED - beads location), BEADS_DIR N/A
 	workDir := filepath.Dir(c.beadsDir) // Parent of .beads directory
-	b := beads.New(workDir)
+	b := beads.ForRig(workDir)
 
 	// Run bd migrate --update-repo-id
 	if err := b.Migrate(beads.MigrateOptions{UpdateRepoID: true}); err != nil {

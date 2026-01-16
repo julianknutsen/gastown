@@ -276,8 +276,8 @@ func (d *Daemon) getRoleConfigForIdentity(identity string) (*beads.RoleConfig, *
 		return nil, nil, err
 	}
 
-	// Look up role bead
-	b := beads.New(d.config.TownRoot)
+	// Look up role bead in town
+	b := beads.ForTown(d.config.TownRoot)
 
 	roleBeadID := beads.RoleBeadIDTown(parsed.RoleType)
 	roleConfig, err := b.GetRoleConfig(roleBeadID)
@@ -598,9 +598,8 @@ func (d *Daemon) syncWorkspace(workDir string) {
 		// Don't fail - agent can handle conflicts
 	}
 
-	// Sync beads
-	// BeadsOps Migration: cmd.Dir=workDir (REQUIRED - agent beads location), BEADS_DIR N/A
-	b := beads.New(workDir)
+	// Sync beads in agent's rig
+	b := beads.ForRig(workDir)
 	if err := b.Sync(); err != nil {
 		d.logger.Printf("Warning: bd sync failed in %s: %s", workDir, err.Error())
 		// Don't fail - sync issues may be recoverable
@@ -649,8 +648,7 @@ func (d *Daemon) getAgentBeadState(agentBeadID string) (string, error) {
 
 // getAgentBeadInfo fetches and parses an agent bead by ID.
 func (d *Daemon) getAgentBeadInfo(agentBeadID string) (*AgentBeadInfo, error) {
-	// BeadsOps Migration: cmd.Dir=d.config.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(d.config.TownRoot)
+	b := beads.ForTown(d.config.TownRoot)
 	issue, err := b.Show(agentBeadID)
 	if err != nil {
 		return nil, fmt.Errorf("bd show %s: %w", agentBeadID, err)
@@ -767,8 +765,7 @@ func (d *Daemon) checkGUPPViolations() {
 func (d *Daemon) checkRigGUPPViolations(rigName string) {
 	// List polecat agent beads for this rig
 	// Pattern: <prefix>-<rig>-polecat-<name> (e.g., gt-gastown-polecat-Toast)
-	// BeadsOps Migration: cmd.Dir=d.config.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(d.config.TownRoot)
+	b := beads.ForTown(d.config.TownRoot)
 	agents, err := b.List(beads.ListOptions{Type: "agent"})
 	if err != nil {
 		d.logger.Printf("Warning: bd list failed for GUPP check: %v", err)
@@ -851,8 +848,7 @@ func (d *Daemon) checkOrphanedWork() {
 
 // checkRigOrphanedWork checks polecats in a specific rig for orphaned work.
 func (d *Daemon) checkRigOrphanedWork(rigName string) {
-	// BeadsOps Migration: cmd.Dir=d.config.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
-	b := beads.New(d.config.TownRoot)
+	b := beads.ForTown(d.config.TownRoot)
 	agents, err := b.List(beads.ListOptions{Type: "agent"})
 	if err != nil {
 		d.logger.Printf("Warning: bd list failed for orphaned work check: %v", err)
