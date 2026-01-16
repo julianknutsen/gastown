@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -85,20 +84,18 @@ type ParkedWork struct {
 func runPark(cmd *cobra.Command, args []string) error {
 	gateID := args[0]
 
+	// Use BeadsOps interface
+	// cmd.Dir was N/A - ran from cwd
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+	b := beads.New(cwd)
+
 	// Verify gate exists and is open
-	gateCheck := exec.Command("bd", "gate", "show", gateID, "--json")
-	gateOutput, err := gateCheck.Output()
+	gateInfo, err := b.GateShow(gateID)
 	if err != nil {
 		return fmt.Errorf("gate '%s' not found or not accessible", gateID)
-	}
-
-	// Parse gate info to verify it's open
-	var gateInfo struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal(gateOutput, &gateInfo); err != nil {
-		return fmt.Errorf("parsing gate info: %w", err)
 	}
 	if gateInfo.Status == "closed" {
 		return fmt.Errorf("gate '%s' is already closed - nothing to park on", gateID)
@@ -168,8 +165,7 @@ func runPark(cmd *cobra.Command, args []string) error {
 	}
 
 	// Add agent as waiter on the gate
-	waitCmd := exec.Command("bd", "gate", "wait", gateID, "--notify", agentID)
-	if err := waitCmd.Run(); err != nil {
+	if err := b.GateWait(gateID, agentID); err != nil {
 		// Not fatal - might already be a waiter
 		fmt.Printf("%s Note: could not add as waiter (may already be registered)\n", style.Dim.Render("⚠"))
 	}

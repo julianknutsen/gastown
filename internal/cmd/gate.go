@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -84,9 +84,16 @@ type GateWakeResult struct {
 func runGateWake(cmd *cobra.Command, args []string) error {
 	gateID := args[0]
 
+	// Use BeadsOps interface (runs from cwd)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+	b := beads.New(cwd)
+
 	// Get gate info
-	gateCheck := exec.Command("bd", "gate", "show", gateID, "--json")
-	gateOutput, err := gateCheck.Output()
+	// NOTE: Using Run because Gate type lacks CloseReason field
+	gateOutput, err := b.Run("gate", "show", gateID, "--json")
 	if err != nil {
 		return fmt.Errorf("gate '%s' not found or not accessible", gateID)
 	}

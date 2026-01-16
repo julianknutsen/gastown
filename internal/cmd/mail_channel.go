@@ -1,11 +1,9 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -319,55 +317,32 @@ type channelMessage struct {
 func listChannelMessages(townRoot, channelName string) ([]channelMessage, error) {
 	beadsDir := filepath.Join(townRoot, ".beads")
 
+	// Use BeadsOps interface
+	// NOTE: BEADS_DIR was SUPERFLUOUS - bd would find .beads from townRoot
+	b := beads.NewWithBeadsDir(townRoot, beadsDir)
+
 	// Query for messages with label channel:<name>
-	args := []string{"list",
-		"--type", "message",
-		"--label", "channel:" + channelName,
-		"--sort", "-created",
-		"--limit", "0",
-		"--json",
-	}
-
-	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return nil, fmt.Errorf("%s", errMsg)
-		}
+	issues, err := b.List(beads.ListOptions{
+		Type:  "message",
+		Label: "channel:" + channelName,
+		Limit: 0,
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	var issues []struct {
-		ID          string    `json:"id"`
-		Title       string    `json:"title"`
-		Description string    `json:"description"`
-		Labels      []string  `json:"labels"`
-		CreatedAt   time.Time `json:"created_at"`
-		Priority    int       `json:"priority"`
-	}
-
-	output := strings.TrimSpace(stdout.String())
-	if output == "" || output == "[]" {
+	if len(issues) == 0 {
 		return nil, nil
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
-		return nil, fmt.Errorf("parsing bd output: %w", err)
 	}
 
 	var messages []channelMessage
 	for _, issue := range issues {
+		created, _ := time.Parse(time.RFC3339, issue.CreatedAt)
 		msg := channelMessage{
 			ID:       issue.ID,
 			Title:    issue.Title,
 			Body:     issue.Description,
-			Created:  issue.CreatedAt,
+			Created:  created,
 			Priority: issue.Priority,
 		}
 

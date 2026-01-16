@@ -1,17 +1,16 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -178,58 +177,34 @@ type announceMessage struct {
 func listAnnounceMessages(townRoot, channelName string) ([]announceMessage, error) {
 	beadsDir := filepath.Join(townRoot, ".beads")
 
+	// Use BeadsOps interface
+	// NOTE: BEADS_DIR was SUPERFLUOUS - bd would find .beads from townRoot
+	b := beads.NewWithBeadsDir(townRoot, beadsDir)
+
 	// Query for messages with label announce_channel:<channel>
 	// Messages are stored with this label when sent via sendToAnnounce()
-	args := []string{"list",
-		"--type", "message",
-		"--label", "announce_channel:" + channelName,
-		"--sort", "-created", // Newest first
-		"--limit", "0",       // No limit
-		"--json",
-	}
-
-	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return nil, fmt.Errorf("%s", errMsg)
-		}
+	issues, err := b.List(beads.ListOptions{
+		Type:  "message",
+		Label: "announce_channel:" + channelName,
+		Limit: 0, // No limit
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	// Parse JSON output
-	var issues []struct {
-		ID          string    `json:"id"`
-		Title       string    `json:"title"`
-		Description string    `json:"description"`
-		Labels      []string  `json:"labels"`
-		CreatedAt   time.Time `json:"created_at"`
-		Priority    int       `json:"priority"`
-	}
-
-	output := strings.TrimSpace(stdout.String())
-	if output == "" || output == "[]" {
+	if len(issues) == 0 {
 		return nil, nil
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
-		return nil, fmt.Errorf("parsing bd output: %w", err)
 	}
 
 	// Convert to announceMessage, extracting 'from' from labels
 	var messages []announceMessage
 	for _, issue := range issues {
+		created, _ := time.Parse(time.RFC3339, issue.CreatedAt)
 		msg := announceMessage{
 			ID:          issue.ID,
 			Title:       issue.Title,
 			Description: issue.Description,
-			Created:     issue.CreatedAt,
+			Created:     created,
 			Priority:    issue.Priority,
 		}
 

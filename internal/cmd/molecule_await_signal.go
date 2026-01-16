@@ -341,16 +341,10 @@ func setAgentIdleCycles(agentBead, beadsDir string, cycles int) error {
 	// Add new idle value
 	newLabels = append(newLabels, fmt.Sprintf("idle:%d", cycles))
 
-	// Use bd update with --set-labels to replace all labels
-	args := []string{"update", agentBead}
-	for _, label := range newLabels {
-		args = append(args, "--set-labels="+label)
-	}
-
-	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
-
-	if err := cmd.Run(); err != nil {
+	// Use BeadsOps interface for update
+	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	opts := beads.UpdateOptions{SetLabels: newLabels}
+	if err := b.Update(agentBead, opts); err != nil {
 		return fmt.Errorf("setting idle label: %w", err)
 	}
 

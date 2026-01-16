@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/style"
@@ -409,42 +410,35 @@ func querySessionEvents() []CostEntry {
 
 // querySessionEventsFromLocation queries a single beads location for session.ended events.
 func querySessionEventsFromLocation(location string) ([]CostEntry, error) {
-	// Step 1: Get list of event IDs
-	listArgs := []string{
-		"list",
-		"--type=event",
-		"--all",
-		"--limit=0",
-		"--json",
-	}
+	// Use BeadsOps interface for this location
+	b := beads.New(location)
 
-	listCmd := exec.Command("bd", listArgs...)
-	listCmd.Dir = location
-	listOutput, err := listCmd.Output()
+	// Step 1: Get list of event IDs
+	issues, err := b.List(beads.ListOptions{
+		Type:   "event",
+		Status: "all",
+		Limit:  0,
+	})
 	if err != nil {
 		// If bd fails (e.g., no beads database), return empty list
 		return nil, nil
 	}
 
-	var listItems []EventListItem
-	if err := json.Unmarshal(listOutput, &listItems); err != nil {
-		return nil, fmt.Errorf("parsing event list: %w", err)
-	}
-
-	if len(listItems) == 0 {
+	if len(issues) == 0 {
 		return nil, nil
 	}
 
-	// Step 2: Get full details for all events using bd show
-	// (bd list doesn't include event_kind, actor, payload)
-	showArgs := []string{"show", "--json"}
-	for _, item := range listItems {
-		showArgs = append(showArgs, item.ID)
+	// Collect IDs for batch show
+	var ids []string
+	for _, issue := range issues {
+		ids = append(ids, issue.ID)
 	}
 
-	showCmd := exec.Command("bd", showArgs...)
-	showCmd.Dir = location
-	showOutput, err := showCmd.Output()
+	// Step 2: Get full details for all events using bd show
+	// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
+	showArgs := []string{"show", "--json"}
+	showArgs = append(showArgs, ids...)
+	showOutput, err := b.Run(showArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("showing events: %w", err)
 	}
@@ -493,38 +487,38 @@ func querySessionEventsFromLocation(location string) ([]CostEntry, error) {
 
 // queryDigestBeads queries costs.digest events from the past N days and extracts session entries.
 func queryDigestBeads(days int) ([]CostEntry, error) {
-	// Get list of event IDs
-	listArgs := []string{
-		"list",
-		"--type=event",
-		"--all",
-		"--limit=0",
-		"--json",
+	// Use BeadsOps interface (runs from cwd)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, nil
 	}
+	b := beads.New(cwd)
 
-	listCmd := exec.Command("bd", listArgs...)
-	listOutput, err := listCmd.Output()
+	// Get list of event IDs
+	issues, err := b.List(beads.ListOptions{
+		Type:   "event",
+		Status: "all",
+		Limit:  0,
+	})
 	if err != nil {
 		return nil, nil
 	}
 
-	var listItems []EventListItem
-	if err := json.Unmarshal(listOutput, &listItems); err != nil {
-		return nil, fmt.Errorf("parsing event list: %w", err)
-	}
-
-	if len(listItems) == 0 {
+	if len(issues) == 0 {
 		return nil, nil
 	}
 
-	// Get full details for all events
-	showArgs := []string{"show", "--json"}
-	for _, item := range listItems {
-		showArgs = append(showArgs, item.ID)
+	// Collect IDs for batch show
+	var ids []string
+	for _, issue := range issues {
+		ids = append(ids, issue.ID)
 	}
 
-	showCmd := exec.Command("bd", showArgs...)
-	showOutput, err := showCmd.Output()
+	// Get full details for all events
+	// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
+	showArgs := []string{"show", "--json"}
+	showArgs = append(showArgs, ids...)
+	showOutput, err := b.Run(showArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("showing events: %w", err)
 	}
@@ -781,11 +775,19 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("marshaling payload: %w", err)
 	}
 
+	// Use BeadsOps interface (runs from cwd)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+	b := beads.New(cwd)
+
 	// Build bd create command for ephemeral wisp
 	// Using --ephemeral creates a wisp that:
 	// - Is stored locally only (not exported to JSONL)
 	// - Won't pollute git history with O(sessions/day) events
 	// - Will be aggregated into daily digests by 'gt costs digest'
+	// NOTE: Using Run because CreateOptions lacks event fields
 	bdArgs := []string{
 		"create",
 		"--ephemeral",
@@ -806,9 +808,8 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 	// event fields (event_kind, actor, payload) to not be stored properly.
 	// The bd command will auto-detect the correct rig from cwd.
 
-	// Execute bd create
-	bdCmd := exec.Command("bd", bdArgs...)
-	output, err := bdCmd.CombinedOutput()
+	// Execute bd create via BeadsOps
+	output, err := b.Run(bdArgs...)
 	if err != nil {
 		return fmt.Errorf("creating session cost wisp: %w\nOutput: %s", err, string(output))
 	}
@@ -818,8 +819,7 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 	// Auto-close session cost wisps immediately after creation.
 	// These are informational records that don't need to stay open.
 	// The wisp data is preserved and queryable until digested.
-	closeCmd := exec.Command("bd", "close", wispID, "--reason=auto-closed session cost wisp")
-	if closeErr := closeCmd.Run(); closeErr != nil {
+	if closeErr := b.CloseWithReason("auto-closed session cost wisp", wispID); closeErr != nil {
 		// Non-fatal: wisp was created, just couldn't auto-close
 		fmt.Fprintf(os.Stderr, "warning: could not auto-close session cost wisp %s: %v\n", wispID, closeErr)
 	}
@@ -1045,9 +1045,15 @@ func runCostsDigest(cmd *cobra.Command, args []string) error {
 
 // querySessionCostWisps queries ephemeral session.ended events for a target date.
 func querySessionCostWisps(targetDate time.Time) ([]CostEntry, error) {
+	// Use BeadsOps interface (runs from cwd)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, nil
+	}
+	b := beads.New(cwd)
+
 	// List all wisps including closed ones
-	listCmd := exec.Command("bd", "mol", "wisp", "list", "--all", "--json")
-	listOutput, err := listCmd.Output()
+	wisps, err := b.WispList(true) // true = all (including closed)
 	if err != nil {
 		// No wisps database or command failed
 		if costsVerbose {
@@ -1056,23 +1062,20 @@ func querySessionCostWisps(targetDate time.Time) ([]CostEntry, error) {
 		return nil, nil
 	}
 
-	var wispList WispListOutput
-	if err := json.Unmarshal(listOutput, &wispList); err != nil {
-		return nil, fmt.Errorf("parsing wisp list: %w", err)
-	}
-
-	if wispList.Count == 0 {
+	if len(wisps) == 0 {
 		return nil, nil
 	}
 
 	// Batch all wisp IDs into a single bd show call to avoid N+1 queries
-	showArgs := []string{"show", "--json"}
-	for _, wisp := range wispList.Wisps {
-		showArgs = append(showArgs, wisp.ID)
+	var ids []string
+	for _, wisp := range wisps {
+		ids = append(ids, wisp.ID)
 	}
 
-	showCmd := exec.Command("bd", showArgs...)
-	showOutput, err := showCmd.Output()
+	// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
+	showArgs := []string{"show", "--json"}
+	showArgs = append(showArgs, ids...)
+	showOutput, err := b.Run(showArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("showing wisps: %w", err)
 	}
@@ -1169,7 +1172,15 @@ func createCostDigestBead(digest CostDigest) (string, error) {
 		return "", fmt.Errorf("marshaling digest payload: %w", err)
 	}
 
+	// Use BeadsOps interface (runs from cwd)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getting working directory: %w", err)
+	}
+	b := beads.New(cwd)
+
 	// Create the digest bead (NOT ephemeral - this is permanent)
+	// NOTE: Using Run because CreateOptions lacks event fields
 	title := fmt.Sprintf("Cost Report %s", digest.Date)
 	bdArgs := []string{
 		"create",
@@ -1181,8 +1192,7 @@ func createCostDigestBead(digest CostDigest) (string, error) {
 		"--silent",
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
-	output, err := bdCmd.CombinedOutput()
+	output, err := b.Run(bdArgs...)
 	if err != nil {
 		return "", fmt.Errorf("creating digest bead: %w\nOutput: %s", err, string(output))
 	}
@@ -1190,17 +1200,22 @@ func createCostDigestBead(digest CostDigest) (string, error) {
 	digestID := strings.TrimSpace(string(output))
 
 	// Auto-close the digest (it's an audit record, not work)
-	closeCmd := exec.Command("bd", "close", digestID, "--reason=daily cost digest")
-	_ = closeCmd.Run() // Best effort
+	_ = b.CloseWithReason("daily cost digest", digestID) // Best effort
 
 	return digestID, nil
 }
 
 // deleteSessionCostWisps deletes ephemeral session.ended wisps for a target date.
 func deleteSessionCostWisps(targetDate time.Time) (int, error) {
+	// Use BeadsOps interface (runs from cwd)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return 0, nil
+	}
+	b := beads.New(cwd)
+
 	// List all wisps
-	listCmd := exec.Command("bd", "mol", "wisp", "list", "--all", "--json")
-	listOutput, err := listCmd.Output()
+	wisps, err := b.WispList(true) // true = all (including closed)
 	if err != nil {
 		if costsVerbose {
 			fmt.Fprintf(os.Stderr, "[costs] wisp list failed in deletion: %v\n", err)
@@ -1208,20 +1223,15 @@ func deleteSessionCostWisps(targetDate time.Time) (int, error) {
 		return 0, nil
 	}
 
-	var wispList WispListOutput
-	if err := json.Unmarshal(listOutput, &wispList); err != nil {
-		return 0, fmt.Errorf("parsing wisp list: %w", err)
-	}
-
 	targetDay := targetDate.Format("2006-01-02")
 
 	// Collect all wisp IDs that match our criteria
 	var wispIDsToDelete []string
 
-	for _, wisp := range wispList.Wisps {
+	for _, wisp := range wisps {
 		// Get full wisp details to check if it's a session.ended event
-		showCmd := exec.Command("bd", "show", wisp.ID, "--json")
-		showOutput, err := showCmd.Output()
+		// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
+		showOutput, err := b.Run("show", wisp.ID, "--json")
 		if err != nil {
 			if costsVerbose {
 				fmt.Fprintf(os.Stderr, "[costs] bd show failed for wisp %s: %v\n", wisp.ID, err)
@@ -1279,9 +1289,9 @@ func deleteSessionCostWisps(targetDate time.Time) (int, error) {
 	}
 
 	// Batch delete all wisps in a single subprocess call
+	// NOTE: Using Run because no WispBurn method in interface
 	burnArgs := append([]string{"mol", "burn", "--force"}, wispIDsToDelete...)
-	burnCmd := exec.Command("bd", burnArgs...)
-	if burnErr := burnCmd.Run(); burnErr != nil {
+	if _, burnErr := b.Run(burnArgs...); burnErr != nil {
 		return 0, fmt.Errorf("batch burn failed: %w", burnErr)
 	}
 
@@ -1290,40 +1300,40 @@ func deleteSessionCostWisps(targetDate time.Time) (int, error) {
 
 // runCostsMigrate migrates legacy session.ended beads to the new architecture.
 func runCostsMigrate(cmd *cobra.Command, args []string) error {
-	// Query all session.ended events (both open and closed)
-	listArgs := []string{
-		"list",
-		"--type=event",
-		"--all",
-		"--limit=0",
-		"--json",
+	// Use BeadsOps interface (runs from cwd)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
 	}
+	b := beads.New(cwd)
 
-	listCmd := exec.Command("bd", listArgs...)
-	listOutput, err := listCmd.Output()
+	// Query all session.ended events (both open and closed)
+	issues, err := b.List(beads.ListOptions{
+		Type:   "event",
+		Status: "all",
+		Limit:  0,
+	})
 	if err != nil {
 		fmt.Println(style.Dim.Render("No events found or bd command failed"))
 		return nil
 	}
 
-	var listItems []EventListItem
-	if err := json.Unmarshal(listOutput, &listItems); err != nil {
-		return fmt.Errorf("parsing event list: %w", err)
-	}
-
-	if len(listItems) == 0 {
+	if len(issues) == 0 {
 		fmt.Println(style.Dim.Render("No events found"))
 		return nil
 	}
 
-	// Get full details for all events
-	showArgs := []string{"show", "--json"}
-	for _, item := range listItems {
-		showArgs = append(showArgs, item.ID)
+	// Collect IDs for batch show
+	var ids []string
+	for _, issue := range issues {
+		ids = append(ids, issue.ID)
 	}
 
-	showCmd := exec.Command("bd", showArgs...)
-	showOutput, err := showCmd.Output()
+	// Get full details for all events
+	// NOTE: Using Run because Issue struct lacks EventKind/Payload fields
+	showArgs := []string{"show", "--json"}
+	showArgs = append(showArgs, ids...)
+	showOutput, err := b.Run(showArgs...)
 	if err != nil {
 		return fmt.Errorf("showing events: %w", err)
 	}
@@ -1367,8 +1377,7 @@ func runCostsMigrate(cmd *cobra.Command, args []string) error {
 	// Close all open session.ended events
 	closedMigrated := 0
 	for _, event := range openEvents {
-		closeCmd := exec.Command("bd", "close", event.ID, "--reason=migrated to wisp architecture")
-		if err := closeCmd.Run(); err != nil {
+		if err := b.CloseWithReason("migrated to wisp architecture", event.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not close %s: %v\n", event.ID, err)
 			continue
 		}

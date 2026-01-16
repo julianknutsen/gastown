@@ -799,34 +799,40 @@ type IssueInfo struct {
 
 // queryAssignedIssues queries beads for issues assigned to a specific agent.
 func queryAssignedIssues(rigPath, assignee, status string) ([]IssueInfo, error) {
-	// Use bd list with filters
-	args := []string{"list", "--assignee=" + assignee, "--json"}
-	if status != "" {
-		args = append(args, "--status="+status)
-	}
+	// Use BeadsOps interface
+	// cmd.Dir was REQUIRED - operating on specific rig path
+	b := beads.New(rigPath)
 
-	cmd := exec.Command("bd", args...)
-	cmd.Dir = rigPath
-	out, err := cmd.Output()
+	issues, err := b.List(beads.ListOptions{
+		Assignee: assignee,
+		Status:   status,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	if len(out) == 0 {
+	if len(issues) == 0 {
 		return []IssueInfo{}, nil
 	}
 
-	var issues []IssueInfo
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return nil, err
+	// Convert to IssueInfo
+	var result []IssueInfo
+	for _, issue := range issues {
+		result = append(result, IssueInfo{
+			ID:      issue.ID,
+			Title:   issue.Title,
+			Type:    issue.Type,
+			Status:  issue.Status,
+			Updated: issue.UpdatedAt,
+		})
 	}
 
 	// Sort by updated date (most recent first)
-	sort.Slice(issues, func(i, j int) bool {
-		return issues[i].Updated > issues[j].Updated
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Updated > result[j].Updated
 	})
 
-	return issues, nil
+	return result, nil
 }
 
 // extractWorkType extracts the work type from issue title or type.

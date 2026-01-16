@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -934,26 +933,19 @@ func agentAddressToIDs(address string) (beadID, sessionName string, err error) {
 
 // getAgentBeadUpdateTime gets the update time from an agent bead.
 func getAgentBeadUpdateTime(townRoot, beadID string) (time.Time, error) {
-	cmd := exec.Command("bd", "show", beadID, "--json")
-	cmd.Dir = townRoot
-
-	output, err := cmd.Output()
+	// Use BeadsOps interface
+	// cmd.Dir was REQUIRED - operating on townRoot
+	b := beads.New(townRoot)
+	issue, err := b.Show(beadID)
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	var issues []struct {
-		UpdatedAt string `json:"updated_at"`
-	}
-	if err := json.Unmarshal(output, &issues); err != nil {
-		return time.Time{}, err
-	}
-
-	if len(issues) == 0 {
+	if issue == nil {
 		return time.Time{}, fmt.Errorf("bead not found: %s", beadID)
 	}
 
-	return time.Parse(time.RFC3339, issues[0].UpdatedAt)
+	return time.Parse(time.RFC3339, issue.UpdatedAt)
 }
 
 // sendMail sends a mail message using gt mail send.
@@ -970,10 +962,10 @@ func updateAgentBeadState(townRoot, agent, state, _ string) { // reason unused b
 		return
 	}
 
-	// Use bd agent state command
-	cmd := exec.Command("bd", "agent", "state", beadID, state)
-	cmd.Dir = townRoot
-	_ = cmd.Run() // Best effort
+	// Use BeadsOps interface
+	// cmd.Dir was REQUIRED - operating on townRoot
+	b := beads.New(townRoot)
+	_ = b.AgentState(beadID, state) // Best effort
 }
 
 // runDeaconStaleHooks finds and unhooks stale hooked beads.

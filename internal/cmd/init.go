@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -155,18 +156,17 @@ func registerCustomTypes(workDir string) error {
 		return nil // no beads DB yet, skip silently
 	}
 
-	// Try to set custom types
-	cmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-	cmd.Dir = workDir
-	output, err := cmd.CombinedOutput()
-	if err != nil {
+	// Use BeadsOps interface for config set
+	// cmd.Dir was N/A - workDir is the current working directory
+	b := beads.New(workDir)
+	if err := b.ConfigSet("types.custom", constants.BeadsCustomTypes); err != nil {
 		// Check for common expected errors
-		outStr := string(output)
-		if strings.Contains(outStr, "not initialized") ||
-			strings.Contains(outStr, "no such file") {
+		errStr := err.Error()
+		if strings.Contains(errStr, "not initialized") ||
+			strings.Contains(errStr, "no such file") {
 			return nil // DB not initialized, skip silently
 		}
-		return fmt.Errorf("%s", strings.TrimSpace(outStr))
+		return err
 	}
 	return nil
 }
