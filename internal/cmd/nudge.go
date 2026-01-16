@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -118,13 +118,16 @@ func runNudge(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	t := tmux.NewTmux()
+	agents := agent.ForTownPath(townRoot)
 
-	// Expand role shortcuts to session names
-	// These shortcuts let users type "mayor" instead of "gt-mayor"
+	// Expand role shortcuts to agent IDs
+	// These shortcuts let users type "mayor" instead of full addresses
+	var agentID agent.AgentID
 	switch target {
 	case "mayor":
-		target = session.MayorSessionName()
+		agentID = agent.MayorAddress()
+	case "deacon":
+		agentID = agent.DeaconAddress()
 	case "witness", "refinery":
 		// These need the current rig
 		roleInfo, err := GetRole()
@@ -135,37 +138,31 @@ func runNudge(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("cannot determine rig for %s shortcut (not in a rig context)", target)
 		}
 		if target == "witness" {
-			target = session.WitnessSessionName(roleInfo.Rig)
+			agentID = agent.WitnessAddress(roleInfo.Rig)
 		} else {
-			target = session.RefinerySessionName(roleInfo.Rig)
+			agentID = agent.RefineryAddress(roleInfo.Rig)
 		}
 	}
 
-	// Special case: "deacon" target maps to the Deacon session
-	if target == "deacon" {
-		deaconSession := session.DeaconSessionName()
-		// Check if Deacon session exists
-		exists, err := t.Exists(session.SessionID(deaconSession))
-		if err != nil {
-			return fmt.Errorf("checking deacon session: %w", err)
-		}
-		if !exists {
-			// Deacon not running - this is not an error, just log and return
-			fmt.Printf("%s Deacon not running, nudge skipped\n", style.Dim.Render("○"))
+	// Handle direct role shortcuts (mayor, deacon, witness, refinery)
+	if agentID != "" {
+		// Check if agent is running
+		if !agents.Exists(agentID) {
+			fmt.Printf("%s %s not running, nudge skipped\n", style.Dim.Render("○"), target)
 			return nil
 		}
 
-		if err := t.NudgeSession(deaconSession, message); err != nil {
-			return fmt.Errorf("nudging deacon: %w", err)
+		if err := agents.Nudge(agentID, message); err != nil {
+			return fmt.Errorf("nudging %s: %w", target, err)
 		}
 
-		fmt.Printf("%s Nudged deacon\n", style.Bold.Render("✓"))
+		fmt.Printf("%s Nudged %s\n", style.Bold.Render("✓"), target)
 
 		// Log nudge event
-		if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
-			_ = LogNudge(townRoot, "deacon", message)
+		if townRoot != "" {
+			_ = LogNudge(townRoot, target, message)
 		}
-		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload("", "deacon", message))
+		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload("", target, message))
 		return nil
 	}
 
@@ -177,52 +174,48 @@ func runNudge(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		var sessionName string
+		var targetID agent.AgentID
 
 		// Check if this is a crew address (polecatName starts with "crew/")
 		if strings.HasPrefix(polecatName, "crew/") {
-			// Extract crew name and use crew session naming
+			// Extract crew name
 			crewName := strings.TrimPrefix(polecatName, "crew/")
-			sessionName = crewSessionName(rigName, crewName)
+			targetID = agent.CrewAddress(rigName, crewName)
 		} else {
-			// Regular polecat - use session manager
-			mgr, _, err := getSessionManager(rigName)
-			if err != nil {
-				return err
-			}
-			sessionName = mgr.SessionName(polecatName)
+			// Regular polecat
+			targetID = agent.PolecatAddress(rigName, polecatName)
 		}
 
-		// Send nudge using the reliable NudgeSession
-		if err := t.NudgeSession(sessionName, message); err != nil {
-			return fmt.Errorf("nudging session: %w", err)
+		// Send nudge using the Agents abstraction
+		if err := agents.Nudge(targetID, message); err != nil {
+			return fmt.Errorf("nudging agent: %w", err)
 		}
 
 		fmt.Printf("%s Nudged %s/%s\n", style.Bold.Render("✓"), rigName, polecatName)
 
 		// Log nudge event
-		if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
+		if townRoot != "" {
 			_ = LogNudge(townRoot, target, message)
 		}
 		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload(rigName, target, message))
 	} else {
 		// Raw session name (legacy)
-		exists, err := t.Exists(session.SessionID(target))
+		targetID, err := sessionNameToAgentID(target)
 		if err != nil {
-			return fmt.Errorf("checking session: %w", err)
+			return fmt.Errorf("invalid session name %q: %w", target, err)
 		}
-		if !exists {
-			return fmt.Errorf("session %q not found", target)
+		if !agents.Exists(targetID) {
+			return fmt.Errorf("agent %q not found", target)
 		}
 
-		if err := t.NudgeSession(target, message); err != nil {
-			return fmt.Errorf("nudging session: %w", err)
+		if err := agents.Nudge(targetID, message); err != nil {
+			return fmt.Errorf("nudging agent: %w", err)
 		}
 
 		fmt.Printf("✓ Nudged %s\n", target)
 
 		// Log nudge event
-		if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
+		if townRoot != "" {
 			_ = LogNudge(townRoot, target, message)
 		}
 		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload("", target, message))
@@ -281,7 +274,7 @@ func runNudgeChannel(channelName, message string) error {
 	prefixedMessage := fmt.Sprintf("[from %s] %s", sender, message)
 
 	// Get all running sessions for pattern matching
-	agents, err := getAgentSessions(true)
+	agentSessions, err := getAgentSessions(townRoot, true)
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
@@ -291,7 +284,7 @@ func runNudgeChannel(channelName, message string) error {
 	seenTargets := make(map[string]bool)
 
 	for _, pattern := range patterns {
-		resolved := resolveNudgePattern(pattern, agents)
+		resolved := resolveNudgePattern(pattern, agentSessions)
 		for _, sessionName := range resolved {
 			if !seenTargets[sessionName] {
 				seenTargets[sessionName] = true
@@ -306,14 +299,21 @@ func runNudgeChannel(channelName, message string) error {
 	}
 
 	// Send nudges
-	t := tmux.NewTmux()
+	agentsAPI := agent.ForTownPath(townRoot)
 	var succeeded, failed int
 	var failures []string
 
 	fmt.Printf("Nudging channel %q (%d target(s))...\n\n", channelName, len(targets))
 
 	for i, sessionName := range targets {
-		if err := t.NudgeSession(sessionName, prefixedMessage); err != nil {
+		agentID, err := sessionNameToAgentID(sessionName)
+		if err != nil {
+			failed++
+			failures = append(failures, fmt.Sprintf("%s: invalid session name: %v", sessionName, err))
+			fmt.Printf("  %s %s\n", style.ErrorPrefix, sessionName)
+			continue
+		}
+		if err := agentsAPI.Nudge(agentID, prefixedMessage); err != nil {
 			failed++
 			failures = append(failures, fmt.Sprintf("%s: %v", sessionName, err))
 			fmt.Printf("  %s %s\n", style.ErrorPrefix, sessionName)

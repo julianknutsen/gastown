@@ -87,6 +87,148 @@ func PolecatSessionName(rig, name string) string {
 	return fmt.Sprintf("%s%s-%s", Prefix, rig, name)
 }
 
+// --- SessionID to unique human-readable name translation ---
+//
+// SessionID is a logical identifier for a session (e.g., "mayor", "gastown/witness").
+// The TownSessions layer translates this to unique, human-readable names (e.g., "hq-mayor-abc123").
+// This keeps the logical namespace clean while ensuring no collisions across towns.
+//
+// The translation is bidirectional:
+// - ToUniqueHumanReadableName: logical ID + townRoot → unique name (no collisions)
+// - FromUniqueHumanReadableName: unique name + townRoot → logical ID + ownership check
+
+// ToUniqueHumanReadableName translates a logical SessionID to a unique, human-readable name.
+// Includes the town suffix for collision prevention in multi-town setups.
+//
+// Logical IDs use path format: "mayor", "deacon", "<rig>/witness", "<rig>/polecats/<name>", etc.
+// Output names use the gt-/hq- prefix format with town suffix: "hq-mayor-abc123", "gt-gastown-witness-abc123".
+//
+// If townRoot is empty, no suffix is added (legacy/single-town mode).
+func ToUniqueHumanReadableName(id SessionID, townRoot string) string {
+	s := string(id)
+	if s == "" {
+		return ""
+	}
+
+	var baseName string
+
+	// Town-level agents use hq- prefix
+	if s == "mayor" {
+		baseName = HQPrefix + "mayor"
+	} else if s == "deacon" {
+		baseName = HQPrefix + "deacon"
+	} else if s == "boot" {
+		// Boot is a special case - system service
+		baseName = Prefix + "boot"
+	} else {
+		// Rig-level agents: <rig>/<role>[/<name>]
+		parts := strings.Split(s, "/")
+		if len(parts) < 2 {
+			// Not a recognized format, return as-is (might be legacy)
+			baseName = s
+		} else {
+			rig := parts[0]
+			role := parts[1]
+
+			switch role {
+			case "witness":
+				baseName = fmt.Sprintf("%s%s-witness", Prefix, rig)
+			case "refinery":
+				baseName = fmt.Sprintf("%s%s-refinery", Prefix, rig)
+			case "polecats":
+				if len(parts) < 3 {
+					baseName = s // Invalid, return as-is
+				} else {
+					name := parts[2]
+					baseName = fmt.Sprintf("%s%s-%s", Prefix, rig, name)
+				}
+			case "crew":
+				if len(parts) < 3 {
+					baseName = s // Invalid, return as-is
+				} else {
+					name := parts[2]
+					baseName = fmt.Sprintf("%s%s-crew-%s", Prefix, rig, name)
+				}
+			default:
+				// Unknown role, return as-is
+				baseName = s
+			}
+		}
+	}
+
+	// Append town suffix for collision prevention
+	return baseName + townSuffix(townRoot)
+}
+
+// FromUniqueHumanReadableName translates a unique name back to a logical SessionID.
+// Also checks ownership - returns false if the session belongs to a different town.
+//
+// Parameters:
+//   - uniqueName: the unique session name (e.g., "hq-mayor-abc123")
+//   - townRoot: the caller's town root path (used to verify ownership)
+//
+// Returns:
+//   - SessionID: the logical ID (e.g., "mayor"), empty if not owned
+//   - bool: true if this session belongs to the caller's town (or is legacy)
+//
+// Legacy sessions (no town suffix) are considered owned for backwards compatibility.
+func FromUniqueHumanReadableName(uniqueName string, townRoot string) (SessionID, bool) {
+	// Check ownership first
+	sessionTownID := ExtractTownID(uniqueName)
+	expectedTownID := TownID(townRoot)
+
+	if sessionTownID != "" && expectedTownID != "" && sessionTownID != expectedTownID {
+		// Different town - not ours
+		return "", false
+	}
+
+	// Legacy session (no suffix) or ours - proceed with translation
+	baseName := StripTownID(uniqueName)
+
+	// Town-level agents (HQ prefix)
+	if baseName == HQPrefix+"mayor" || baseName == "gt-mayor" {
+		return SessionID("mayor"), true
+	}
+	if baseName == HQPrefix+"deacon" || baseName == "gt-deacon" {
+		return SessionID("deacon"), true
+	}
+	if baseName == Prefix+"boot" {
+		return SessionID("boot"), true
+	}
+
+	// Must start with gt- for rig-level agents
+	if !strings.HasPrefix(baseName, Prefix) {
+		// Unknown format - return as-is but mark as owned (could be legacy)
+		return SessionID(uniqueName), true
+	}
+
+	rest := strings.TrimPrefix(baseName, Prefix)
+	parts := strings.Split(rest, "-")
+	if len(parts) < 2 {
+		return SessionID(uniqueName), true // Unknown format
+	}
+
+	rig := parts[0]
+
+	// Check for known suffixes
+	if parts[len(parts)-1] == "witness" && len(parts) == 2 {
+		return SessionID(fmt.Sprintf("%s/witness", rig)), true
+	}
+	if parts[len(parts)-1] == "refinery" && len(parts) == 2 {
+		return SessionID(fmt.Sprintf("%s/refinery", rig)), true
+	}
+
+	// Check for crew: gt-<rig>-crew-<name>
+	if len(parts) >= 3 && parts[1] == "crew" {
+		name := strings.Join(parts[2:], "-")
+		return SessionID(fmt.Sprintf("%s/crew/%s", rig, name)), true
+	}
+
+	// Default: polecat gt-<rig>-<name>
+	name := strings.Join(parts[1:], "-")
+	return SessionID(fmt.Sprintf("%s/polecats/%s", rig, name)), true
+}
+
 // --- Session name parsing utilities ---
 
 // ExtractTownID extracts the town ID suffix from a session name.

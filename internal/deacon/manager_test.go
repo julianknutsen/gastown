@@ -19,14 +19,13 @@ func TestManager_Start_CreatesAgent(t *testing.T) {
 	setupDeaconDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
 
-	// Verify agent was created with correct name
-	agentID := agent.AgentID(deacon.SessionName())
-	assert.True(t, agents.Exists(agentID), "agent should exist after Start")
+	// Verify agent was created with correct ID
+	assert.True(t, agents.Exists(agent.DeaconAddress()), "agent should exist after Start")
 }
 
 func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
@@ -34,11 +33,11 @@ func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
 	setupDeaconDir(t, townRoot)
 
 	agents := agent.NewDouble()
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
-	// Pre-create agent
-	agents.CreateAgent(agent.AgentID(deacon.SessionName()))
+	// Pre-create agent using agent.DeaconAddress()
+	agents.CreateAgent(agent.DeaconAddress())
 
-	mgr := deacon.NewManager(townRoot, "claude", agents)
 	err := mgr.Start()
 
 	assert.ErrorIs(t, err, deacon.ErrAlreadyRunning)
@@ -51,13 +50,13 @@ func TestManager_Stop_TerminatesAgent(t *testing.T) {
 	setupDeaconDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
 	_ = mgr.Start()
 	err := mgr.Stop()
 	require.NoError(t, err)
 
-	assert.False(t, agents.Exists(agent.AgentID(deacon.SessionName())))
+	assert.False(t, agents.Exists(agent.DeaconAddress()))
 }
 
 func TestManager_Stop_WhenNotRunning_ReturnsError(t *testing.T) {
@@ -65,7 +64,7 @@ func TestManager_Stop_WhenNotRunning_ReturnsError(t *testing.T) {
 	setupDeaconDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Stop()
 	assert.ErrorIs(t, err, deacon.ErrNotRunning)
@@ -78,7 +77,7 @@ func TestManager_IsRunning_ReturnsCorrectState(t *testing.T) {
 	setupDeaconDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
 	running, _ := mgr.IsRunning()
 	assert.False(t, running)
@@ -94,48 +93,31 @@ func TestManager_IsRunning_ReturnsCorrectState(t *testing.T) {
 
 // --- Status Tests ---
 
-func TestManager_Status_ReturnsInfo_WhenRunning(t *testing.T) {
+func TestManager_Status_ReturnsRunning_WhenRunning(t *testing.T) {
 	townRoot := t.TempDir()
 	setupDeaconDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
 	_ = mgr.Start()
 
-	info, err := mgr.Status()
+	status, err := mgr.Status()
 	require.NoError(t, err)
-	assert.NotNil(t, info)
-	assert.Equal(t, deacon.SessionName(), info.Name)
+	assert.Equal(t, deacon.StateRunning, status.State)
+	assert.Equal(t, deacon.SessionName(), status.Name)
 }
 
-func TestManager_Status_ReturnsError_WhenNotRunning(t *testing.T) {
+func TestManager_Status_ReturnsStopped_WhenNotRunning(t *testing.T) {
 	townRoot := t.TempDir()
 	setupDeaconDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
-	_, err := mgr.Status()
-	assert.ErrorIs(t, err, deacon.ErrNotRunning)
-}
-
-func TestManager_Status_ReturnsError_WhenGetInfoFails(t *testing.T) {
-	townRoot := t.TempDir()
-	setupDeaconDir(t, townRoot)
-
-	double := agent.NewDouble()
-	stub := agent.NewAgentsStub(double)
-	mgr := deacon.NewManager(townRoot, "claude", stub)
-
-	_ = mgr.Start()
-
-	// Inject GetInfo failure
-	stub.GetInfoErr = errors.New("simulated GetInfo failure")
-	_, err := mgr.Status()
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "simulated GetInfo failure")
+	status, err := mgr.Status()
+	require.NoError(t, err)
+	assert.Equal(t, deacon.StateStopped, status.State)
 }
 
 // --- Start Parameter Tests ---
@@ -145,13 +127,12 @@ func TestManager_Start_UsesCorrectWorkDir(t *testing.T) {
 	setupDeaconDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
 
-	agentID := agent.AgentID(deacon.SessionName())
-	workDir := agents.GetWorkDir(agentID)
+	workDir := agents.GetWorkDir(agent.DeaconAddress())
 
 	expectedWorkDir := filepath.Join(townRoot, "deacon")
 	assert.Equal(t, expectedWorkDir, workDir, "should start in deacon directory")
@@ -162,13 +143,12 @@ func TestManager_Start_UsesCorrectCommand(t *testing.T) {
 	setupDeaconDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
 
-	agentID := agent.AgentID(deacon.SessionName())
-	command := agents.GetCommand(agentID)
+	command := agents.GetCommand(agent.DeaconAddress())
 
 	assert.Contains(t, command, "claude", "command should include agent name")
 }
@@ -183,7 +163,7 @@ func TestManager_Start_CreatesSettings(t *testing.T) {
 	// Note: NOT creating .claude/settings.local.json
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
@@ -207,7 +187,7 @@ func TestManager_Start_SettingsFailure_NoAgentCreated(t *testing.T) {
 	})
 
 	agents := agent.NewDouble()
-	mgr := deacon.NewManager(townRoot, "claude", agents)
+	mgr := deacon.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	assert.Error(t, err, "should fail when settings can't be created")
@@ -226,7 +206,7 @@ func TestManager_Start_AgentStartFailure(t *testing.T) {
 	stub := agent.NewAgentsStub(double)
 	stub.StartErr = errors.New("simulated start failure")
 
-	mgr := deacon.NewManager(townRoot, "claude", stub)
+	mgr := deacon.NewManager(stub, townRoot, "claude")
 	err := mgr.Start()
 
 	assert.Error(t, err)
@@ -239,7 +219,7 @@ func TestManager_Stop_AgentStopFailure(t *testing.T) {
 
 	double := agent.NewDouble()
 	stub := agent.NewAgentsStub(double)
-	mgr := deacon.NewManager(townRoot, "claude", stub)
+	mgr := deacon.NewManager(stub, townRoot, "claude")
 
 	_ = mgr.Start()
 
@@ -261,13 +241,13 @@ func TestManager_Start_WaitReadyFailure(t *testing.T) {
 	stub := agent.NewAgentsStub(double)
 	stub.WaitReadyErr = errors.New("wait ready timeout")
 
-	mgr := deacon.NewManager(townRoot, "claude", stub)
+	mgr := deacon.NewManager(stub, townRoot, "claude")
 	err := mgr.Start()
 
 	// Currently Start() ignores WaitReady errors - this may be intentional
 	// The agent is created even if WaitReady fails
 	assert.NoError(t, err, "Start currently ignores WaitReady failures")
-	assert.True(t, double.Exists(agent.AgentID(deacon.SessionName())), "agent should exist despite WaitReady failure")
+	assert.True(t, double.Exists(agent.DeaconAddress()), "agent should exist despite WaitReady failure")
 }
 
 // --- Helpers ---

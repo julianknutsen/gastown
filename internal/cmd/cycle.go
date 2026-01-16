@@ -1,12 +1,11 @@
 package cmd
 
 import (
-	"fmt"
 	"os/exec"
 	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 // cycleSession is the --session flag for cycle next/prev commands.
@@ -67,77 +66,56 @@ and cycles within the appropriate group.`,
 // direction: 1 for next, -1 for previous
 // sessionOverride: if non-empty, use this instead of detecting current session
 func cycleToSession(direction int, sessionOverride string) error {
-	session := sessionOverride
-	if session == "" {
+	currentSession := sessionOverride
+	if currentSession == "" {
 		var err error
-		session, err = getCurrentTmuxSession()
+		currentSession, err = getCurrentTmuxSession()
 		if err != nil {
 			return nil // Not in tmux, nothing to do
 		}
 	}
 
-	// Check if it's a town-level session
-	townLevelSessions := getTownLevelSessions()
-	if townLevelSessions != nil {
-		for _, townSession := range townLevelSessions {
-			if session == townSession {
-				return cycleTownSession(direction, session)
-			}
-		}
+	// Parse session name to determine role and town
+	identity, err := session.ParseSessionName(currentSession)
+	if err != nil {
+		// Unknown session type - do nothing
+		return nil
 	}
 
-	// Check if it's a crew session (format: gt-<rig>-crew-<name>)
-	if strings.HasPrefix(session, "gt-") && strings.Contains(session, "-crew-") {
-		return cycleCrewSession(direction, session)
+	// Dispatch based on role
+	switch identity.Role {
+	case session.RoleMayor, session.RoleDeacon:
+		return cycleTownSession(direction, currentSession)
+	case session.RoleCrew:
+		return cycleCrewSession(direction, currentSession)
+	case session.RoleWitness, session.RoleRefinery:
+		return cycleRigInfraSession(direction, currentSession, identity.Rig, identity.TownID)
+	case session.RolePolecat:
+		return cyclePolecatSession(direction, currentSession)
+	default:
+		return nil
 	}
-
-	// Check if it's a rig infra session (witness or refinery)
-	if rig := parseRigInfraSession(session); rig != "" {
-		return cycleRigInfraSession(direction, session, rig)
-	}
-
-	// Check if it's a polecat session (gt-<rig>-<name>, not crew/witness/refinery)
-	if rig, _, ok := parsePolecatSessionName(session); ok && rig != "" {
-		return cyclePolecatSession(direction, session)
-	}
-
-	// Unknown session type - do nothing
-	return nil
-}
-
-// parseRigInfraSession extracts rig name if this is a witness or refinery session.
-// Returns empty string if not a rig infra session.
-// Format: gt-<rig>-witness or gt-<rig>-refinery
-func parseRigInfraSession(session string) string {
-	if !strings.HasPrefix(session, "gt-") {
-		return ""
-	}
-	rest := session[3:] // Remove "gt-" prefix
-
-	// Check for -witness or -refinery suffix
-	if strings.HasSuffix(rest, "-witness") {
-		return strings.TrimSuffix(rest, "-witness")
-	}
-	if strings.HasSuffix(rest, "-refinery") {
-		return strings.TrimSuffix(rest, "-refinery")
-	}
-	return ""
 }
 
 // cycleRigInfraSession cycles between witness and refinery sessions for a rig.
-func cycleRigInfraSession(direction int, currentSession, rig string) error {
-	// Find running infra sessions for this rig
-	witnessSession := fmt.Sprintf("gt-%s-witness", rig)
-	refinerySession := fmt.Sprintf("gt-%s-refinery", rig)
-
-	var sessions []string
+// townID filters to sessions in the same town (empty matches any).
+func cycleRigInfraSession(direction int, currentSession, rig, townID string) error {
+	// Find running infra sessions for this rig in the same town
 	allSessions, err := listTmuxSessions()
 	if err != nil {
 		return err
 	}
 
+	var sessions []string
 	for _, s := range allSessions {
-		if s == witnessSession || s == refinerySession {
+		identity, err := session.ParseSessionName(s)
+		if err != nil {
+			continue
+		}
+		// Match: same rig, witness or refinery, same town (or legacy with no town ID)
+		if identity.Rig == rig &&
+			(identity.Role == session.RoleWitness || identity.Role == session.RoleRefinery) &&
+			(townID == "" || identity.TownID == "" || identity.TownID == townID) {
 			sessions = append(sessions, s)
 		}
 	}

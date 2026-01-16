@@ -8,9 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // ErrUnknownList indicates a mailing list name was not found in configuration.
@@ -27,9 +26,9 @@ var ErrUnknownAnnounce = errors.New("unknown announce channel")
 // - Town-level (mayor/, deacon/) -> {townRoot}/.beads
 // - Rig-level (rig/polecat) -> {townRoot}/{rig}/.beads
 type Router struct {
-	workDir  string // fallback directory to run bd commands in
-	townRoot string // town root directory (e.g., ~/gt)
-	tmux     *tmux.Tmux
+	workDir  string       // fallback directory to run bd commands in
+	townRoot string       // town root directory (e.g., ~/gt)
+	agents   agent.Agents // for sending notifications to agent sessions
 }
 
 // NewRouter creates a new mail router.
@@ -42,7 +41,7 @@ func NewRouter(workDir string) *Router {
 	return &Router{
 		workDir:  workDir,
 		townRoot: townRoot,
-		tmux:     tmux.NewTmux(),
+		agents:   agent.ForTown(townRoot),
 	}
 }
 
@@ -51,7 +50,7 @@ func NewRouterWithTownRoot(workDir, townRoot string) *Router {
 	return &Router{
 		workDir:  workDir,
 		townRoot: townRoot,
-		tmux:     tmux.NewTmux(),
+		agents:   agent.ForTown(townRoot),
 	}
 }
 
@@ -862,41 +861,47 @@ func (r *Router) GetMailbox(address string) (*Mailbox, error) {
 	return NewMailboxFromAddress(address, workDir), nil
 }
 
-// notifyRecipient sends a notification to a recipient's tmux session.
-// Uses NudgeSession to add the notification to the agent's conversation history.
+// notifyRecipient sends a notification to a recipient's agent session.
+// Uses Nudge to add the notification to the agent's conversation history.
 // Supports mayor/, rig/polecat, and rig/refinery addresses.
 func (r *Router) notifyRecipient(msg *Message) error {
-	sessionName := addressToSessionID(msg.To)
-	if sessionName == "" {
-		return nil // Unable to determine session ID
+	agentID := addressToAgentID(msg.To)
+	if agentID == "" {
+		return nil // Unable to determine agent ID
 	}
 
-	// Check if session exists
-	hasSession, err := r.tmux.Exists(session.SessionID(sessionName))
-	if err != nil || !hasSession {
-		return nil // No active session, skip notification
+	// Check if agent exists
+	if !r.agents.Exists(agentID) {
+		return nil // No active agent, skip notification
 	}
 
 	// Send notification to the agent's conversation history
 	notification := fmt.Sprintf("📬 You have new mail from %s. Subject: %s. Run 'gt mail inbox' to read.", msg.From, msg.Subject)
-	return r.tmux.NudgeSession(sessionName, notification)
+	return r.agents.Nudge(agentID, notification)
 }
 
-// addressToSessionID converts a mail address to a tmux session ID.
-// Returns empty string if address format is not recognized.
-func addressToSessionID(address string) string {
-	// Mayor address: "mayor/" or "mayor"
-	if strings.HasPrefix(address, "mayor") {
-		return session.MayorSessionName()
-	}
+// addressToAgentID converts a mail address to an agent.AgentID.
+// Returns empty AgentID if address format is not recognized.
+//
+// Mail addresses use these formats:
+//   - "mayor" or "mayor/" → agent.MayorAddress()
+//   - "deacon" or "deacon/" → agent.DeaconAddress()
+//   - "rig/witness" → agent.WitnessAddress(rig)
+//   - "rig/refinery" → agent.RefineryAddress(rig)
+//   - "rig/name" → agent.PolecatAddress(rig, name) (polecats use simple name format)
+func addressToAgentID(address string) agent.AgentID {
+	addr := strings.TrimSuffix(address, "/")
 
-	// Deacon address: "deacon/" or "deacon"
-	if strings.HasPrefix(address, "deacon") {
-		return session.DeaconSessionName()
+	// Town-level agents
+	if addr == "mayor" {
+		return agent.MayorAddress()
+	}
+	if addr == "deacon" {
+		return agent.DeaconAddress()
 	}
 
 	// Rig-based address: "rig/target"
-	parts := strings.SplitN(address, "/", 2)
+	parts := strings.SplitN(addr, "/", 2)
 	if len(parts) != 2 || parts[1] == "" {
 		return ""
 	}
@@ -904,7 +909,14 @@ func addressToSessionID(address string) string {
 	rig := parts[0]
 	target := parts[1]
 
-	// Polecat: gt-rig-polecat
-	// Refinery: gt-rig-refinery (if refinery has its own session)
-	return fmt.Sprintf("gt-%s-%s", rig, target)
+	// Known rig-level singletons
+	switch target {
+	case "witness":
+		return agent.WitnessAddress(rig)
+	case "refinery":
+		return agent.RefineryAddress(rig)
+	default:
+		// Named agents (polecats) - mail uses simple "rig/name" format
+		return agent.PolecatAddress(rig, target)
+	}
 }

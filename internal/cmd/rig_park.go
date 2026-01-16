@@ -4,11 +4,10 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/factory"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/wisp"
 )
 
@@ -75,13 +74,10 @@ func runRigPark(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Parking rig %s...\n", style.Bold.Render(rigName))
 
 	var stoppedAgents []string
-
-	t := tmux.NewTmux()
+	agents := agent.ForTownPath(townRoot)
 
 	// Stop witness if running
-	witnessSession := fmt.Sprintf("gt-%s-witness", rigName)
-	witnessRunning, _ := t.Exists(session.SessionID(witnessSession))
-	if witnessRunning {
+	if agents.Exists(agent.WitnessAddress(rigName)) {
 		fmt.Printf("  Stopping witness...\n")
 		agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
 		witMgr := factory.WitnessManager(r, townRoot, agentName)
@@ -93,9 +89,7 @@ func runRigPark(cmd *cobra.Command, args []string) error {
 	}
 
 	// Stop refinery if running
-	refinerySession := fmt.Sprintf("gt-%s-refinery", rigName)
-	refineryRunning, _ := t.Exists(session.SessionID(refinerySession))
-	if refineryRunning {
+	if agents.Exists(agent.RefineryAddress(rigName)) {
 		fmt.Printf("  Stopping refinery...\n")
 		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
 		refMgr := factory.RefineryManager(r, townRoot, refineryAgentName)

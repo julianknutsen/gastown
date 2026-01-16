@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // SessionName is the tmux session name for Boot.
@@ -41,23 +41,47 @@ type Status struct {
 }
 
 // Boot manages the Boot watchdog lifecycle.
+// Like other managers, it takes an Agents dependency for testability.
 type Boot struct {
-	townRoot   string
-	bootDir    string // ~/gt/deacon/dogs/boot/
-	deaconDir  string // ~/gt/deacon/
-	tmux       *tmux.Tmux
-	degraded   bool
+	townRoot  string
+	bootDir   string // ~/gt/deacon/dogs/boot/
+	deaconDir string // ~/gt/deacon/
+	agents    agent.Agents
+	agentName string
+	degraded  bool
 }
 
-// New creates a new Boot manager.
+// NewManager creates a new Boot manager for a town.
+// agents is the Agents implementation (real or test double) to use.
+// townRoot is the path to the town root directory.
+// agentName is the resolved agent to use (from config or command line).
+func NewManager(agents agent.Agents, townRoot, agentName string) *Boot {
+	return &Boot{
+		townRoot:  townRoot,
+		bootDir:   filepath.Join(townRoot, "deacon", "dogs", "boot"),
+		deaconDir: filepath.Join(townRoot, "deacon"),
+		agents:    agents,
+		agentName: agentName,
+		degraded:  os.Getenv("GT_DEGRADED") == "true",
+	}
+}
+
+// New creates a new Boot manager using legacy instantiation.
+// Deprecated: Use factory.BootManager() instead for proper configuration.
 func New(townRoot string) *Boot {
 	return &Boot{
 		townRoot:  townRoot,
 		bootDir:   filepath.Join(townRoot, "deacon", "dogs", "boot"),
 		deaconDir: filepath.Join(townRoot, "deacon"),
-		tmux:      tmux.NewTmux(),
+		agents:    agent.ForTown(townRoot),
+		agentName: "claude",
 		degraded:  os.Getenv("GT_DEGRADED") == "true",
 	}
+}
+
+// address returns the agent address for Boot.
+func (b *Boot) address() agent.AgentID {
+	return agent.BootAddress()
 }
 
 // EnsureDir ensures the Boot directory exists.
@@ -76,15 +100,14 @@ func (b *Boot) statusPath() string {
 }
 
 // IsRunning checks if Boot is currently running.
-// Queries tmux directly for observable reality (ZFC principle).
 func (b *Boot) IsRunning() bool {
-	return b.IsSessionAlive()
+	return b.agents.Exists(b.address())
 }
 
-// IsSessionAlive checks if the Boot tmux session exists.
+// IsSessionAlive checks if the Boot agent is running.
+// Alias for IsRunning for backwards compatibility.
 func (b *Boot) IsSessionAlive() bool {
-	has, err := b.tmux.Exists(SessionName)
-	return err == nil && has
+	return b.IsRunning()
 }
 
 // AcquireLock creates the marker file to indicate Boot is starting.
@@ -159,42 +182,23 @@ func (b *Boot) Spawn() error {
 	return b.spawnTmux()
 }
 
-// spawnTmux spawns Boot in a tmux session.
+// spawnTmux spawns Boot in a tmux session using the standard agent pattern.
 func (b *Boot) spawnTmux() error {
-	// Kill any stale session first
-	if b.IsSessionAlive() {
-		_ = b.tmux.Stop(SessionName)
-	}
-
 	// Ensure boot directory exists (it should have CLAUDE.md with Boot context)
 	if err := b.EnsureDir(); err != nil {
 		return fmt.Errorf("ensuring boot dir: %w", err)
 	}
 
-	// Create new session in boot directory (not deacon dir) so Claude reads Boot's CLAUDE.md
-	if err := b.tmux.NewSession(SessionName, b.bootDir); err != nil {
-		return fmt.Errorf("creating boot session: %w", err)
-	}
+	// Build the startup command with initial triage prompt (GUPP principle)
+	startCmd := config.BuildAgentStartupCommand(b.agentName, "", b.townRoot, "", "gt boot triage")
 
-	// Set environment using centralized AgentEnv for consistency
-	envVars := config.AgentEnv(config.AgentEnvConfig{
-		Role:     "boot",
-		TownRoot: b.townRoot,
-	})
-	for k, v := range envVars {
-		_ = b.tmux.SetEnv(SessionName, k, v)
-	}
-
-	// Launch Claude with environment exported inline and initial triage prompt
-	// The "gt boot triage" prompt tells Boot to immediately start triage (GUPP principle)
-	startCmd := config.BuildAgentStartupCommand("boot", "", b.townRoot, "", "gt boot triage")
-	// Wait for shell to be ready before sending keys (prevents "can't find pane" under load)
-	if err := b.tmux.WaitForShellReady(SessionName, 5*time.Second); err != nil {
-		_ = b.tmux.Stop(SessionName)
-		return fmt.Errorf("waiting for shell: %w", err)
-	}
-	if err := b.tmux.Send(SessionName, startCmd); err != nil {
-		return fmt.Errorf("sending startup command: %w", err)
+	// Start the Boot agent - agents.Start() handles:
+	// - Zombie detection and cleanup
+	// - Session creation with command
+	// - Environment variable injection (configured via factory)
+	// - Readiness waiting in background
+	if err := b.agents.Start(b.address(), b.bootDir, startCmd); err != nil {
+		return fmt.Errorf("starting boot agent: %w", err)
 	}
 
 	return nil
@@ -233,9 +237,4 @@ func (b *Boot) Dir() string {
 // DeaconDir returns the Deacon's directory.
 func (b *Boot) DeaconDir() string {
 	return b.deaconDir
-}
-
-// Tmux returns the tmux manager.
-func (b *Boot) Tmux() *tmux.Tmux {
-	return b.tmux
 }

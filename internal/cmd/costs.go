@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -194,41 +194,39 @@ func runCosts(cmd *cobra.Command, args []string) error {
 }
 
 func runLiveCosts() error {
-	t := tmux.NewTmux()
+	// Find workspace for proper agent resolution
+	townRoot, _ := workspace.FindFromCwd()
 
-	// Get all tmux sessions
-	sessions, err := t.List()
+	// Create agents interface - use nil config to include all sessions
+	agents := agent.ForTownWithConfig(townRoot, nil)
+
+	// Get all agents
+	agentList, err := agents.List()
 	if err != nil {
-		return fmt.Errorf("listing sessions: %w", err)
+		return fmt.Errorf("listing agents: %w", err)
 	}
 
 	var costs []SessionCost
 	var total float64
 
-	for _, sessionID := range sessions {
-		session := string(sessionID)
-		// Only process Gas Town sessions (start with "gt-")
-		if !strings.HasPrefix(session, constants.SessionPrefix) {
-			continue
-		}
-
-		// Parse session name to get role/rig/worker
-		role, rig, worker := parseSessionName(session)
+	for _, agentID := range agentList {
+		// Parse agent ID to get role/rig/worker
+		role, rig, worker := agentID.Parse()
 
 		// Capture pane content
-		content, err := t.CapturePaneAll(session)
+		content, err := agents.CaptureAll(agentID)
 		if err != nil {
-			continue // Skip sessions we can't capture
+			continue // Skip agents we can't capture
 		}
 
 		// Extract cost from content
 		cost := extractCost(content)
 
-		// Check if an agent appears to be running
-		running := t.IsAgentRunning(session)
+		// Check if agent is running
+		running := agents.Exists(agentID)
 
 		costs = append(costs, SessionCost{
-			Session: session,
+			Session: string(agentID),
 			Role:    role,
 			Rig:     rig,
 			Worker:  worker,
@@ -724,26 +722,36 @@ func outputLedgerHuman(output CostsOutput, entries []CostEntry) error {
 // This is called by the Claude Code Stop hook.
 func runCostsRecord(cmd *cobra.Command, args []string) error {
 	// Get session from flag or try to detect from environment
-	session := recordSession
-	if session == "" {
-		session = os.Getenv("GT_SESSION")
+	sessionName := recordSession
+	if sessionName == "" {
+		sessionName = os.Getenv("GT_SESSION")
 	}
-	if session == "" {
+	if sessionName == "" {
 		// Derive session name from GT_* environment variables
-		session = deriveSessionName()
+		sessionName = deriveSessionName()
 	}
-	if session == "" {
+	if sessionName == "" {
 		// Try to detect current tmux session (works when running inside tmux)
-		session = detectCurrentTmuxSession()
+		sessionName = detectCurrentTmuxSession()
 	}
-	if session == "" {
+	if sessionName == "" {
 		return fmt.Errorf("--session flag required (or set GT_SESSION env var, or GT_RIG/GT_ROLE)")
 	}
 
-	t := tmux.NewTmux()
+	// Parse session name to get role/rig/worker
+	role, rig, worker := parseSessionName(sessionName)
+
+	// Build AgentID from parsed info
+	agentID := buildAgentID(role, rig, worker)
+
+	// Find workspace for proper agent resolution
+	townRoot, _ := workspace.FindFromCwd()
+
+	// Create agents interface
+	agents := agent.ForTownWithConfig(townRoot, nil)
 
 	// Capture pane content
-	content, err := t.CapturePaneAll(session)
+	content, err := agents.CaptureAll(agentID)
 	if err != nil {
 		// Session may already be gone - that's OK, we'll record with zero cost
 		content = ""
@@ -752,22 +760,19 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 	// Extract cost
 	cost := extractCost(content)
 
-	// Parse session name
-	role, rig, worker := parseSessionName(session)
-
 	// Build agent path for actor field
 	agentPath := buildAgentPath(role, rig, worker)
 
 	// Build event title
-	title := fmt.Sprintf("Session ended: %s", session)
+	title := fmt.Sprintf("Session ended: %s", sessionName)
 	if recordWorkItem != "" {
-		title = fmt.Sprintf("Session: %s completed %s", session, recordWorkItem)
+		title = fmt.Sprintf("Session: %s completed %s", sessionName, recordWorkItem)
 	}
 
 	// Build payload JSON
 	payload := map[string]interface{}{
 		"cost_usd":   cost,
-		"session_id": session,
+		"session_id": sessionName,
 		"role":       role,
 		"ended_at":   time.Now().Format(time.RFC3339),
 	}
@@ -827,7 +832,7 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 
 	// Output confirmation (silent if cost is zero and no work item)
 	if cost > 0 || recordWorkItem != "" {
-		fmt.Printf("%s Recorded $%.2f for %s (wisp: %s)", style.Success.Render("✓"), cost, session, wispID)
+		fmt.Printf("%s Recorded $%.2f for %s (wisp: %s)", style.Success.Render("✓"), cost, sessionName, wispID)
 		if recordWorkItem != "" {
 			fmt.Printf(" (work: %s)", recordWorkItem)
 		}
@@ -932,6 +937,33 @@ func buildAgentPath(role, rig, worker string) string {
 			return rig
 		}
 		return worker
+	}
+}
+
+// buildAgentID constructs an AgentID from role, rig, and worker.
+func buildAgentID(role, rig, worker string) agent.AgentID {
+	switch role {
+	case constants.RoleMayor:
+		return agent.MayorAddress()
+	case constants.RoleDeacon:
+		return agent.DeaconAddress()
+	case constants.RoleWitness:
+		return agent.WitnessAddress(rig)
+	case constants.RoleRefinery:
+		return agent.RefineryAddress(rig)
+	case constants.RolePolecat:
+		return agent.PolecatAddress(rig, worker)
+	case constants.RoleCrew:
+		return agent.CrewAddress(rig, worker)
+	default:
+		// Fallback: construct manually
+		if rig != "" && worker != "" {
+			return agent.AgentID(rig + "/" + role + "/" + worker)
+		}
+		if rig != "" {
+			return agent.AgentID(rig + "/" + role)
+		}
+		return agent.AgentID(role)
 	}
 }
 

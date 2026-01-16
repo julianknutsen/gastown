@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -303,33 +304,17 @@ func handleStepContinue(cwd, townRoot, _ string, nextStep *beads.Issue, dryRun b
 		return nil
 	}
 
-	pane := os.Getenv("TMUX_PANE")
-	if pane == "" {
-		return fmt.Errorf("TMUX_PANE not set")
-	}
-
-	// Get current session for restart command
-	currentSession, err := getCurrentTmuxSession()
-	if err != nil {
-		return fmt.Errorf("getting session name: %w", err)
-	}
-
-	restartCmd, err := buildRestartCommand(currentSession)
-	if err != nil {
-		return fmt.Errorf("building restart command: %w", err)
+	// Get current agent identity
+	selfID, selfErr := agent.Self()
+	if selfErr != nil {
+		return fmt.Errorf("detecting agent identity: %w", selfErr)
 	}
 
 	fmt.Printf("\n%s Respawning for next step...\n", style.Bold.Render("🔄"))
 
-	t := tmux.NewTmux()
-
-	// Clear history before respawn
-	if err := t.ClearHistory(pane); err != nil {
-		// Non-fatal
-		style.PrintWarning("could not clear history: %v", err)
-	}
-
-	return t.RespawnPane(pane, restartCmd)
+	// Respawn - original command is reused, new session discovers pinned work via hooks
+	agents := agent.ForTown(townRoot)
+	return agents.Respawn(selfID)
 }
 
 // handleMoleculeComplete handles when a molecule is complete.

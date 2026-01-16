@@ -5,12 +5,11 @@ import (
 	"os/exec"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/factory"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // RigDockedLabel is the label set on rig identity beads when docked.
@@ -109,13 +108,11 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Docking rig %s...\n", style.Bold.Render(rigName))
 
 	var stoppedAgents []string
-
-	t := tmux.NewTmux()
+	agentsAPI := agent.ForTown(townRoot)
 
 	// Stop witness if running
-	witnessSession := fmt.Sprintf("gt-%s-witness", rigName)
-	witnessRunning, _ := t.Exists(session.SessionID(witnessSession))
-	if witnessRunning {
+	witnessID := agent.WitnessAddress(rigName)
+	if agentsAPI.Exists(witnessID) {
 		fmt.Printf("  Stopping witness...\n")
 		agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
 		witMgr := factory.WitnessManager(r, townRoot, agentName)
@@ -127,9 +124,8 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Stop refinery if running
-	refinerySession := fmt.Sprintf("gt-%s-refinery", rigName)
-	refineryRunning, _ := t.Exists(session.SessionID(refinerySession))
-	if refineryRunning {
+	refineryID := agent.RefineryAddress(rigName)
+	if agentsAPI.Exists(refineryID) {
 		fmt.Printf("  Stopping refinery...\n")
 		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
 		refMgr := factory.RefineryManager(r, townRoot, refineryAgentName)

@@ -4,110 +4,45 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/steveyegge/gastown/internal/agent"
 )
 
-// mockSessionChecker is a test implementation of SessionChecker.
-type mockSessionChecker struct {
-	sessions map[string]bool
+// mockAgentChecker is a test implementation of AgentChecker.
+type mockAgentChecker struct {
+	agents map[string]bool
 }
 
-func (m *mockSessionChecker) Exists(id session.SessionID) (bool, error) {
-	return m.sessions[string(id)], nil
+func (m *mockAgentChecker) Exists(id agent.AgentID) bool {
+	return m.agents[string(id)]
 }
 
-func TestAssigneeToSessionName(t *testing.T) {
-	tests := []struct {
-		name     string
-		assignee string
-		want     string
-	}{
-		{
-			name:     "deacon",
-			assignee: "deacon",
-			want:     "hq-deacon",
-		},
-		{
-			name:     "mayor",
-			assignee: "mayor",
-			want:     "hq-mayor",
-		},
-		{
-			name:     "witness",
-			assignee: "gastown/witness",
-			want:     "gt-gastown-witness",
-		},
-		{
-			name:     "refinery",
-			assignee: "gastown/refinery",
-			want:     "gt-gastown-refinery",
-		},
-		{
-			name:     "polecat",
-			assignee: "gastown/polecats/max",
-			want:     "gt-gastown-max",
-		},
-		{
-			name:     "crew",
-			assignee: "gastown/crew/joe",
-			want:     "gt-gastown-crew-joe",
-		},
-		{
-			name:     "unknown single part",
-			assignee: "unknown",
-			want:     "",
-		},
-		{
-			name:     "unknown two parts",
-			assignee: "gastown/unknown",
-			want:     "",
-		},
-		{
-			name:     "unknown three parts",
-			assignee: "gastown/unknown/foo",
-			want:     "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := assigneeToSessionName(tt.assignee)
-			if got != tt.want {
-				t.Errorf("assigneeToSessionName(%q) = %q, want %q", tt.assignee, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestStaleHookConfig_SessionChecker(t *testing.T) {
-	// Verify that SessionChecker can be injected into the config
-	mock := &mockSessionChecker{
-		sessions: map[string]bool{
-			"gt-gastown-witness": true,
-			"gt-gastown-max":     false,
+func TestStaleHookConfig_AgentChecker(t *testing.T) {
+	// Verify that AgentChecker can be injected into the config
+	// Note: agents are now keyed by their AgentID (e.g., "gastown/witness", "gastown/polecats/max")
+	mock := &mockAgentChecker{
+		agents: map[string]bool{
+			"gastown/witness":      true,
+			"gastown/polecats/max": false,
 		},
 	}
 
 	cfg := &StaleHookConfig{
-		MaxAge:         1 * time.Hour,
-		DryRun:         true,
-		SessionChecker: mock,
+		MaxAge:       1 * time.Hour,
+		DryRun:       true,
+		AgentChecker: mock,
 	}
 
 	// Verify the mock works as expected
-	alive, _ := cfg.SessionChecker.Exists(session.SessionID("gt-gastown-witness"))
-	if !alive {
-		t.Error("expected witness session to be alive")
+	if !cfg.AgentChecker.Exists("gastown/witness") {
+		t.Error("expected witness agent to be alive")
 	}
 
-	alive, _ = cfg.SessionChecker.Exists(session.SessionID("gt-gastown-max"))
-	if alive {
-		t.Error("expected max session to be dead")
+	if cfg.AgentChecker.Exists("gastown/polecats/max") {
+		t.Error("expected max agent to be dead")
 	}
 
-	alive, _ = cfg.SessionChecker.Exists(session.SessionID("nonexistent"))
-	if alive {
-		t.Error("expected nonexistent session to return false")
+	if cfg.AgentChecker.Exists("nonexistent") {
+		t.Error("expected nonexistent agent to return false")
 	}
 }
 
@@ -122,7 +57,7 @@ func TestDefaultStaleHookConfig(t *testing.T) {
 		t.Error("DryRun should be false by default")
 	}
 
-	if cfg.SessionChecker != nil {
-		t.Error("SessionChecker should be nil by default")
+	if cfg.AgentChecker != nil {
+		t.Error("AgentChecker should be nil by default")
 	}
 }

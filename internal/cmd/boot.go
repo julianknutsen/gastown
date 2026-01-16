@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/boot"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/deacon"
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -99,7 +101,9 @@ func getBootManager() (*boot.Boot, error) {
 		return nil, fmt.Errorf("finding town root: %w", err)
 	}
 
-	return boot.New(townRoot), nil
+	// Boot uses deacon's agent configuration since it's the deacon's watchdog
+	agentName, _ := config.ResolveRoleAgentName("deacon", townRoot, "")
+	return factory.BootManager(townRoot, agentName), nil
 }
 
 func runBootStatus(cmd *cobra.Command, args []string) error {
@@ -275,17 +279,16 @@ func runBootTriage(cmd *cobra.Command, args []string) error {
 // runDegradedTriage performs basic Deacon health check without AI reasoning.
 // This is a mechanical fallback when full Claude sessions aren't available.
 func runDegradedTriage(b *boot.Boot) (action, target string, err error) {
-	tm := b.Tmux()
-
-	// Check if Deacon session exists
-	deaconSession := getDeaconSessionName()
-	deaconSessionID := session.SessionID(deaconSession)
-	hasDeacon, err := tm.Exists(deaconSessionID)
-	if err != nil {
-		return "error", "deacon", fmt.Errorf("checking deacon session: %w", err)
+	townRoot, _ := workspace.FindFromCwd()
+	if townRoot == "" {
+		return "error", "deacon", fmt.Errorf("not in a town workspace")
 	}
 
-	if !hasDeacon {
+	agents := agent.ForTown(townRoot)
+	deaconID := agent.DeaconAddress()
+
+	// Check if Deacon agent exists
+	if !agents.Exists(deaconID) {
 		// Deacon not running - this is unusual, daemon should have restarted it
 		// In degraded mode, we just report - let daemon handle restart
 		return "report", "deacon-missing", nil
@@ -293,25 +296,22 @@ func runDegradedTriage(b *boot.Boot) (action, target string, err error) {
 
 	// Deacon exists - check heartbeat to detect stuck sessions
 	// A session can exist but be stuck (not making progress)
-	townRoot, _ := workspace.FindFromCwd()
-	if townRoot != "" {
-		hb := deacon.ReadHeartbeat(townRoot)
-		if hb.ShouldPoke() {
-			// Heartbeat is stale (>15 min) - Deacon is stuck
-			// Nudge the session to try to wake it up
-			age := hb.Age()
-			if age > 30*time.Minute {
-				// Very stuck - restart the session
-				fmt.Printf("Deacon heartbeat is %s old - restarting session\n", age.Round(time.Minute))
-				if err := tm.Stop(deaconSessionID); err == nil {
-					return "restart", "deacon-stuck", nil
-				}
-			} else {
-				// Stuck but not critically - try nudging first
-				fmt.Printf("Deacon heartbeat is %s old - nudging session\n", age.Round(time.Minute))
-				_ = tm.NudgeSession(deaconSession, "HEALTH_CHECK: heartbeat is stale, respond to confirm responsiveness")
-				return "nudge", "deacon-stale", nil
+	hb := deacon.ReadHeartbeat(townRoot)
+	if hb.ShouldPoke() {
+		// Heartbeat is stale (>15 min) - Deacon is stuck
+		// Nudge the session to try to wake it up
+		age := hb.Age()
+		if age > 30*time.Minute {
+			// Very stuck - restart the session
+			fmt.Printf("Deacon heartbeat is %s old - restarting session\n", age.Round(time.Minute))
+			if err := agents.Stop(deaconID, false); err == nil {
+				return "restart", "deacon-stuck", nil
 			}
+		} else {
+			// Stuck but not critically - try nudging first
+			fmt.Printf("Deacon heartbeat is %s old - nudging session\n", age.Round(time.Minute))
+			_ = agents.Nudge(deaconID, "HEALTH_CHECK: heartbeat is stale, respond to confirm responsiveness")
+			return "nudge", "deacon-stale", nil
 		}
 	}
 

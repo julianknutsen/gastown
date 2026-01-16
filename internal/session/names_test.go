@@ -110,6 +110,195 @@ func TestPrefix(t *testing.T) {
 	}
 }
 
+// --- SessionID to tmux name translation tests ---
+
+func TestToUniqueHumanReadableName(t *testing.T) {
+	tests := []struct {
+		name     string
+		id       SessionID
+		wantUnique string
+	}{
+		// Town-level agents
+		{"mayor", SessionID("mayor"), "hq-mayor"},
+		{"deacon", SessionID("deacon"), "hq-deacon"},
+		{"boot", SessionID("boot"), "gt-boot"},
+
+		// Rig-level agents
+		{"witness", SessionID("gastown/witness"), "gt-gastown-witness"},
+		{"refinery", SessionID("beads/refinery"), "gt-beads-refinery"},
+		{"polecat", SessionID("gastown/polecats/Toast"), "gt-gastown-Toast"},
+		{"polecat with hyphen", SessionID("gastown/polecats/my-cat"), "gt-gastown-my-cat"},
+		{"crew", SessionID("gastown/crew/max"), "gt-gastown-crew-max"},
+		{"crew with hyphen", SessionID("beads/crew/my-worker"), "gt-beads-crew-my-worker"},
+
+		// Edge cases
+		{"empty", SessionID(""), ""},
+		{"unknown format passthrough", SessionID("something-else"), "something-else"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test without town suffix
+			got := ToUniqueHumanReadableName(tt.id, "")
+			if got != tt.wantUnique {
+				t.Errorf("ToUniqueHumanReadableName(%q, \"\") = %q, want %q", tt.id, got, tt.wantUnique)
+			}
+		})
+	}
+}
+
+func TestToUniqueHumanReadableName_WithTownRoot(t *testing.T) {
+	townRoot := "/home/user/gastown"
+	townID := TownID(townRoot)
+
+	tests := []struct {
+		name     string
+		id       SessionID
+		wantUnique string
+	}{
+		{"mayor", SessionID("mayor"), "hq-mayor-" + townID},
+		{"witness", SessionID("gastown/witness"), "gt-gastown-witness-" + townID},
+		{"polecat", SessionID("gastown/polecats/Toast"), "gt-gastown-Toast-" + townID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ToUniqueHumanReadableName(tt.id, townRoot)
+			if got != tt.wantUnique {
+				t.Errorf("ToUniqueHumanReadableName(%q, townRoot) = %q, want %q", tt.id, got, tt.wantUnique)
+			}
+		})
+	}
+}
+
+func TestFromUniqueHumanReadableName(t *testing.T) {
+	tests := []struct {
+		name       string
+		uniqueName   string
+		wantID     SessionID
+		wantOwned  bool
+	}{
+		// Town-level agents
+		{"mayor hq prefix", "hq-mayor", SessionID("mayor"), true},
+		{"mayor gt prefix (legacy)", "gt-mayor", SessionID("mayor"), true},
+		{"deacon hq prefix", "hq-deacon", SessionID("deacon"), true},
+		{"deacon gt prefix (legacy)", "gt-deacon", SessionID("deacon"), true},
+		{"boot", "gt-boot", SessionID("boot"), true},
+
+		// Rig-level agents
+		{"witness", "gt-gastown-witness", SessionID("gastown/witness"), true},
+		{"refinery", "gt-beads-refinery", SessionID("beads/refinery"), true},
+		{"polecat", "gt-gastown-Toast", SessionID("gastown/polecats/Toast"), true},
+		{"polecat with hyphen", "gt-gastown-my-cat", SessionID("gastown/polecats/my-cat"), true},
+		{"crew", "gt-gastown-crew-max", SessionID("gastown/crew/max"), true},
+		{"crew with hyphen", "gt-beads-crew-my-worker", SessionID("beads/crew/my-worker"), true},
+
+		// With town suffix (should strip it) - using empty townRoot accepts all
+		{"mayor with town suffix", "hq-mayor-abc123", SessionID("mayor"), true},
+		{"witness with town suffix", "gt-gastown-witness-def456", SessionID("gastown/witness"), true},
+		{"polecat with town suffix", "gt-gastown-Toast-abc123", SessionID("gastown/polecats/Toast"), true},
+		{"crew with town suffix", "gt-beads-crew-max-def456", SessionID("beads/crew/max"), true},
+
+		// Edge cases
+		{"unknown format passthrough", "something-else", SessionID("something-else"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Empty townRoot means accept all sessions (no ownership filtering)
+			got, owned := FromUniqueHumanReadableName(tt.uniqueName, "")
+			if got != tt.wantID {
+				t.Errorf("FromUniqueHumanReadableName(%q, \"\") = %q, want %q", tt.uniqueName, got, tt.wantID)
+			}
+			if owned != tt.wantOwned {
+				t.Errorf("FromUniqueHumanReadableName(%q, \"\") owned = %v, want %v", tt.uniqueName, owned, tt.wantOwned)
+			}
+		})
+	}
+}
+
+func TestFromUniqueHumanReadableName_OwnershipFiltering(t *testing.T) {
+	townRoot := "/home/user/gastown"
+	townID := TownID(townRoot)
+	otherTownID := "999999" // Different town
+
+	tests := []struct {
+		name      string
+		uniqueName  string
+		wantID    SessionID
+		wantOwned bool
+	}{
+		// Our town's sessions
+		{"our mayor", "hq-mayor-" + townID, SessionID("mayor"), true},
+		{"our witness", "gt-gastown-witness-" + townID, SessionID("gastown/witness"), true},
+
+		// Other town's sessions - should not be owned
+		{"other town mayor", "hq-mayor-" + otherTownID, SessionID(""), false},
+		{"other town witness", "gt-gastown-witness-" + otherTownID, SessionID(""), false},
+
+		// Legacy sessions (no suffix) - should be owned for backwards compat
+		{"legacy mayor", "hq-mayor", SessionID("mayor"), true},
+		{"legacy witness", "gt-gastown-witness", SessionID("gastown/witness"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, owned := FromUniqueHumanReadableName(tt.uniqueName, townRoot)
+			if owned != tt.wantOwned {
+				t.Errorf("FromUniqueHumanReadableName(%q, townRoot) owned = %v, want %v", tt.uniqueName, owned, tt.wantOwned)
+			}
+			if owned && got != tt.wantID {
+				t.Errorf("FromUniqueHumanReadableName(%q, townRoot) = %q, want %q", tt.uniqueName, got, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestToUniqueHumanReadableNameFromUniqueHumanReadableNameRoundTrip(t *testing.T) {
+	// Test that ToUniqueHumanReadableName and FromUniqueHumanReadableName are inverses
+	ids := []SessionID{
+		"mayor",
+		"deacon",
+		"gastown/witness",
+		"gastown/refinery",
+		"gastown/polecats/Toast",
+		"gastown/polecats/my-cat",
+		"gastown/crew/max",
+		"gastown/crew/my-worker",
+	}
+
+	t.Run("without town suffix", func(t *testing.T) {
+		for _, id := range ids {
+			t.Run(string(id), func(t *testing.T) {
+				uniqueName := ToUniqueHumanReadableName(id, "")
+				roundTrip, owned := FromUniqueHumanReadableName(uniqueName, "")
+				if !owned {
+					t.Errorf("roundtrip not owned: %q -> %q", id, uniqueName)
+				}
+				if roundTrip != id {
+					t.Errorf("roundtrip failed: %q -> %q -> %q", id, uniqueName, roundTrip)
+				}
+			})
+		}
+	})
+
+	t.Run("with town suffix", func(t *testing.T) {
+		townRoot := "/home/user/gastown"
+		for _, id := range ids {
+			t.Run(string(id), func(t *testing.T) {
+				uniqueName := ToUniqueHumanReadableName(id, townRoot)
+				roundTrip, owned := FromUniqueHumanReadableName(uniqueName, townRoot)
+				if !owned {
+					t.Errorf("roundtrip not owned: %q -> %q", id, uniqueName)
+				}
+				if roundTrip != id {
+					t.Errorf("roundtrip failed: %q -> %q -> %q", id, uniqueName, roundTrip)
+				}
+			})
+		}
+	})
+}
+
 func TestPropulsionNudgeForRole_WithSessionID(t *testing.T) {
 	// Create temp directory with session_id file
 	tmpDir := t.TempDir()

@@ -26,14 +26,20 @@ type Manager struct {
 }
 
 // NewManager creates a new deacon manager for a town.
-// agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
 // agents is the Agents implementation (real or test double) to use for agent lifecycle.
-func NewManager(townRoot, agentName string, agents agent.Agents) *Manager {
+// townRoot is the path to the town root directory.
+// agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
+func NewManager(agents agent.Agents, townRoot, agentName string) *Manager {
 	return &Manager{
 		townRoot:  townRoot,
 		agentName: agentName,
 		agents:    agents,
 	}
+}
+
+// address returns the agent address for the deacon.
+func (m *Manager) address() agent.AgentID {
+	return agent.DeaconAddress()
 }
 
 // SessionName returns the tmux session name for the deacon.
@@ -67,13 +73,12 @@ func (m *Manager) Start() error {
 	startupCmd := config.BuildAgentCommand(m.agentName, "")
 
 	// Start the agent (handles zombie detection, env vars, theming, and readiness)
-	agentID, err := m.agents.Start(m.SessionName(), deaconDir, startupCmd)
-	if err != nil {
+	if err := m.agents.Start(m.address(), deaconDir, startupCmd); err != nil {
 		return err // ErrAlreadyRunning or other errors
 	}
 
 	// Wait for agent to be ready
-	_ = m.agents.WaitReady(agentID)
+	_ = m.agents.WaitReady(m.address())
 
 	// Propulsion is handled by the CLI prompt ("gt prime") passed at startup.
 	// No need for post-startup nudges which are unreliable (text arrives before input is ready).
@@ -82,47 +87,45 @@ func (m *Manager) Start() error {
 }
 
 // Stop stops the deacon session.
+// Returns ErrNotRunning if the agent was not running (for user messaging).
+// Always cleans up zombie sessions (tmux exists but process dead).
 func (m *Manager) Stop() error {
-	agentID := agent.AgentID(m.SessionName())
+	wasRunning := m.agents.Exists(m.address())
 
-	// Check if agent exists
-	if !m.agents.Exists(agentID) {
-		return ErrNotRunning
+	// Always call Stop to clean up zombies
+	if err := m.agents.Stop(m.address(), true); err != nil {
+		return err
 	}
 
-	// Stop gracefully
-	return m.agents.Stop(agentID, true)
+	if !wasRunning {
+		return ErrNotRunning
+	}
+	return nil
 }
 
 // IsRunning checks if the deacon session is active.
 func (m *Manager) IsRunning() (bool, error) {
-	return m.agents.Exists(agent.AgentID(m.SessionName())), nil
+	return m.agents.Exists(m.address()), nil
 }
 
-// Status returns information about the deacon session.
-func (m *Manager) Status() (*session.Info, error) {
-	agentID := agent.AgentID(m.SessionName())
-
-	if !m.agents.Exists(agentID) {
-		return nil, ErrNotRunning
+// Status returns the current deacon status.
+func (m *Manager) Status() (*Deacon, error) {
+	state := StateStopped
+	if m.agents.Exists(m.address()) {
+		state = StateRunning
 	}
-
-	info, err := m.agents.GetInfo(agentID)
-	if err != nil {
-		return nil, err
-	}
-	return info, nil
+	return &Deacon{
+		State: state,
+		Name:  m.SessionName(),
+	}, nil
 }
 
 // Nudge sends a message to the deacon agent reliably.
 func (m *Manager) Nudge(message string) error {
-	agentID := agent.AgentID(m.SessionName())
-
-	if !m.agents.Exists(agentID) {
+	if !m.agents.Exists(m.address()) {
 		return ErrNotRunning
 	}
-
-	return m.agents.Nudge(agentID, message)
+	return m.agents.Nudge(m.address(), message)
 }
 
 // Agents returns the underlying Agents interface.

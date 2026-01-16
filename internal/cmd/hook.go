@@ -129,7 +129,7 @@ func runHook(_ *cobra.Command, args []string) error {
 	}
 
 	// Determine agent identity
-	agentID, _, _, err := resolveSelfTarget()
+	agentID, err := resolveSelfTarget()
 	if err != nil {
 		return fmt.Errorf("detecting agent identity: %w", err)
 	}

@@ -211,9 +211,10 @@ func detectCurrentRig() string {
 	}
 
 	// Try to extract from tmux session name
-	if session := detectCurrentSession(); session != "" {
+	t := tmux.NewTmux()
+	if sessName, err := t.CurrentSessionName(); err == nil {
 		// Extract rig from session name: gt-<rig>-...
-		parts := strings.SplitN(session, "-", 3)
+		parts := strings.SplitN(sessName, "-", 3)
 		if len(parts) >= 2 && parts[0] == "gt" && parts[1] != "mayor" && parts[1] != "deacon" {
 			return parts[1]
 		}

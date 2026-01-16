@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -33,9 +34,9 @@ func TestImplementation_Start_DetectsAndCleansUpZombie(t *testing.T) {
 	_ = procs.SetRunning(sessionID, false) // Process is dead
 
 	// Start should clean up zombie and create new session
-	id, err := agents.Start("test-agent", "/tmp", "new-command")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	err := agents.Start(id, "/tmp", "new-command")
 	require.NoError(t, err)
-	assert.NotEmpty(t, id)
 	assert.True(t, agents.Exists(id))
 }
 
@@ -43,12 +44,15 @@ func TestImplementation_Start_AlreadyRunning_WithLiveProcess(t *testing.T) {
 	procs := session.NewDouble()
 	agents := agent.New(procs, nil)
 
-	// Pre-create session with live process
-	sessionID := session.SessionID("test-agent")
-	_, _ = procs.Start("test-agent", "/tmp", "running-command")
+	// Create the AgentID first so we use the correct session name
+	id := agent.PolecatAddress("testrig", "test-agent")
+	sessionID := session.SessionID(id)
+
+	// Pre-create session with live process using the correct logical session ID
+	_, _ = procs.Start(string(sessionID), "/tmp", "running-command")
 	_ = procs.SetRunning(sessionID, true)
 
-	_, err := agents.Start("test-agent", "/tmp", "echo hello")
+	err := agents.Start(id, "/tmp", "echo hello")
 	assert.ErrorIs(t, err, agent.ErrAlreadyRunning)
 }
 
@@ -65,13 +69,14 @@ func TestImplementation_Start_CallbackError_CleansUpSession(t *testing.T) {
 	}
 	agents := agent.New(procs, cfg)
 
-	_, err := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	err := agents.Start(id, "/tmp", "echo hello")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "session setup")
 
 	// Session should be cleaned up
-	exists, _ := procs.Exists(session.SessionID("test-agent"))
+	exists, _ := procs.Exists(session.SessionID(id))
 	assert.False(t, exists, "session should be cleaned up on callback failure")
 }
 
@@ -87,7 +92,8 @@ func TestImplementation_Start_CallbackSuccess_SessionRemains(t *testing.T) {
 	}
 	agents := agent.New(procs, cfg)
 
-	id, err := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	err := agents.Start(id, "/tmp", "echo hello")
 	require.NoError(t, err)
 
 	assert.True(t, callbackCalled, "callback should be called")
@@ -106,10 +112,11 @@ func TestImplementation_Start_PrependsEnvVars(t *testing.T) {
 	}
 	agents := agent.New(procs, cfg)
 
-	_, err := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	err := agents.Start(id, "/tmp", "echo hello")
 	require.NoError(t, err)
 
-	cmd := procs.GetCommand(session.SessionID("test-agent"))
+	cmd := procs.GetCommand(session.SessionID(id))
 	assert.Contains(t, cmd, "FOO=bar")
 	assert.Contains(t, cmd, "BAZ=qux")
 	assert.Contains(t, cmd, "echo hello")
@@ -126,10 +133,11 @@ func TestImplementation_Start_EnvVarsSorted(t *testing.T) {
 	}
 	agents := agent.New(procs, cfg)
 
-	_, err := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	err := agents.Start(id, "/tmp", "echo hello")
 	require.NoError(t, err)
 
-	cmd := procs.GetCommand(session.SessionID("test-agent"))
+	cmd := procs.GetCommand(session.SessionID(id))
 	aaaIdx := indexOf(cmd, "AAA=first")
 	mmmIdx := indexOf(cmd, "MMM=middle")
 	zzzIdx := indexOf(cmd, "ZZZ=last")
@@ -141,86 +149,12 @@ func TestImplementation_Start_NoEnvVars_CommandUnchanged(t *testing.T) {
 	procs := session.NewDouble()
 	agents := agent.New(procs, nil)
 
-	_, err := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	err := agents.Start(id, "/tmp", "echo hello")
 	require.NoError(t, err)
 
-	cmd := procs.GetCommand(session.SessionID("test-agent"))
+	cmd := procs.GetCommand(session.SessionID(id))
 	assert.Equal(t, "echo hello", cmd)
-}
-
-// --- IsReady Tests (Implementation-specific, not in Agents interface) ---
-
-func TestImplementation_IsReady_WhenNoSession_ReturnsFalse(t *testing.T) {
-	procs := session.NewDouble()
-	cfg := &agent.Config{
-		Checker: &agent.PromptChecker{Prefix: ">"},
-	}
-	agents := agent.New(procs, cfg)
-
-	assert.False(t, agents.IsReady("nonexistent"))
-}
-
-func TestImplementation_IsReady_WhenNoChecker_ReturnsFalse(t *testing.T) {
-	procs := session.NewDouble()
-	agents := agent.New(procs, &agent.Config{}) // No checker
-
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
-	assert.False(t, agents.IsReady(id))
-}
-
-func TestImplementation_IsReady_WhenCheckerMatchesPrompt_ReturnsTrue(t *testing.T) {
-	procs := session.NewDouble()
-	cfg := &agent.Config{
-		Checker: &agent.PromptChecker{Prefix: ">"},
-	}
-	agents := agent.New(procs, cfg)
-
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
-	// session.Double initializes buffer with "> " which matches the checker
-	assert.True(t, agents.IsReady(id))
-}
-
-func TestImplementation_IsReady_WhenCheckerDoesNotMatch_ReturnsFalse(t *testing.T) {
-	procs := session.NewDouble()
-	cfg := &agent.Config{
-		Checker: &agent.PromptChecker{Prefix: "NEVER_MATCHES"},
-	}
-	agents := agent.New(procs, cfg)
-
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
-	procs.SetBuffer(session.SessionID(id), []string{"some other output"})
-	assert.False(t, agents.IsReady(id))
-}
-
-func TestImplementation_IsReady_WhenCaptureErrors_ReturnsFalse(t *testing.T) {
-	// This tests the race condition path: session exists but Capture fails
-	// (e.g., session killed between Exists check and Capture call)
-	procs := session.NewDouble()
-	stub := newSessionsStub(procs)
-
-	cfg := &agent.Config{
-		Checker: &agent.PromptChecker{Prefix: ">"},
-	}
-	agents := agent.New(stub, cfg)
-
-	// Start session so Exists returns true
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
-
-	// Inject Capture error to simulate race condition
-	stub.CaptureErr = errors.New("session disappeared")
-
-	assert.False(t, agents.IsReady(id))
-}
-
-// --- Sessions() Accessor Test (Implementation-specific) ---
-
-func TestImplementation_Sessions_ReturnsUnderlyingSessions(t *testing.T) {
-	procs := session.NewDouble()
-	agents := agent.New(procs, nil)
-
-	// Sessions() returns the underlying session.Sessions
-	sess := agents.Sessions()
-	assert.Equal(t, procs, sess)
 }
 
 // --- Timeout Tests (Implementation-specific) ---
@@ -233,7 +167,8 @@ func TestImplementation_Timeout_UsesConfigValue(t *testing.T) {
 	}
 	agents := agent.New(procs, cfg)
 
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	_ = agents.Start(id, "/tmp", "echo hello")
 	procs.SetBuffer(session.SessionID(id), []string{"no match"})
 
 	start := time.Now()
@@ -253,7 +188,8 @@ func TestImplementation_Timeout_DefaultsTo30Seconds(t *testing.T) {
 	}
 	agents := agent.New(procs, cfg)
 
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	_ = agents.Start(id, "/tmp", "echo hello")
 	procs.SetBuffer(session.SessionID(id), []string{"no match"})
 
 	// We can't wait 30 seconds in a test, but we can verify it doesn't
@@ -285,13 +221,15 @@ func TestImplementation_Stop_Graceful_TakesLongerThanNonGraceful(t *testing.T) {
 	agents := agent.New(procs, nil)
 
 	// Non-graceful stop
-	id1, _ := agents.Start("agent1", "/tmp", "echo hello")
+	id1 := agent.PolecatAddress("testrig", "agent1")
+	_ = agents.Start(id1, "/tmp", "echo hello")
 	start1 := time.Now()
 	_ = agents.Stop(id1, false) // graceful=false
 	elapsed1 := time.Since(start1)
 
 	// Graceful stop (includes 100ms sleep after Ctrl-C)
-	id2, _ := agents.Start("agent2", "/tmp", "echo hello")
+	id2 := agent.PolecatAddress("testrig", "agent2")
+	_ = agents.Start(id2, "/tmp", "echo hello")
 	start2 := time.Now()
 	_ = agents.Stop(id2, true) // graceful=true
 	elapsed2 := time.Since(start2)
@@ -305,8 +243,9 @@ func TestImplementation_Stop_NotGraceful_SkipsCtrlC(t *testing.T) {
 	procs := session.NewDouble()
 	agents := agent.New(procs, nil)
 
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
-	sessionID := agents.SessionID(id)
+	id := agent.PolecatAddress("testrig", "test-agent")
+	_ = agents.Start(id, "/tmp", "echo hello")
+	sessionID := session.SessionID(id)
 
 	err := agents.Stop(id, false) // graceful=false
 	require.NoError(t, err)
@@ -316,75 +255,14 @@ func TestImplementation_Stop_NotGraceful_SkipsCtrlC(t *testing.T) {
 	assert.Empty(t, controls)
 }
 
-// --- Restart Tests (Implementation-specific) ---
-
-func TestImplementation_Restart_StopsAndStarts(t *testing.T) {
-	procs := session.NewDouble()
-	agents := agent.New(procs, nil)
-
-	id, _ := agents.Start("test-agent", "/tmp", "old-command")
-	err := agents.Restart(id, "/new/dir", "new-command")
-	require.NoError(t, err)
-
-	assert.True(t, agents.Exists(id))
-}
-
-func TestImplementation_Restart_WhenAgentNotExists_StillSucceeds(t *testing.T) {
-	procs := session.NewDouble()
-	agents := agent.New(procs, nil)
-
-	// Restart on non-existent agent - Stop is idempotent
-	err := agents.Restart("nonexistent", "/tmp", "command")
-	require.NoError(t, err)
-}
-
-// --- Send/Capture Tests (Implementation-specific) ---
-
-func TestImplementation_Send_SendsTextToSession(t *testing.T) {
-	procs := session.NewDouble()
-	agents := agent.New(procs, nil)
-
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
-	err := agents.Send(id, "test input")
-
-	assert.NoError(t, err)
-}
-
-func TestImplementation_Capture_ReturnsSessionOutput(t *testing.T) {
-	procs := session.NewDouble()
-	agents := agent.New(procs, nil)
-
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
-	procs.SetBuffer(session.SessionID(id), []string{"line1", "line2", "line3"})
-
-	output, err := agents.Capture(id, 10)
-	require.NoError(t, err)
-	assert.Contains(t, output, "line1")
-	assert.Contains(t, output, "line2")
-	assert.Contains(t, output, "line3")
-}
-
-func TestImplementation_SendControl_SendsControlKey(t *testing.T) {
-	procs := session.NewDouble()
-	agents := agent.New(procs, nil)
-
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
-	sessionID := agents.SessionID(id)
-
-	err := agents.SendControl(id, "C-c")
-	require.NoError(t, err)
-
-	controls := procs.ControlLog(sessionID)
-	assert.Contains(t, controls, "C-c")
-}
-
 // --- Nudge Tests (Implementation-specific) ---
 
 func TestImplementation_Nudge_SendsMessageToSession(t *testing.T) {
 	procs := session.NewDouble()
 	agents := agent.New(procs, nil)
 
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	_ = agents.Start(id, "/tmp", "echo hello")
 	err := agents.Nudge(id, "HEALTH_CHECK: are you alive?")
 
 	assert.NoError(t, err)
@@ -398,7 +276,8 @@ func TestImplementation_Nudge_WhenSessionNotExists_ReturnsError(t *testing.T) {
 	procs := session.NewDouble()
 	agents := agent.New(procs, nil)
 
-	err := agents.Nudge("nonexistent", "hello")
+	id := agent.PolecatAddress("testrig", "nonexistent")
+	err := agents.Nudge(id, "hello")
 
 	assert.Error(t, err)
 }
@@ -407,7 +286,8 @@ func TestImplementation_Nudge_MultipleCalls_AllRecorded(t *testing.T) {
 	procs := session.NewDouble()
 	agents := agent.New(procs, nil)
 
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	_ = agents.Start(id, "/tmp", "echo hello")
 	_ = agents.Nudge(id, "message 1")
 	_ = agents.Nudge(id, "message 2")
 	_ = agents.Nudge(id, "message 3")
@@ -435,7 +315,8 @@ func TestImplementation_StartupHook_CalledOnStart(t *testing.T) {
 	}
 	agents := agent.New(procs, cfg)
 
-	id, err := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	err := agents.Start(id, "/tmp", "echo hello")
 	require.NoError(t, err)
 
 	// Give the goroutine time to execute
@@ -457,7 +338,8 @@ func TestImplementation_StartupHook_ErrorIsNonFatal(t *testing.T) {
 	agents := agent.New(procs, cfg)
 
 	// Start should still succeed even if startup hook fails
-	id, err := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	err := agents.Start(id, "/tmp", "echo hello")
 	require.NoError(t, err)
 	assert.True(t, agents.Exists(id))
 }
@@ -472,7 +354,8 @@ func TestImplementation_WaitReady_WithStartupDelay(t *testing.T) {
 	}
 	agents := agent.New(procs, cfg)
 
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	_ = agents.Start(id, "/tmp", "echo hello")
 
 	start := time.Now()
 	err := agents.WaitReady(id)
@@ -491,7 +374,8 @@ func TestImplementation_Start_WhenSessionStartFails_ReturnsError(t *testing.T) {
 
 	agents := agent.New(stub, nil)
 
-	_, err := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	err := agents.Start(id, "/tmp", "echo hello")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "starting session")
@@ -500,9 +384,10 @@ func TestImplementation_Start_WhenSessionStartFails_ReturnsError(t *testing.T) {
 func TestImplementation_Start_WhenZombieCleanupFails_ReturnsError(t *testing.T) {
 	procs := session.NewDouble()
 
-	// Create a zombie session
-	sessionID := session.SessionID("test-agent")
-	_, _ = procs.Start("test-agent", "/tmp", "dead-command")
+	// Create a zombie session using the proper session ID
+	id := agent.PolecatAddress("testrig", "test-agent")
+	sessionID := session.SessionID(id)
+	_, _ = procs.Start(string(sessionID), "/tmp", "dead-command")
 	_ = procs.SetRunning(sessionID, false) // Process is dead
 
 	// Now wrap with stub that fails on Stop (zombie cleanup)
@@ -511,7 +396,7 @@ func TestImplementation_Start_WhenZombieCleanupFails_ReturnsError(t *testing.T) 
 
 	agents := agent.New(stub, nil)
 
-	_, err := agents.Start("test-agent", "/tmp", "new-command")
+	err := agents.Start(id, "/tmp", "new-command")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "killing zombie")
@@ -523,7 +408,8 @@ func TestImplementation_Stop_WhenSessionStopFails_ReturnsError(t *testing.T) {
 
 	agents := agent.New(stub, nil)
 
-	id, _ := agents.Start("test-agent", "/tmp", "echo hello")
+	id := agent.PolecatAddress("testrig", "test-agent")
+	_ = agents.Start(id, "/tmp", "echo hello")
 
 	// Now inject Stop error
 	stub.StopErr = errors.New("stop failed")
@@ -534,23 +420,6 @@ func TestImplementation_Stop_WhenSessionStopFails_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "stopping session")
 }
 
-func TestImplementation_Restart_WhenStopFails_ReturnsError(t *testing.T) {
-	procs := session.NewDouble()
-	stub := newSessionsStub(procs)
-
-	agents := agent.New(stub, nil)
-
-	id, _ := agents.Start("test-agent", "/tmp", "old-command")
-
-	// Inject Stop error
-	stub.StopErr = errors.New("stop failed")
-
-	err := agents.Restart(id, "/tmp", "new-command")
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "stopping for restart")
-}
-
 // Helper function
 func indexOf(s, substr string) int {
 	for i := 0; i <= len(s)-len(substr); i++ {
@@ -559,4 +428,156 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+// --- Self() Tests ---
+
+func TestSelf_Mayor(t *testing.T) {
+	// Save and restore env
+	orig := os.Getenv("GT_ROLE")
+	defer os.Setenv("GT_ROLE", orig)
+
+	os.Setenv("GT_ROLE", "mayor")
+	id, err := agent.Self()
+
+	assert.NoError(t, err)
+	assert.Equal(t, agent.MayorAddress(), id)
+}
+
+func TestSelf_Deacon(t *testing.T) {
+	orig := os.Getenv("GT_ROLE")
+	defer os.Setenv("GT_ROLE", orig)
+
+	os.Setenv("GT_ROLE", "deacon")
+	id, err := agent.Self()
+
+	assert.NoError(t, err)
+	assert.Equal(t, agent.DeaconAddress(), id)
+}
+
+func TestSelf_Witness(t *testing.T) {
+	origRole := os.Getenv("GT_ROLE")
+	origRig := os.Getenv("GT_RIG")
+	defer func() {
+		os.Setenv("GT_ROLE", origRole)
+		os.Setenv("GT_RIG", origRig)
+	}()
+
+	os.Setenv("GT_ROLE", "witness")
+	os.Setenv("GT_RIG", "myrig")
+	id, err := agent.Self()
+
+	assert.NoError(t, err)
+	assert.Equal(t, agent.WitnessAddress("myrig"), id)
+}
+
+func TestSelf_Refinery(t *testing.T) {
+	origRole := os.Getenv("GT_ROLE")
+	origRig := os.Getenv("GT_RIG")
+	defer func() {
+		os.Setenv("GT_ROLE", origRole)
+		os.Setenv("GT_RIG", origRig)
+	}()
+
+	os.Setenv("GT_ROLE", "refinery")
+	os.Setenv("GT_RIG", "myrig")
+	id, err := agent.Self()
+
+	assert.NoError(t, err)
+	assert.Equal(t, agent.RefineryAddress("myrig"), id)
+}
+
+func TestSelf_Crew(t *testing.T) {
+	origRole := os.Getenv("GT_ROLE")
+	origRig := os.Getenv("GT_RIG")
+	origCrew := os.Getenv("GT_CREW")
+	defer func() {
+		os.Setenv("GT_ROLE", origRole)
+		os.Setenv("GT_RIG", origRig)
+		os.Setenv("GT_CREW", origCrew)
+	}()
+
+	os.Setenv("GT_ROLE", "crew")
+	os.Setenv("GT_RIG", "myrig")
+	os.Setenv("GT_CREW", "max")
+	id, err := agent.Self()
+
+	assert.NoError(t, err)
+	assert.Equal(t, agent.CrewAddress("myrig", "max"), id)
+}
+
+func TestSelf_Polecat(t *testing.T) {
+	origRole := os.Getenv("GT_ROLE")
+	origRig := os.Getenv("GT_RIG")
+	origPolecat := os.Getenv("GT_POLECAT")
+	defer func() {
+		os.Setenv("GT_ROLE", origRole)
+		os.Setenv("GT_RIG", origRig)
+		os.Setenv("GT_POLECAT", origPolecat)
+	}()
+
+	os.Setenv("GT_ROLE", "polecat")
+	os.Setenv("GT_RIG", "myrig")
+	os.Setenv("GT_POLECAT", "Toast")
+	id, err := agent.Self()
+
+	assert.NoError(t, err)
+	assert.Equal(t, agent.PolecatAddress("myrig", "Toast"), id)
+}
+
+func TestSelf_MissingRole_ReturnsError(t *testing.T) {
+	origRole := os.Getenv("GT_ROLE")
+	defer os.Setenv("GT_ROLE", origRole)
+
+	os.Setenv("GT_ROLE", "")
+	_, err := agent.Self()
+
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, agent.ErrUnknownRole)
+}
+
+func TestSelf_UnknownRole_ReturnsError(t *testing.T) {
+	origRole := os.Getenv("GT_ROLE")
+	defer os.Setenv("GT_ROLE", origRole)
+
+	os.Setenv("GT_ROLE", "bogus")
+	_, err := agent.Self()
+
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, agent.ErrUnknownRole)
+}
+
+func TestSelf_WitnessMissingRig_ReturnsError(t *testing.T) {
+	origRole := os.Getenv("GT_ROLE")
+	origRig := os.Getenv("GT_RIG")
+	defer func() {
+		os.Setenv("GT_ROLE", origRole)
+		os.Setenv("GT_RIG", origRig)
+	}()
+
+	os.Setenv("GT_ROLE", "witness")
+	os.Setenv("GT_RIG", "")
+	_, err := agent.Self()
+
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, agent.ErrUnknownRole)
+}
+
+func TestSelf_CrewMissingName_ReturnsError(t *testing.T) {
+	origRole := os.Getenv("GT_ROLE")
+	origRig := os.Getenv("GT_RIG")
+	origCrew := os.Getenv("GT_CREW")
+	defer func() {
+		os.Setenv("GT_ROLE", origRole)
+		os.Setenv("GT_RIG", origRig)
+		os.Setenv("GT_CREW", origCrew)
+	}()
+
+	os.Setenv("GT_ROLE", "crew")
+	os.Setenv("GT_RIG", "myrig")
+	os.Setenv("GT_CREW", "")
+	_, err := agent.Self()
+
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, agent.ErrUnknownRole)
 }

@@ -11,9 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // CrewListItem represents a crew worker in list output.
@@ -47,7 +45,6 @@ func runCrewList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check session and git status for each worker
-	t := tmux.NewTmux()
 	var items []CrewListItem
 
 	for _, r := range rigs {
@@ -62,8 +59,7 @@ func runCrewList(cmd *cobra.Command, args []string) error {
 		}
 
 		for _, w := range workers {
-			sessionName := crewSessionName(r.Name, w.Name)
-			hasSession, _ := t.Exists(session.SessionID(sessionName))
+			hasSession, _ := crewMgr.IsRunning(w.Name)
 
 			workerGit := git.NewGit(w.ClonePath)
 			gitClean := true

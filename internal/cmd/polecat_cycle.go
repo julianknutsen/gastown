@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 // cyclePolecatSession switches to the next or previous polecat session in the same rig.
@@ -26,15 +28,15 @@ func cyclePolecatSession(direction int, sessionOverride string) error {
 		}
 	}
 
-	// Parse rig name from current session
-	rigName, _, ok := parsePolecatSessionName(currentSession)
-	if !ok {
+	// Parse session to get rig and town ID
+	currentIdentity, err := session.ParseSessionName(currentSession)
+	if err != nil || currentIdentity.Role != session.RolePolecat {
 		// Not a polecat session - no cycling
 		return nil
 	}
 
-	// Find all polecat sessions for this rig
-	sessions, err := findRigPolecatSessions(rigName)
+	// Find all polecat sessions for this rig in the same town
+	sessions, err := findRigPolecatSessions(currentIdentity.Rig, currentIdentity.TownID)
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
@@ -79,61 +81,9 @@ func cyclePolecatSession(direction int, sessionOverride string) error {
 	return nil
 }
 
-// parsePolecatSessionName extracts rig and polecat name from a tmux session name.
-// Format: gt-<rig>-<name> where name is NOT crew-*, witness, or refinery.
-// Returns empty strings and false if the format doesn't match.
-func parsePolecatSessionName(sessionName string) (rigName, polecatName string, ok bool) { //nolint:unparam // polecatName kept for API consistency
-	// Must start with "gt-"
-	if !strings.HasPrefix(sessionName, "gt-") {
-		return "", "", false
-	}
-
-	// Exclude town-level sessions by exact match
-	mayorSession := getMayorSessionName()
-	deaconSession := getDeaconSessionName()
-	if sessionName == mayorSession || sessionName == deaconSession {
-		return "", "", false
-	}
-
-	// Also exclude by suffix pattern (gt-{town}-mayor, gt-{town}-deacon)
-	// This handles cases where town config isn't available
-	if strings.HasSuffix(sessionName, "-mayor") || strings.HasSuffix(sessionName, "-deacon") {
-		return "", "", false
-	}
-
-	// Remove "gt-" prefix
-	rest := sessionName[3:]
-
-	// Must have at least one hyphen (rig-name)
-	idx := strings.Index(rest, "-")
-	if idx == -1 {
-		return "", "", false
-	}
-
-	rigName = rest[:idx]
-	polecatName = rest[idx+1:]
-
-	if rigName == "" || polecatName == "" {
-		return "", "", false
-	}
-
-	// Exclude crew sessions (contain "crew-" prefix in the name part)
-	if strings.HasPrefix(polecatName, "crew-") {
-		return "", "", false
-	}
-
-	// Exclude rig infra sessions
-	if polecatName == "witness" || polecatName == "refinery" {
-		return "", "", false
-	}
-
-	return rigName, polecatName, true
-}
-
 // findRigPolecatSessions returns all polecat sessions for a given rig.
-// Uses tmux list-sessions to find sessions matching gt-<rig>-<name> pattern,
-// excluding crew, witness, and refinery sessions.
-func findRigPolecatSessions(rigName string) ([]string, error) { //nolint:unparam // error return kept for future use
+// townID filters to sessions in the same town (empty matches any).
+func findRigPolecatSessions(rigName, townID string) ([]string, error) { //nolint:unparam // error return kept for future use
 	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
 	out, err := cmd.Output()
 	if err != nil {
@@ -141,20 +91,21 @@ func findRigPolecatSessions(rigName string) ([]string, error) { //nolint:unparam
 		return nil, nil
 	}
 
-	prefix := fmt.Sprintf("gt-%s-", rigName)
 	var sessions []string
 
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if line == "" {
 			continue
 		}
-		if !strings.HasPrefix(line, prefix) {
+		// Parse session name to check role, rig, and town
+		identity, err := session.ParseSessionName(line)
+		if err != nil {
 			continue
 		}
-
-		// Verify this is actually a polecat session
-		_, _, ok := parsePolecatSessionName(line)
-		if ok {
+		// Match: polecat role, same rig, same town (or legacy with no town ID)
+		if identity.Role == session.RolePolecat &&
+			identity.Rig == rigName &&
+			(townID == "" || identity.TownID == "" || identity.TownID == townID) {
 			sessions = append(sessions, line)
 		}
 	}

@@ -11,14 +11,15 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/factory"
+	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Polecat command flags
@@ -324,21 +325,24 @@ type PolecatListItem struct {
 }
 
 // getPolecatManager creates a polecat manager for the given rig.
-func getPolecatManager(rigName string) (*polecat.Manager, *rig.Rig, error) {
-	_, r, err := getRig(rigName)
+func getPolecatManager(rigName string) (*polecat.Manager, *rig.Rig, string, error) {
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	polecatGit := git.NewGit(r.Path)
-	t := tmux.NewTmux()
-	mgr := polecat.NewManager(r, polecatGit, t)
+	agents := agent.ForTownPath(townRoot)
+	mgr := polecat.NewManager(agents, r, polecatGit)
 
-	return mgr, r, nil
+	return mgr, r, townRoot, nil
 }
 
 func runPolecatList(cmd *cobra.Command, args []string) error {
 	var rigs []*rig.Rig
+
+	// Get townRoot for agent operations
+	townRoot, _ := workspace.FindFromCwd()
 
 	if polecatListAll {
 		// List all rigs
@@ -352,7 +356,7 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 		if len(args) < 1 {
 			return fmt.Errorf("rig name required (or use --all)")
 		}
-		_, r, err := getPolecatManager(args[0])
+		_, r, _, err := getPolecatManager(args[0])
 		if err != nil {
 			return err
 		}
@@ -360,13 +364,13 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Collect polecats from all rigs
-	t := tmux.NewTmux()
+	agents := agent.ForTownPath(townRoot)
 	var allPolecats []PolecatListItem
 
 	for _, r := range rigs {
 		polecatGit := git.NewGit(r.Path)
-		mgr := polecat.NewManager(r, polecatGit, t)
-		polecatMgr := factory.PolecatSessionManager(r, "")
+		mgr := polecat.NewManager(agents, r, polecatGit)
+		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 
 		polecats, err := mgr.List()
 		if err != nil {
@@ -440,7 +444,7 @@ func runPolecatAdd(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 	polecatName := args[1]
 
-	mgr, _, err := getPolecatManager(rigName)
+	mgr, _, _, err := getPolecatManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -477,7 +481,7 @@ func runPolecatRemove(cmd *cobra.Command, args []string) error {
 	for _, p := range targets {
 		// Check if session is running
 		if !polecatForce {
-			polecatMgr := factory.PolecatSessionManager(p.r, "")
+			polecatMgr := factory.PolecatSessionManager(p.r, p.townRoot, "")
 			running, _ := polecatMgr.IsRunning(p.polecatName)
 			if running {
 				removeErrors = append(removeErrors, fmt.Sprintf("%s/%s: session is running (stop first or use --force)", p.rigName, p.polecatName))
@@ -532,7 +536,7 @@ func runPolecatSync(cmd *cobra.Command, args []string) error {
 		polecatName = ""
 	}
 
-	mgr, _, err := getPolecatManager(rigName)
+	mgr, _, _, err := getPolecatManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -626,7 +630,7 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr, r, err := getPolecatManager(rigName)
+	mgr, r, townRoot, err := getPolecatManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -638,7 +642,7 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get session info
-	polecatMgr := factory.PolecatSessionManager(r, "")
+	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 	sessInfo, err := polecatMgr.Status(polecatName)
 	if err != nil {
 		// Non-fatal - continue without session info
@@ -766,7 +770,7 @@ func runPolecatGitState(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr, r, err := getPolecatManager(rigName)
+	mgr, r, _, err := getPolecatManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -941,7 +945,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr, r, err := getPolecatManager(rigName)
+	mgr, r, _, err := getPolecatManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -1040,7 +1044,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 func runPolecatGC(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
-	mgr, r, err := getPolecatManager(rigName)
+	mgr, r, _, err := getPolecatManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -1170,7 +1174,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		}
 
 		// Step 1: Kill session (force mode - no graceful shutdown)
-		polecatMgr := factory.PolecatSessionManager(p.r, "")
+		polecatMgr := factory.PolecatSessionManager(p.r, p.townRoot, "")
 		running, _ := polecatMgr.IsRunning(p.polecatName)
 		if running {
 			if err := polecatMgr.Stop(p.polecatName, true); err != nil {
@@ -1255,7 +1259,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 
 func runPolecatStale(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
-	mgr, r, err := getPolecatManager(rigName)
+	mgr, r, _, err := getPolecatManager(rigName)
 	if err != nil {
 		return err
 	}

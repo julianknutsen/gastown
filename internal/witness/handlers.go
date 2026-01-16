@@ -8,12 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -645,29 +644,20 @@ func UpdateCleanupWispState(workDir, wispID, newState string) error {
 }
 
 // NukePolecat executes the actual nuke operation for a polecat.
-// This kills the tmux session, removes the worktree, and cleans up beads.
+// This kills the agent session, removes the worktree, and cleans up beads.
 // Should only be called after all safety checks pass.
 func NukePolecat(workDir, rigName, polecatName string) error {
-	// CRITICAL: Kill the tmux session FIRST and unconditionally.
-	// The session name follows the pattern gt-<rig>-<polecat>.
+	// CRITICAL: Kill the agent session FIRST and unconditionally.
 	// We do this explicitly here because gt polecat nuke may fail to kill the
 	// session due to rig loading issues or race conditions with IsRunning checks.
 	// See: gt-g9ft5 - sessions were piling up because nuke wasn't killing them.
-	sessionName := fmt.Sprintf("gt-%s-%s", rigName, polecatName)
-	t := tmux.NewTmux()
+	townRoot := filepath.Dir(workDir) // workDir is rig path, parent is town root
+	agents := agent.ForTown(townRoot)
+	id := agent.PolecatAddress(rigName, polecatName)
 
-	// Check if session exists and kill it
-	sessionID := session.SessionID(sessionName)
-	if running, _ := t.Exists(sessionID); running {
-		// Try graceful shutdown first (Ctrl-C), then force kill
-		_ = t.SendControl(sessionID, "C-c")
-		// Brief delay for graceful handling
-		time.Sleep(100 * time.Millisecond)
-		// Force kill the session
-		if err := t.Stop(sessionID); err != nil {
-			// Log but continue - session might already be dead
-			// The important thing is we tried
-		}
+	// Kill the agent session if running (graceful=true sends Ctrl-C first)
+	if agents.Exists(id) {
+		_ = agents.Stop(id, true) // Errors are non-fatal, session might already be dead
 	}
 
 	// Now run gt polecat nuke to clean up worktree, branch, and beads

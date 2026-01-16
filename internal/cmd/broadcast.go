@@ -5,8 +5,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (
@@ -49,8 +50,10 @@ func runBroadcast(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("message cannot be empty")
 	}
 
+	townRoot, _ := workspace.FindFromCwd()
+
 	// Get all agent sessions (including polecats)
-	agents, err := getAgentSessions(true)
+	agents, err := getAgentSessions(townRoot, true)
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
@@ -92,25 +95,25 @@ func runBroadcast(cmd *cobra.Command, args []string) error {
 	}
 
 	// Send nudges
-	t := tmux.NewTmux()
+	agentsAPI := agent.ForTown(townRoot)
 	var succeeded, failed int
 	var failures []string
 
 	fmt.Printf("Broadcasting to %d agent(s)...\n\n", len(targets))
 
-	for i, agent := range targets {
-		agentName := formatAgentName(agent)
+	for i, target := range targets {
+		agentName := formatAgentName(target)
 
-		if err := t.NudgeSession(agent.Name, message); err != nil {
+		if err := agentsAPI.Nudge(agentSessionToAgentID(target), message); err != nil {
 			failed++
 			failures = append(failures, fmt.Sprintf("%s: %v", agentName, err))
-			fmt.Printf("  %s %s %s\n", style.ErrorPrefix, AgentTypeIcons[agent.Type], agentName)
+			fmt.Printf("  %s %s %s\n", style.ErrorPrefix, AgentTypeIcons[target.Type], agentName)
 		} else {
 			succeeded++
-			fmt.Printf("  %s %s %s\n", style.SuccessPrefix, AgentTypeIcons[agent.Type], agentName)
+			fmt.Printf("  %s %s %s\n", style.SuccessPrefix, AgentTypeIcons[target.Type], agentName)
 		}
 
-		// Small delay between nudges to avoid overwhelming tmux
+		// Small delay between nudges to avoid overwhelming agents
 		if i < len(targets)-1 {
 			time.Sleep(100 * time.Millisecond)
 		}

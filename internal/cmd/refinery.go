@@ -6,14 +6,13 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/mrqueue"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -373,10 +372,6 @@ func runRefineryStatus(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("\n  Queue: %d pending\n", pendingCount)
 
-	if ref.LastMergeAt != nil {
-		fmt.Printf("  Last merge: %s\n", ref.LastMergeAt.Format("2006-01-02 15:04:05"))
-	}
-
 	return nil
 }
 
@@ -467,22 +462,19 @@ func runRefineryAttach(cmd *cobra.Command, args []string) error {
 		rigName = args[0]
 	}
 
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
 	// Use getRefineryManager to validate rig (and infer from cwd if needed)
 	mgr, _, rigName, err := getRefineryManager(rigName)
 	if err != nil {
 		return err
 	}
 
-	// Session name follows the same pattern as refinery manager
-	sessionID := fmt.Sprintf("gt-%s-refinery", rigName)
-
 	// Check if session exists
-	t := tmux.NewTmux()
-	running, err := t.Exists(session.SessionID(sessionID))
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if !running {
+	if !mgr.IsRunning() {
 		// Auto-start if not running
 		fmt.Printf("Refinery not running for %s, starting...\n", rigName)
 		if err := mgr.Start(); err != nil {
@@ -491,8 +483,9 @@ func runRefineryAttach(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s Refinery started\n", style.Bold.Render("✓"))
 	}
 
-	// Attach to session using exec to properly forward TTY
-	return attachToTmuxSession(sessionID)
+	// Smart attach: switches if inside tmux, attaches if outside
+	agents := agent.ForTown(townRoot)
+	return agents.Attach(agent.RefineryAddress(rigName))
 }
 
 func runRefineryRestart(cmd *cobra.Command, args []string) error {

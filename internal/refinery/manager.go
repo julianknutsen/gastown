@@ -39,7 +39,8 @@ type Manager struct {
 
 // NewManager creates a new refinery manager for a rig.
 // agents is the Agents implementation (real or test double) to use for agent lifecycle.
-func NewManager(r *rig.Rig, agents agent.Agents, agentName string) *Manager {
+// agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
+func NewManager(agents agent.Agents, r *rig.Rig, agentName string) *Manager {
 	return &Manager{
 		rig:       r,
 		agents:    agents,
@@ -50,6 +51,11 @@ func NewManager(r *rig.Rig, agents agent.Agents, agentName string) *Manager {
 		}),
 		output: os.Stdout,
 	}
+}
+
+// address returns the agent address for the refinery.
+func (m *Manager) address() agent.AgentID {
+	return agent.RefineryAddress(m.rig.Name)
 }
 
 // SetOutput sets the output writer for user-facing messages.
@@ -66,6 +72,16 @@ func (m *Manager) stateFile() string {
 // SessionName returns the tmux session name for this refinery.
 func (m *Manager) SessionName() string {
 	return fmt.Sprintf("gt-%s-refinery", m.rig.Name)
+}
+
+// ID returns the AgentID for the refinery.
+func (m *Manager) ID() agent.AgentID {
+	return m.address()
+}
+
+// IsRunning checks if the refinery session is currently active.
+func (m *Manager) IsRunning() bool {
+	return m.agents.Exists(m.address())
 }
 
 // loadState loads refinery state from disk.
@@ -88,8 +104,7 @@ func (m *Manager) Status() (*Refinery, error) {
 	}
 
 	// Reconcile state with reality (don't persist, just report accurately)
-	agentID := agent.AgentID(m.SessionName())
-	if ref.State == StateRunning && !m.agents.Exists(agentID) {
+	if ref.State == StateRunning && !m.agents.Exists(m.address()) {
 		ref.State = StateStopped // Agent crashed
 	}
 
@@ -120,8 +135,7 @@ func (m *Manager) Start() error {
 	command := config.BuildAgentCommand(m.agentName, "")
 
 	// Start the agent session
-	agentID, err := m.agents.Start(m.SessionName(), refineryRigDir, command)
-	if err != nil {
+	if err := m.agents.Start(m.address(), refineryRigDir, command); err != nil {
 		return err
 	}
 
@@ -130,39 +144,45 @@ func (m *Manager) Start() error {
 	ref.State = StateRunning
 	ref.StartedAt = &now
 	if err := m.saveState(ref); err != nil {
-		_ = m.agents.Stop(agentID, false) // best-effort cleanup on state save failure
+		_ = m.agents.Stop(m.address(), false) // best-effort cleanup on state save failure
 		return fmt.Errorf("saving state: %w", err)
 	}
 
 	// Wait for agent to be ready
-	_ = m.agents.WaitReady(agentID)
+	_ = m.agents.WaitReady(m.address())
 
 	return nil
 }
 
 // Stop stops the refinery.
+// Returns ErrNotRunning if the agent was not running (for user messaging).
+// Always cleans up zombie sessions (tmux exists but process dead).
 func (m *Manager) Stop() error {
 	ref, err := m.loadState()
 	if err != nil {
 		return err
 	}
 
-	agentID := agent.AgentID(m.SessionName())
+	stateWasRunning := ref.State == StateRunning
+	processWasRunning := m.agents.Exists(m.address())
 
-	// If neither state nor session indicates running, it's not running
-	if ref.State != StateRunning && !m.agents.Exists(agentID) {
-		return ErrNotRunning
-	}
-
-	// Stop gracefully
-	stopErr := m.agents.Stop(agentID, true)
+	// Always call Stop to clean up zombies
+	stopErr := m.agents.Stop(m.address(), true)
 
 	ref.State = StateStopped
-
 	if err := m.saveState(ref); err != nil {
 		return err
 	}
-	return stopErr
+
+	if stopErr != nil {
+		return stopErr
+	}
+
+	// Only report "not running" if neither state nor process indicated running
+	if !stateWasRunning && !processWasRunning {
+		return ErrNotRunning
+	}
+	return nil
 }
 
 // Queue returns the current merge queue.
@@ -545,29 +565,4 @@ Please review the feedback and address the issues before resubmitting.`,
 		Priority: mail.PriorityNormal,
 	}
 	_ = router.Send(msg) // best-effort notification
-}
-
-// findTownRoot walks up directories to find the town root.
-func findTownRoot(startPath string) string {
-	path := startPath
-	for {
-		// Check for mayor/ subdirectory (indicates town root)
-		if _, err := os.Stat(filepath.Join(path, "mayor")); err == nil {
-			return path
-		}
-		// Check for config.json with type: workspace
-		configPath := filepath.Join(path, "config.json")
-		if data, err := os.ReadFile(configPath); err == nil {
-			if strings.Contains(string(data), `"type": "workspace"`) {
-				return path
-			}
-		}
-
-		parent := filepath.Dir(path)
-		if parent == path {
-			break // Reached root
-		}
-		path = parent
-	}
-	return ""
 }

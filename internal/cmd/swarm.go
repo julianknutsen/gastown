@@ -11,15 +11,15 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/factory"
+	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/swarm"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -492,10 +492,10 @@ func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, wor
 	ID    string `json:"id"`
 	Title string `json:"title"`
 }) error { //nolint:unparam // error return kept for future use
-	t := tmux.NewTmux()
-	polecatSessMgr := factory.PolecatSessionManager(r, "")
+	agents := agent.ForTownPath(townRoot)
+	polecatSessMgr := factory.PolecatSessionManager(r, townRoot, "")
 	polecatGit := git.NewGit(r.Path)
-	polecatMgr := polecat.NewManager(r, polecatGit, t)
+	polecatMgr := polecat.NewManager(agents, r, polecatGit)
 
 	// Pair workers with tasks (round-robin if more tasks than workers)
 	workerIdx := 0

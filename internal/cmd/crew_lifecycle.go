@@ -11,14 +11,13 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/townlog"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -50,11 +49,9 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 
 		// Check for running session (unless forced)
 		if !forceRemove {
-			t := tmux.NewTmux()
-			sessionName := crewSessionName(r.Name, name)
-			sessionID := session.SessionID(sessionName)
-			hasSession, _ := t.Exists(sessionID)
-			if hasSession {
+			isRunning, _ := crewMgr.IsRunning(name)
+			if isRunning {
+				sessionName := crewSessionName(r.Name, name)
 				fmt.Printf("Error removing %s: session '%s' is running (use --force to kill and remove)\n", arg, sessionName)
 				lastErr = fmt.Errorf("session running")
 				continue
@@ -62,11 +59,9 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 		}
 
 		// Kill session if it exists
-		t := tmux.NewTmux()
-		sessionName := crewSessionName(r.Name, name)
-		sessionID := session.SessionID(sessionName)
-		if hasSession, _ := t.Exists(sessionID); hasSession {
-			if err := t.Stop(sessionID); err != nil {
+		if isRunning, _ := crewMgr.IsRunning(name); isRunning {
+			sessionName := crewSessionName(r.Name, name)
+			if err := crewMgr.Stop(name); err != nil {
 				fmt.Printf("Error killing session for %s: %v\n", arg, err)
 				lastErr = err
 				continue
@@ -414,8 +409,10 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 // runCrewRestartAll restarts all running crew sessions.
 // If crewRig is set, only restarts crew in that rig.
 func runCrewRestartAll() error {
+	townRoot, _ := workspace.FindFromCwd()
+
 	// Get all agent sessions (including polecats to find crew)
-	agents, err := getAgentSessions(true)
+	agents, err := getAgentSessions(townRoot, true)
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
@@ -531,7 +528,6 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 	}
 
 	var lastErr error
-	t := tmux.NewTmux()
 
 	for _, arg := range args {
 		name := arg
@@ -545,27 +541,21 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 			name = crewName
 		}
 
-		_, r, err := getCrewManager(rigOverride, "")
+		crewMgr, r, err := getCrewManager(rigOverride, "")
 		if err != nil {
 			fmt.Printf("Error stopping %s: %v\n", arg, err)
 			lastErr = err
 			continue
 		}
 
-		sessionName := crewSessionName(r.Name, name)
-		sessionID := session.SessionID(sessionName)
-
 		// Check if session exists
-		hasSession, err := t.Exists(sessionID)
-		if err != nil {
-			fmt.Printf("Error checking session %s: %v\n", sessionName, err)
-			lastErr = err
-			continue
-		}
-		if !hasSession {
+		isRunning, _ := crewMgr.IsRunning(name)
+		if !isRunning {
 			fmt.Printf("No session found for %s/%s\n", r.Name, name)
 			continue
 		}
+
+		sessionName := crewSessionName(r.Name, name)
 
 		// Dry run - just show what would be stopped
 		if crewDryRun {
@@ -573,14 +563,8 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Capture output before stopping (best effort)
-		var output string
-		if !crewForce {
-			output, _ = t.Capture(sessionID, 50)
-		}
-
 		// Kill the session
-		if err := t.Stop(sessionID); err != nil {
+		if err := crewMgr.Stop(name); err != nil {
 			fmt.Printf("  %s [%s] %s: %s\n",
 				style.ErrorPrefix,
 				r.Name, name,
@@ -600,14 +584,6 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 			logger := townlog.NewLogger(townRoot)
 			_ = logger.Log(townlog.EventKill, agent, "gt crew stop")
 		}
-
-		// Log captured output (truncated)
-		if len(output) > 200 {
-			output = output[len(output)-200:]
-		}
-		if output != "" {
-			fmt.Printf("      %s\n", style.Dim.Render("(output captured)"))
-		}
 	}
 
 	return lastErr
@@ -616,8 +592,10 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 // runCrewStopAll stops all running crew sessions.
 // If crewRig is set, only stops crew in that rig.
 func runCrewStopAll() error {
+	townRoot, _ := workspace.FindFromCwd()
+
 	// Get all agent sessions (including polecats to find crew)
-	agents, err := getAgentSessions(true)
+	agents, err := getAgentSessions(townRoot, true)
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
@@ -655,22 +633,16 @@ func runCrewStopAll() error {
 	fmt.Printf("%s Stopping %d crew session(s)...\n\n",
 		style.Bold.Render("🛑"), len(targets))
 
-	t := tmux.NewTmux()
+	agentsAPI := agent.ForTown(townRoot)
 	var succeeded, failed int
 	var failures []string
 
-	for _, agent := range targets {
-		agentName := fmt.Sprintf("%s/crew/%s", agent.Rig, agent.AgentName)
-		sessionID := session.SessionID(agent.Name) // agent.Name IS the tmux session name
+	for _, as := range targets {
+		agentName := fmt.Sprintf("%s/crew/%s", as.Rig, as.AgentName)
+		id := agentSessionToAgentID(as)
 
-		// Capture output before stopping (best effort)
-		var output string
-		if !crewForce {
-			output, _ = t.Capture(sessionID, 50)
-		}
-
-		// Kill the session
-		if err := t.Stop(sessionID); err != nil {
+		// Kill the session (graceful=true)
+		if err := agentsAPI.Stop(id, true); err != nil {
 			failed++
 			failures = append(failures, fmt.Sprintf("%s: %v", agentName, err))
 			fmt.Printf("  %s %s\n", style.ErrorPrefix, agentName)
@@ -681,18 +653,9 @@ func runCrewStopAll() error {
 		fmt.Printf("  %s %s\n", style.SuccessPrefix, agentName)
 
 		// Log kill event to town log
-		townRoot, _ := workspace.FindFromCwd()
 		if townRoot != "" {
 			logger := townlog.NewLogger(townRoot)
 			_ = logger.Log(townlog.EventKill, agentName, "gt crew stop --all")
-		}
-
-		// Log captured output (truncated)
-		if len(output) > 200 {
-			output = output[len(output)-200:]
-		}
-		if output != "" {
-			fmt.Printf("      %s\n", style.Dim.Render("(output captured)"))
 		}
 	}
 

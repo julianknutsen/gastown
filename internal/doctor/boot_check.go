@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/boot"
+	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/factory"
 )
 
 // BootHealthCheck verifies Boot watchdog health.
@@ -27,7 +29,9 @@ func NewBootHealthCheck() *BootHealthCheck {
 
 // Run checks Boot health: directory, session, status, and marker freshness.
 func (c *BootHealthCheck) Run(ctx *CheckContext) *CheckResult {
-	b := boot.New(ctx.TownRoot)
+	// Boot uses deacon's agent configuration since it's the deacon's watchdog
+	agentName, _ := config.ResolveRoleAgentName("deacon", ctx.TownRoot, "")
+	b := factory.BootManager(ctx.TownRoot, agentName)
 	details := []string{}
 
 	// Check 1: Boot directory exists

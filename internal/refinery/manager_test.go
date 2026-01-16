@@ -32,7 +32,7 @@ func setupTestManager(t *testing.T) (*Manager, *agent.Double, string) {
 	}
 
 	agents := agent.NewDouble()
-	return NewManager(r, agents, "claude"), agents, rigPath
+	return NewManager(agents, r, "claude"), agents, rigPath
 }
 
 func TestManager_GetMR(t *testing.T) {
@@ -203,7 +203,7 @@ func setupTestManagerForLifecycle(t *testing.T) (*Manager, *agent.Double, string
 	}
 
 	agents := agent.NewDouble()
-	return NewManager(r, agents, "claude"), agents, rigPath
+	return NewManager(agents, r, "claude"), agents, rigPath
 }
 
 // --- Start() Tests ---
@@ -215,7 +215,7 @@ func TestManager_Start_CreatesSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify agent exists with correct name
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := mgr.ID()
 	assert.True(t, agents.Exists(agentID), "agent should exist after Start")
 }
 
@@ -223,7 +223,7 @@ func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
 	mgr, agents, _ := setupTestManagerForLifecycle(t)
 
 	// Pre-create agent
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := mgr.ID()
 	agents.CreateAgent(agentID)
 
 	err := mgr.Start()
@@ -254,7 +254,7 @@ func TestManager_Start_UsesCorrectWorkDir(t *testing.T) {
 	err := mgr.Start()
 	require.NoError(t, err)
 
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := mgr.ID()
 	workDir := agents.GetWorkDir(agentID)
 
 	// Should use refinery/rig as the working directory
@@ -268,7 +268,7 @@ func TestManager_Start_UsesCorrectCommand(t *testing.T) {
 	err := mgr.Start()
 	require.NoError(t, err)
 
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := mgr.ID()
 	command := agents.GetCommand(agentID)
 
 	// Command should contain the agent name (claude)
@@ -284,7 +284,7 @@ func TestManager_Stop_TerminatesSession(t *testing.T) {
 	err := mgr.Stop()
 	require.NoError(t, err)
 
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := mgr.ID()
 	assert.False(t, agents.Exists(agentID), "agent should be gone after Stop")
 }
 
@@ -339,7 +339,7 @@ func TestManager_Stop_StateStoppedButSessionExists_Succeeds(t *testing.T) {
 	mgr, agents, rigPath := setupTestManagerForLifecycle(t)
 
 	// Create agent manually (simulating stale session)
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := mgr.ID()
 	agents.CreateAgent(agentID)
 
 	// Write state that says stopped
@@ -391,7 +391,7 @@ func TestManager_Status_WhenAgentCrashed_DetectsMismatch(t *testing.T) {
 	require.NoError(t, mgr.Start())
 
 	// Simulate crash: kill agent directly without going through manager.Stop()
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := mgr.ID()
 	_ = agents.Stop(agentID, false) // Direct kill, bypasses manager state update
 
 	// Agent is dead
@@ -456,7 +456,7 @@ func TestManager_Start_WhenAgentStartFails_ReturnsError(t *testing.T) {
 	stub := agent.NewAgentsStub(agent.NewDouble())
 	stub.StartErr = errors.New("agent start failed")
 
-	mgr := NewManager(r, stub, "claude")
+	mgr := NewManager(stub, r, "claude")
 
 	err := mgr.Start()
 	assert.Error(t, err)
@@ -474,11 +474,10 @@ func TestManager_Stop_WhenAgentStopFails_ReturnsError(t *testing.T) {
 	double := agent.NewDouble()
 	stub := agent.NewAgentsStub(double)
 
-	mgr := NewManager(r, stub, "claude")
+	mgr := NewManager(stub, r, "claude")
 
-	// Pre-create agent session
-	sessionName := mgr.SessionName()
-	double.CreateAgent(agent.AgentID(sessionName))
+	// Pre-create agent session using mgr.ID()
+	double.CreateAgent(mgr.ID())
 
 	// Write running state
 	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
@@ -661,48 +660,6 @@ func TestManager_Retry_WithProcessNow_PrintsDeprecationNotice(t *testing.T) {
 }
 
 // =============================================================================
-// FindTownRoot Tests
-// =============================================================================
-
-func TestFindTownRoot_WithMayorDir(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create mayor directory
-	mayorDir := filepath.Join(tmpDir, "mayor")
-	require.NoError(t, os.MkdirAll(mayorDir, 0755))
-
-	// Search from a subdirectory
-	subDir := filepath.Join(tmpDir, "sub", "deep")
-	require.NoError(t, os.MkdirAll(subDir, 0755))
-
-	result := findTownRoot(subDir)
-	assert.Equal(t, tmpDir, result)
-}
-
-func TestFindTownRoot_WithWorkspaceConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create config.json with workspace type
-	configContent := `{"type": "workspace", "name": "test"}`
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.json"), []byte(configContent), 0644))
-
-	// Search from a subdirectory
-	subDir := filepath.Join(tmpDir, "sub")
-	require.NoError(t, os.MkdirAll(subDir, 0755))
-
-	result := findTownRoot(subDir)
-	assert.Equal(t, tmpDir, result)
-}
-
-func TestFindTownRoot_NotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// No markers - should return empty
-	result := findTownRoot(tmpDir)
-	assert.Equal(t, "", result)
-}
-
-// =============================================================================
 // Start/Stop Error Path Tests
 // =============================================================================
 
@@ -716,7 +673,7 @@ func TestManager_Start_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, "claude")
 
 	err := mgr.Start()
 	assert.Error(t, err)
@@ -736,7 +693,7 @@ func TestManager_Start_WhenEnsureSettingsFails_ReturnsError(t *testing.T) {
 	defer os.Chmod(refineryRigDir, 0755)
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, "claude")
 
 	err := mgr.Start()
 	assert.Error(t, err)
@@ -755,13 +712,13 @@ func TestManager_Start_UsesLegacyMayorDir(t *testing.T) {
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
 	agents := agent.NewDouble()
-	mgr := NewManager(r, agents, "claude")
+	mgr := NewManager(agents, r, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
 
 	// Verify it used mayor/rig as the work directory
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := mgr.ID()
 	workDir := agents.GetWorkDir(agentID)
 	assert.Equal(t, filepath.Join(rigPath, "mayor", "rig"), workDir)
 }
@@ -776,7 +733,7 @@ func TestManager_Start_WhenSaveStateFails_CleansUpAndReturnsError(t *testing.T) 
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
 	agents := agent.NewDouble()
-	mgr := NewManager(r, agents, "claude")
+	mgr := NewManager(agents, r, "claude")
 
 	// Make the runtime directory read-only to cause saveState to fail
 	require.NoError(t, os.Chmod(runtimeDir, 0555))
@@ -787,7 +744,7 @@ func TestManager_Start_WhenSaveStateFails_CleansUpAndReturnsError(t *testing.T) 
 	assert.Contains(t, err.Error(), "saving state")
 
 	// Verify agent was cleaned up after saveState failure
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := mgr.ID()
 	assert.False(t, agents.Exists(agentID), "agent should be cleaned up after saveState failure")
 }
 
@@ -801,7 +758,7 @@ func TestManager_Stop_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, "claude")
 
 	err := mgr.Stop()
 	assert.Error(t, err)
@@ -815,11 +772,10 @@ func TestManager_Stop_WhenSaveStateFails_ReturnsError(t *testing.T) {
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
 	agents := agent.NewDouble()
-	mgr := NewManager(r, agents, "claude")
+	mgr := NewManager(agents, r, "claude")
 
 	// Start first (need running state)
-	sessionName := mgr.SessionName()
-	agents.CreateAgent(agent.AgentID(sessionName))
+	agents.CreateAgent(mgr.ID())
 
 	// Write running state
 	stateFile := filepath.Join(runtimeDir, "refinery.json")
@@ -849,7 +805,7 @@ func TestManager_GetMR_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, "claude")
 
 	_, err := mgr.GetMR("any-id")
 	assert.Error(t, err)
@@ -865,7 +821,7 @@ func TestManager_Retry_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, "claude")
 
 	err := mgr.Retry("any-id", false)
 	assert.Error(t, err)
@@ -878,7 +834,7 @@ func TestManager_Retry_WhenSaveStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, "claude")
 
 	// Create a failed MR
 	mr := &MergeRequest{
@@ -906,7 +862,7 @@ func TestManager_RegisterMR_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, "claude")
 
 	mr := &MergeRequest{ID: "test-mr"}
 	err := mgr.RegisterMR(mr)
@@ -920,7 +876,7 @@ func TestManager_RegisterMR_WhenSaveStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, "claude")
 
 	// Initialize state first
 	_, _ = mgr.Status()

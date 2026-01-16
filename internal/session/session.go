@@ -36,6 +36,7 @@ type Sessions interface {
 	Start(name, workDir, command string) (SessionID, error)
 	Stop(id SessionID) error
 	Exists(id SessionID) (bool, error)
+	Respawn(id SessionID, command string) error // Atomic kill + restart (for handoff)
 
 	// Communication
 	Send(id SessionID, text string) error       // Send text to session (appends Enter)
@@ -44,10 +45,16 @@ type Sessions interface {
 
 	// Observation
 	Capture(id SessionID, lines int) (string, error)
+	CaptureAll(id SessionID) (string, error) // Capture entire scrollback history
 	IsRunning(id SessionID, processNames ...string) bool
 	WaitFor(id SessionID, timeout time.Duration, processNames ...string) error
+	GetStartCommand(id SessionID) (string, error) // Get the command that started the session
 
 	// Management
 	List() ([]SessionID, error)
 	GetInfo(id SessionID) (*Info, error)
+
+	// Interactive
+	Attach(id SessionID) error     // Attach to session (exec into terminal)
+	SwitchTo(id SessionID) error   // Switch to session (when inside multiplexer)
 }

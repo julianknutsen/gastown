@@ -9,9 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/factory"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -185,26 +183,13 @@ func runWitnessStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Kill tmux session if it exists
-	t := tmux.NewTmux()
-	sessionName := witnessSessionName(rigName)
-	running, _ := t.Exists(session.SessionID(sessionName))
-	if running {
-		if err := t.Stop(session.SessionID(sessionName)); err != nil {
-			style.PrintWarning("failed to kill session: %v", err)
-		}
-	}
-
-	// Update state file
+	// Stop witness session and update state file
 	if err := mgr.Stop(); err != nil {
-		if err == witness.ErrNotRunning && !running {
+		if err == witness.ErrNotRunning {
 			fmt.Printf("%s Witness is not running\n", style.Dim.Render("⚠"))
 			return nil
 		}
-		// Even if manager.Stop fails, if we killed the session it's stopped
-		if !running {
-			return fmt.Errorf("stopping witness: %w", err)
-		}
+		return fmt.Errorf("stopping witness: %w", err)
 	}
 
 	fmt.Printf("%s Witness stopped for %s\n", style.Bold.Render("✓"), rigName)
@@ -224,12 +209,11 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting status: %w", err)
 	}
 
-	// Check actual tmux session state (more reliable than state file)
-	t := tmux.NewTmux()
-	sessionName := witnessSessionName(rigName)
-	sessionRunning, _ := t.Exists(session.SessionID(sessionName))
+	// Check actual session state via manager (more reliable than state file)
+	sessionRunning := mgr.IsRunning()
+	sessionName := mgr.SessionName()
 
-	// Reconcile state: tmux session is the source of truth for background mode
+	// Reconcile state: session is the source of truth for background mode
 	if sessionRunning && w.State != witness.StateRunning {
 		w.State = witness.StateRunning
 	} else if !sessionRunning && w.State == witness.StateRunning {
@@ -277,7 +261,8 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// witnessSessionName returns the tmux session name for a rig's witness.
+// witnessSessionName returns the session name for a rig's witness.
+// Used by status.go for display purposes.
 func witnessSessionName(rigName string) string {
 	return fmt.Sprintf("gt-%s-witness", rigName)
 }
@@ -306,7 +291,7 @@ func runWitnessAttach(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	sessionName := witnessSessionName(rigName)
+	sessionName := mgr.SessionName()
 
 	// Ensure session exists (creates if needed)
 	if err := mgr.Start(); err != nil && err != witness.ErrAlreadyRunning {

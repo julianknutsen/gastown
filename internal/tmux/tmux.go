@@ -600,51 +600,20 @@ func hasClaudeChild(pid string) bool {
 	return false
 }
 
-// FindSessionByWorkDir finds tmux sessions where the pane's current working directory
-// matches or is under the target directory. Returns session names that match.
-// If processNames is provided, only returns sessions that match those processes.
-// If processNames is nil or empty, returns all sessions matching the directory.
-func (t *Tmux) FindSessionByWorkDir(targetDir string, processNames []string) ([]string, error) {
-	sessionIDs, err := t.List()
-	if err != nil {
-		return nil, err
-	}
-
-	var matches []string
-	for _, id := range sessionIDs {
-		session := string(id)
-		if session == "" {
-			continue
-		}
-
-		workDir, err := t.GetPaneWorkDir(session)
-		if err != nil {
-			continue // Skip sessions we can't query
-		}
-
-		// Check if workdir matches target (exact match or subdir)
-		if workDir == targetDir || strings.HasPrefix(workDir, targetDir+"/") {
-			if len(processNames) > 0 {
-				if t.IsRuntimeRunning(session, processNames) {
-					matches = append(matches, session)
-				}
-				continue
-			}
-			matches = append(matches, session)
-		}
-	}
-
-	return matches, nil
-}
-
 // Capture captures the visible content of a pane.
 func (t *Tmux) Capture(id session.SessionID, lines int) (string, error) {
 	return t.run("capture-pane", "-p", "-t", string(id), "-S", fmt.Sprintf("-%d", lines))
 }
 
+// CaptureAll captures all scrollback history for a session.
+func (t *Tmux) CaptureAll(id session.SessionID) (string, error) {
+	return t.run("capture-pane", "-p", "-t", string(id), "-S", "-")
+}
+
 // CapturePaneAll captures all scrollback history.
-func (t *Tmux) CapturePaneAll(session string) (string, error) {
-	return t.run("capture-pane", "-p", "-t", session, "-S", "-")
+// Deprecated: Use CaptureAll instead.
+func (t *Tmux) CapturePaneAll(sess string) (string, error) {
+	return t.CaptureAll(session.SessionID(sess))
 }
 
 // CapturePaneLines captures the last N lines of a pane as a slice.
@@ -661,8 +630,23 @@ func (t *Tmux) CapturePaneLines(sess string, lines int) ([]string, error) {
 
 // AttachSession attaches to an existing session.
 // Note: This replaces the current process with tmux attach.
-func (t *Tmux) AttachSession(session string) error {
-	_, err := t.run("attach-session", "-t", session)
+func (t *Tmux) AttachSession(sessionName string) error {
+	_, err := t.run("attach-session", "-t", sessionName)
+	return err
+}
+
+// Attach implements session.Sessions interface.
+func (t *Tmux) Attach(id session.SessionID) error {
+	return t.AttachSession(string(id))
+}
+
+// SwitchTo switches the current tmux client to the target session.
+// Only works when inside tmux. Returns error if not inside tmux.
+func (t *Tmux) SwitchTo(id session.SessionID) error {
+	if !IsInsideTmux() {
+		return fmt.Errorf("not inside tmux, cannot switch")
+	}
+	_, err := t.run("switch-client", "-t", string(id))
 	return err
 }
 
@@ -1127,6 +1111,19 @@ func IsInsideTmux() bool {
 	return os.Getenv("TMUX") != ""
 }
 
+// CurrentSessionName returns the name of the current tmux session.
+// Returns an error if not running inside tmux or if the query fails.
+func (t *Tmux) CurrentSessionName() (string, error) {
+	if !IsInsideTmux() {
+		return "", fmt.Errorf("not inside a tmux session")
+	}
+	output, err := t.run("display-message", "-p", "#{session_name}")
+	if err != nil {
+		return "", fmt.Errorf("getting current session name: %w", err)
+	}
+	return strings.TrimSpace(output), nil
+}
+
 // SetMailClickBinding configures left-click on status-right to show mail preview.
 // This creates a popup showing the first unread message when clicking the mail icon area.
 func (t *Tmux) SetMailClickBinding(session string) error {
@@ -1151,6 +1148,40 @@ func (t *Tmux) RespawnPane(pane, command string) error {
 func (t *Tmux) ClearHistory(pane string) error {
 	_, err := t.run("clear-history", "-t", pane)
 	return err
+}
+
+// Respawn atomically kills the session's process and starts a new one.
+// Clears scrollback history before respawning for a clean start.
+// This is used for handoff - an agent can respawn itself or another agent.
+func (t *Tmux) Respawn(id session.SessionID, command string) error {
+	sessionName := string(id)
+
+	// Get pane ID for the session
+	paneID, err := t.GetPaneID(sessionName)
+	if err != nil {
+		return fmt.Errorf("getting pane ID: %w", err)
+	}
+
+	// Clear scrollback history for clean start
+	if err := t.ClearHistory(paneID); err != nil {
+		// Non-fatal - continue with respawn even if clear fails
+	}
+
+	// Atomically kill current process and start new one
+	return t.RespawnPane(paneID, command)
+}
+
+// GetStartCommand returns the command that started the session.
+// This includes any environment variable exports that were part of the original command.
+// Used by Respawn to preserve env vars when restarting with a new beacon/prompt.
+func (t *Tmux) GetStartCommand(id session.SessionID) (string, error) {
+	// Query tmux for the pane's start command
+	// #{pane_start_command} returns the original command used to spawn the pane
+	output, err := t.run("display-message", "-t", string(id), "-p", "#{pane_start_command}")
+	if err != nil {
+		return "", fmt.Errorf("getting start command: %w", err)
+	}
+	return strings.TrimSpace(output), nil
 }
 
 // SwitchClient switches the current tmux client to a different session.

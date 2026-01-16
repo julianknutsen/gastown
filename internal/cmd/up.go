@@ -440,11 +440,11 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 	}
 
 	// Get polecat session manager
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return started, errors
 	}
-	polecatMgr := factory.PolecatSessionManager(r, "")
+	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 
 	for _, entry := range entries {
 		if !entry.IsDir() {

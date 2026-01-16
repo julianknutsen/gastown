@@ -11,14 +11,12 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/factory"
+	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/suggest"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/townlog"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -227,12 +225,12 @@ func parseAddress(addr string) (rigName, polecatName string, err error) {
 
 // getSessionManager creates a session manager for the given rig.
 func getSessionManager(rigName string) (*polecat.SessionManager, *rig.Rig, error) {
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	polecatMgr := factory.PolecatSessionManager(r, "")
+	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 
 	return polecatMgr, r, nil
 }
@@ -377,7 +375,7 @@ func runSessionList(cmd *cobra.Command, args []string) error {
 	var allSessions []SessionListItem
 
 	for _, r := range rigs {
-		polecatMgr := factory.PolecatSessionManager(r, "")
+		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 		infos, err := polecatMgr.List()
 		if err != nil {
 			continue
@@ -628,31 +626,18 @@ func runSessionCheck(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("%s Session Health Check\n\n", style.Bold.Render("🔍"))
 
-	t := tmux.NewTmux()
 	totalChecked := 0
 	totalHealthy := 0
 	totalCrashed := 0
 
 	for _, r := range rigs {
-		polecatsDir := filepath.Join(r.Path, "polecats")
-		entries, err := os.ReadDir(polecatsDir)
-		if err != nil {
-			continue // Rig might not have polecats
-		}
+		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			if strings.HasPrefix(entry.Name(), ".") {
-				continue
-			}
-			polecatName := entry.Name()
-			sessionName := fmt.Sprintf("gt-%s-%s", r.Name, polecatName)
+		for _, polecatName := range r.Polecats {
 			totalChecked++
 
-			// Check if session exists
-			running, err := t.Exists(session.SessionID(sessionName))
+			// Check if session is running
+			running, err := polecatMgr.IsRunning(polecatName)
 			if err != nil {
 				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("⚠"), r.Name, polecatName, style.Dim.Render("error checking session"))
 				continue
@@ -662,7 +647,6 @@ func runSessionCheck(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("✓"), r.Name, polecatName, style.Dim.Render("session alive"))
 				totalHealthy++
 			} else {
-				// Check if polecat has work on hook (would need restart)
 				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("✗"), r.Name, polecatName, style.Dim.Render("session not running"))
 				totalCrashed++
 			}

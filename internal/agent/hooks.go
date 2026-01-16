@@ -62,7 +62,7 @@ type StartupHook func(sess session.Sessions, id session.SessionID) error
 
 // OnSessionCreated is called immediately after a session is created,
 // before waiting for readiness. Use this for synchronous setup like theming.
-// Managers typically type-assert sess to *tmux.Tmux for theming operations.
+// Managers typically type-assert to access the underlying tmux for theming.
 type OnSessionCreated func(sess session.Sessions, id session.SessionID) error
 
 // Config defines the behavior for a specific agent runtime.

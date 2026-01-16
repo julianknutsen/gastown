@@ -44,24 +44,24 @@ func setupTestRig(t *testing.T) (*rig.Rig, string) {
 func TestManager_Start_CreatesAgent(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
 
 	// Verify agent exists with correct name
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := agent.WitnessAddress(r.Name)
 	assert.True(t, agents.Exists(agentID), "agent should exist after Start")
 }
 
 func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
+	mgr := witness.NewManager(agents, r, "claude")
 
-	// Pre-create agent
-	agents.CreateAgent(agent.AgentID("gt-testrig-witness"))
+	// Pre-create agent using agent.WitnessAddress(r.Name)
+	agents.CreateAgent(agent.WitnessAddress(r.Name))
 
-	mgr := witness.NewManager(r, agents, "claude")
 	err := mgr.Start()
 
 	assert.ErrorIs(t, err, witness.ErrAlreadyRunning)
@@ -70,7 +70,7 @@ func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
 func TestManager_Start_UpdatesStateToRunning(t *testing.T) {
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
@@ -91,20 +91,20 @@ func TestManager_Start_UpdatesStateToRunning(t *testing.T) {
 func TestManager_Stop_TerminatesAgent(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	_ = mgr.Start()
 	err := mgr.Stop()
 	require.NoError(t, err)
 
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := agent.WitnessAddress(r.Name)
 	assert.False(t, agents.Exists(agentID), "agent should be gone after Stop")
 }
 
 func TestManager_Stop_WhenNotRunning_ReturnsError(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	err := mgr.Stop()
 	assert.ErrorIs(t, err, witness.ErrNotRunning)
@@ -113,7 +113,7 @@ func TestManager_Stop_WhenNotRunning_ReturnsError(t *testing.T) {
 func TestManager_Stop_UpdatesStateToStopped(t *testing.T) {
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	_ = mgr.Start()
 	err := mgr.Stop()
@@ -132,7 +132,7 @@ func TestManager_Stop_UpdatesStateToStopped(t *testing.T) {
 func TestManager_Stop_StateRunningButNoAgent_Succeeds(t *testing.T) {
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	// Write stale state (says running but no agent)
 	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
@@ -157,10 +157,10 @@ func TestManager_Stop_StateRunningButNoAgent_Succeeds(t *testing.T) {
 func TestManager_Stop_StateStoppedButAgentExists_Succeeds(t *testing.T) {
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	// Create agent manually (simulating stale agent)
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := agent.WitnessAddress(r.Name)
 	agents.CreateAgent(agentID)
 
 	// Write state that says stopped
@@ -185,7 +185,7 @@ func TestManager_Stop_StateStoppedButAgentExists_Succeeds(t *testing.T) {
 func TestManager_Status_ReturnsState(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	_ = mgr.Start()
 
@@ -200,13 +200,13 @@ func TestManager_Status_WhenAgentCrashed_DetectsMismatch(t *testing.T) {
 	// Status() should detect that state=running but agent doesn't exist.
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	// Start the witness
 	require.NoError(t, mgr.Start())
 
 	// Simulate crash: kill agent directly without going through manager.Stop()
-	agentID := agent.AgentID(mgr.SessionName())
+	agentID := agent.WitnessAddress(r.Name)
 	_ = agents.Stop(agentID, false) // Direct kill, bypasses manager state update
 
 	// Agent is dead
@@ -223,7 +223,7 @@ func TestManager_Status_WhenAgentCrashed_DetectsMismatch(t *testing.T) {
 func TestManager_SessionName_Format(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	assert.Equal(t, "gt-testrig-witness", mgr.SessionName())
 }
@@ -233,7 +233,7 @@ func TestManager_SessionName_Format(t *testing.T) {
 func TestManager_FullLifecycle(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(r, agents, "claude")
+	mgr := witness.NewManager(agents, r, "claude")
 
 	// Start
 	require.NoError(t, mgr.Start())

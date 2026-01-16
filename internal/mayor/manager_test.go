@@ -27,14 +27,13 @@ func TestManager_Start_CreatesAgent(t *testing.T) {
 	setupMayorDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
 
-	// Verify agent was created with correct name
-	agentID := agent.AgentID(mayor.SessionName())
-	assert.True(t, agents.Exists(agentID), "agent should exist after Start")
+	// Verify agent was created with correct ID
+	assert.True(t, agents.Exists(agent.MayorAddress()), "agent should exist after Start")
 }
 
 func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
@@ -43,11 +42,11 @@ func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
 	setupMayorDir(t, townRoot)
 
 	agents := agent.NewDouble()
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
-	// Pre-create agent
-	agents.CreateAgent(agent.AgentID(mayor.SessionName()))
+	// Pre-create agent using agent.MayorAddress()
+	agents.CreateAgent(agent.MayorAddress())
 
-	mgr := mayor.NewManager(townRoot, "claude", agents)
 	err := mgr.Start()
 
 	assert.ErrorIs(t, err, mayor.ErrAlreadyRunning)
@@ -60,7 +59,7 @@ func TestManager_Stop_TerminatesAgent(t *testing.T) {
 	setupMayorDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
 	// Start then stop
 	_ = mgr.Start()
@@ -68,7 +67,7 @@ func TestManager_Stop_TerminatesAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Agent should be gone
-	assert.False(t, agents.Exists(agent.AgentID(mayor.SessionName())))
+	assert.False(t, agents.Exists(agent.MayorAddress()))
 }
 
 func TestManager_Stop_WhenNotRunning_ReturnsError(t *testing.T) {
@@ -76,7 +75,7 @@ func TestManager_Stop_WhenNotRunning_ReturnsError(t *testing.T) {
 	setupMayorDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
 	// Stop without starting
 	err := mgr.Stop()
@@ -90,7 +89,7 @@ func TestManager_IsRunning_ReturnsCorrectState(t *testing.T) {
 	setupMayorDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
 	// Not running initially
 	running, _ := mgr.IsRunning()
@@ -109,30 +108,31 @@ func TestManager_IsRunning_ReturnsCorrectState(t *testing.T) {
 
 // --- Status Tests ---
 
-func TestManager_Status_ReturnsInfo_WhenRunning(t *testing.T) {
+func TestManager_Status_ReturnsRunning_WhenRunning(t *testing.T) {
 	townRoot := t.TempDir()
 	setupMayorDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
 	_ = mgr.Start()
 
-	info, err := mgr.Status()
+	status, err := mgr.Status()
 	require.NoError(t, err)
-	assert.NotNil(t, info)
-	assert.Equal(t, mayor.SessionName(), info.Name)
+	assert.Equal(t, mayor.StateRunning, status.State)
+	assert.Equal(t, mayor.SessionName(), status.Name)
 }
 
-func TestManager_Status_ReturnsError_WhenNotRunning(t *testing.T) {
+func TestManager_Status_ReturnsStopped_WhenNotRunning(t *testing.T) {
 	townRoot := t.TempDir()
 	setupMayorDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
-	_, err := mgr.Status()
-	assert.ErrorIs(t, err, mayor.ErrNotRunning)
+	status, err := mgr.Status()
+	require.NoError(t, err)
+	assert.Equal(t, mayor.StateStopped, status.State)
 }
 
 // --- Start Parameter Tests ---
@@ -142,13 +142,12 @@ func TestManager_Start_UsesCorrectWorkDir(t *testing.T) {
 	setupMayorDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
 
-	agentID := agent.AgentID(mayor.SessionName())
-	workDir := agents.GetWorkDir(agentID)
+	workDir := agents.GetWorkDir(agent.MayorAddress())
 
 	expectedWorkDir := filepath.Join(townRoot, "mayor")
 	assert.Equal(t, expectedWorkDir, workDir, "should start in mayor directory")
@@ -159,13 +158,12 @@ func TestManager_Start_UsesCorrectCommand(t *testing.T) {
 	setupMayorDir(t, townRoot)
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
 
-	agentID := agent.AgentID(mayor.SessionName())
-	command := agents.GetCommand(agentID)
+	command := agents.GetCommand(agent.MayorAddress())
 
 	assert.Contains(t, command, "claude", "command should include agent name")
 }
@@ -180,7 +178,7 @@ func TestManager_Start_CreatesSettings(t *testing.T) {
 	// Note: NOT creating .claude/settings.local.json
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	require.NoError(t, err)
@@ -204,7 +202,7 @@ func TestManager_Start_SettingsFailure_NoAgentCreated(t *testing.T) {
 	})
 
 	agents := agent.NewDouble()
-	mgr := mayor.NewManager(townRoot, "claude", agents)
+	mgr := mayor.NewManager(agents, townRoot, "claude")
 
 	err := mgr.Start()
 	assert.Error(t, err, "should fail when settings can't be created")
@@ -223,7 +221,7 @@ func TestManager_Start_AgentStartFailure(t *testing.T) {
 	stub := agent.NewAgentsStub(double)
 	stub.StartErr = errors.New("simulated start failure")
 
-	mgr := mayor.NewManager(townRoot, "claude", stub)
+	mgr := mayor.NewManager(stub, townRoot, "claude")
 	err := mgr.Start()
 
 	assert.Error(t, err)
@@ -236,7 +234,7 @@ func TestManager_Stop_AgentStopFailure(t *testing.T) {
 
 	double := agent.NewDouble()
 	stub := agent.NewAgentsStub(double)
-	mgr := mayor.NewManager(townRoot, "claude", stub)
+	mgr := mayor.NewManager(stub, townRoot, "claude")
 
 	_ = mgr.Start()
 
@@ -258,13 +256,13 @@ func TestManager_Start_WaitReadyFailure(t *testing.T) {
 	stub := agent.NewAgentsStub(double)
 	stub.WaitReadyErr = errors.New("wait ready timeout")
 
-	mgr := mayor.NewManager(townRoot, "claude", stub)
+	mgr := mayor.NewManager(stub, townRoot, "claude")
 	err := mgr.Start()
 
 	// Currently Start() ignores WaitReady errors - this may be intentional
 	// The agent is created even if WaitReady fails
 	assert.NoError(t, err, "Start currently ignores WaitReady failures")
-	assert.True(t, double.Exists(agent.AgentID(mayor.SessionName())), "agent should exist despite WaitReady failure")
+	assert.True(t, double.Exists(agent.MayorAddress()), "agent should exist despite WaitReady failure")
 }
 
 // --- Helpers ---

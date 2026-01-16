@@ -2,10 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"os/exec"
 	"sort"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/session"
+	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // crewCycleSession is the --session flag for crew next/prev commands.
@@ -34,21 +35,21 @@ func cycleCrewSession(direction int, sessionOverride string) error {
 		}
 	}
 
-	// Parse rig name from current session
-	rigName, _, ok := parseCrewSessionName(currentSession)
-	if !ok {
-		// Not a crew session (e.g., Mayor, Witness, Refinery) - no cycling, just stay put
+	// Parse session to get rig and town ID
+	currentIdentity, err := session.ParseSessionName(currentSession)
+	if err != nil || currentIdentity.Role != session.RoleCrew {
+		// Not a crew session - no cycling, just stay put
 		return nil
 	}
 
-	// Find all crew sessions for this rig
-	sessions, err := findRigCrewSessions(rigName)
+	// Find all crew sessions for this rig in the same town
+	sessions, err := findRigCrewSessions(currentIdentity.Rig, currentIdentity.TownID)
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
 
 	if len(sessions) == 0 {
-		return fmt.Errorf("no crew sessions found for rig %s", rigName)
+		return fmt.Errorf("no crew sessions found for rig %s", currentIdentity.Rig)
 	}
 
 	// Sort for consistent ordering
@@ -79,8 +80,8 @@ func cycleCrewSession(direction int, sessionOverride string) error {
 	targetSession := sessions[targetIdx]
 
 	// Switch to target session
-	cmd := exec.Command("tmux", "switch-client", "-t", targetSession)
-	if err := cmd.Run(); err != nil {
+	t := tmux.NewTmux()
+	if err := t.SwitchTo(session.SessionID(targetSession)); err != nil {
 		return fmt.Errorf("switching to %s: %w", targetSession, err)
 	}
 

@@ -250,7 +250,9 @@ func (d *Daemon) getDeaconSessionName() string {
 // the Deacon, centralizing the "when to wake" decision in an agent.
 // In degraded mode (no tmux), falls back to mechanical checks.
 func (d *Daemon) ensureBootRunning() {
-	b := boot.New(d.config.TownRoot)
+	// Boot uses deacon's agent configuration since it's the deacon's watchdog
+	agentName, _ := config.ResolveRoleAgentName("deacon", d.config.TownRoot, "")
+	b := factory.BootManager(d.config.TownRoot, agentName)
 
 	// Check if Boot is already running (recent marker)
 	if b.IsRunning() {
@@ -321,8 +323,9 @@ func (d *Daemon) ensureDeaconRunning() {
 	envVars := config.AgentEnv(config.AgentEnvConfig{Role: "deacon", TownRoot: d.config.TownRoot})
 	sessionCfg := tmux.SessionConfigForRole("deacon", "").WithEnvVars(envVars)
 	t := tmux.NewTmux().WithSessionConfig(sessionCfg)
-	agents := agent.New(t, agent.FromPreset(agentName).WithEnvVars(envVars))
-	mgr := deacon.NewManager(d.config.TownRoot, agentName, agents)
+	sess := session.NewTownSessions(t, d.config.TownRoot)
+	agents := agent.New(sess, agent.FromPreset(agentName).WithEnvVars(envVars))
+	mgr := deacon.NewManager(agents, d.config.TownRoot, agentName)
 
 	if err := mgr.Start(); err != nil {
 		if err == deacon.ErrAlreadyRunning {
@@ -420,8 +423,9 @@ func (d *Daemon) ensureWitnessRunning(rigName string) {
 	envVars := config.AgentEnv(config.AgentEnvConfig{Role: "witness", Rig: rigName, TownRoot: d.config.TownRoot})
 	sessionCfg := tmux.SessionConfigForRole("witness", rigName).WithEnvVars(envVars)
 	t := tmux.NewTmux().WithSessionConfig(sessionCfg)
-	agents := agent.New(t, agent.FromPreset(agentName).WithEnvVars(envVars))
-	mgr := witness.NewManager(r, agents, agentName)
+	sess := session.NewTownSessions(t, d.config.TownRoot)
+	agents := agent.New(sess, agent.FromPreset(agentName).WithEnvVars(envVars))
+	mgr := witness.NewManager(agents, r, agentName)
 
 	if err := mgr.Start(); err != nil {
 		if err == witness.ErrAlreadyRunning {

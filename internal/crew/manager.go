@@ -13,11 +13,10 @@ import (
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -87,7 +86,7 @@ type Manager struct {
 // NewManager creates a new crew manager.
 // agents is the Agents implementation for session lifecycle.
 // agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
-func NewManager(r *rig.Rig, g *git.Git, agents agent.Agents, agentName string) *Manager {
+func NewManager(agents agent.Agents, r *rig.Rig, g *git.Git, agentName string) *Manager {
 	return &Manager{
 		rig:       r,
 		git:       g,
@@ -106,25 +105,6 @@ func (m *Manager) envConfig() config.AgentEnvConfig {
 		TownRoot:      filepath.Dir(m.rig.Path),
 		BeadsNoDaemon: true,
 	}
-}
-
-// OnSessionCreated handles post-creation setup: env vars, theming, and crew bindings.
-// This is called by agent.Agents after creating a session.
-func (m *Manager) OnSessionCreated(sess session.Sessions, id session.SessionID) error {
-	t, ok := sess.(*tmux.Tmux)
-	if !ok {
-		return nil
-	}
-	if err := t.SetEnvVars(id, config.AgentEnv(m.envConfig())); err != nil {
-		return fmt.Errorf("setting env vars: %w", err)
-	}
-	if err := t.ConfigureGasTownSession(id, tmux.AssignTheme(m.rig.Name), m.rig.Name, m.startCrewName, "crew"); err != nil {
-		return fmt.Errorf("configuring session: %w", err)
-	}
-	if err := t.SetCrewCycleBindings(string(id)); err != nil {
-		return fmt.Errorf("setting crew cycle bindings: %w", err)
-	}
-	return nil
 }
 
 // crewDir returns the directory for a crew worker.
@@ -481,6 +461,17 @@ func (m *Manager) SessionName(name string) string {
 	return fmt.Sprintf("gt-%s-crew-%s", m.rig.Name, name)
 }
 
+// StartingCrewName returns the name of the crew member currently being started.
+// This is only valid during a Start() call and is used by callbacks.
+func (m *Manager) StartingCrewName() string {
+	return m.startCrewName
+}
+
+// RigName returns the rig name for this manager.
+func (m *Manager) RigName() string {
+	return m.rig.Name
+}
+
 // Start creates and starts a tmux session for a crew member.
 // If the crew member doesn't exist, it will be created first.
 func (m *Manager) Start(name string, opts StartOptions) error {
@@ -499,13 +490,11 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		return fmt.Errorf("getting crew worker: %w", err)
 	}
 
-	sessionName := m.SessionName(name)
-
 	// Handle KillExisting option - force restart by stopping first
 	if opts.KillExisting {
-		agentID := agent.AgentID(sessionName)
-		if m.agents.Exists(agentID) {
-			_ = m.agents.Stop(agentID, false)
+		id := m.agentID(name)
+		if m.agents.Exists(id) {
+			_ = m.agents.Stop(id, false)
 		}
 	}
 
@@ -544,8 +533,7 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 	}
 
 	// Start the agent (handles zombie detection, env vars, theming via callback)
-	_, err = m.agents.Start(sessionName, worker.ClonePath, claudeCmd)
-	if err != nil {
+	if err := m.agents.Start(m.agentID(name), worker.ClonePath, claudeCmd); err != nil {
 		return err // ErrAlreadyRunning or other errors
 	}
 
@@ -556,28 +544,35 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 	return nil
 }
 
+// agentID returns the AgentID for a crew member's session.
+func (m *Manager) agentID(name string) agent.AgentID {
+	return agent.CrewAddress(m.rig.Name, name)
+}
+
 // Stop terminates a crew member's tmux session.
+// Stop stops a crew member's session.
+// Returns ErrNotRunning if the agent was not running (for user messaging).
+// Always cleans up zombie sessions (tmux exists but process dead).
 func (m *Manager) Stop(name string) error {
 	if err := validateCrewName(name); err != nil {
 		return err
 	}
 
-	agentID := agent.AgentID(m.SessionName(name))
+	id := m.agentID(name)
+	wasRunning := m.agents.Exists(id)
 
-	if !m.agents.Exists(agentID) {
-		return ErrNotRunning
-	}
-
-	// Stop gracefully
-	if err := m.agents.Stop(agentID, true); err != nil {
+	// Always call Stop to clean up zombies
+	if err := m.agents.Stop(id, true); err != nil {
 		return fmt.Errorf("stopping session: %w", err)
 	}
 
+	if !wasRunning {
+		return ErrNotRunning
+	}
 	return nil
 }
 
 // IsRunning checks if a crew member's session is active.
 func (m *Manager) IsRunning(name string) (bool, error) {
-	agentID := agent.AgentID(m.SessionName(name))
-	return m.agents.Exists(agentID), nil
+	return m.agents.Exists(m.agentID(name)), nil
 }

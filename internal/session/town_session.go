@@ -5,17 +5,16 @@ import "time"
 
 // TownSessions wraps a Sessions with town-aware session naming.
 //
-// Behavior:
-//   - Start(): Appends town ID suffix to session name
-//   - Stop()/Exists()/etc: Uses optimistic-with-retry to find session (new or legacy format)
-//   - List(): Filters to only sessions matching this town
+// This layer is responsible for:
+//   - Translating logical session names to unique, collision-free tmux session names
+//   - Reversing tmux session names back to logical names on queries
+//   - Filtering sessions to only those belonging to this town
 //
-// Callers provide logical session names (e.g., "hq-mayor") and TownSessions
-// handles the town suffix transformation. Use the session name functions
-// (MayorSessionName, WitnessSessionName, etc.) to generate logical names.
+// Logical name format: "role" for town-level, "rig/role" for rig-level, "rig/role/name" for named.
+// Examples: "mayor", "deacon", "myrig/witness", "myrig/polecat/toast"
 //
-// Note: TownSessions transforms names, so it's not a transparent Sessions wrapper.
-// Code using TownSessions must use it consistently for all operations on the same sessions.
+// The underlying Sessions implementation remains generic and knows nothing about
+// Gas Town naming conventions or multi-town isolation.
 type TownSessions struct {
 	sess     Sessions
 	townRoot string
@@ -38,17 +37,21 @@ func (t *TownSessions) TownRoot() string {
 	return t.townRoot
 }
 
-// --- Lifecycle methods (town-aware) ---
+// --- Lifecycle methods ---
 
-// Start creates a new session with the town ID suffix appended to the name.
-// If town root is empty, uses the name as-is (legacy mode).
+// Start creates a new session from a logical name.
+// Translates to unique name (including town suffix).
+// Returns the logical SessionID (not the unique name).
 func (t *TownSessions) Start(name, workDir, command string) (SessionID, error) {
-	townName := t.appendTownSuffix(name)
-	return t.sess.Start(townName, workDir, command)
+	uniqueName := ToUniqueHumanReadableName(SessionID(name), t.townRoot)
+	_, err := t.sess.Start(uniqueName, workDir, command)
+	if err != nil {
+		return "", err
+	}
+	return SessionID(name), nil
 }
 
 // Stop terminates a session using optimistic-with-retry lookup.
-// Tries the town-suffixed name first, falls back to legacy name.
 // Returns nil if no matching session exists (idempotent).
 func (t *TownSessions) Stop(id SessionID) error {
 	actualID, err := t.resolveSession(id)
@@ -62,7 +65,6 @@ func (t *TownSessions) Stop(id SessionID) error {
 }
 
 // Exists checks if a session exists using optimistic-with-retry lookup.
-// Tries the town-suffixed name first, falls back to legacy name.
 func (t *TownSessions) Exists(id SessionID) (bool, error) {
 	_, err := t.resolveSession(id)
 	if err == ErrSessionNotFound {
@@ -74,9 +76,18 @@ func (t *TownSessions) Exists(id SessionID) (bool, error) {
 	return true, nil
 }
 
-// --- Communication methods (pass-through after resolution) ---
+// Respawn atomically kills the session's process and starts a new one.
+func (t *TownSessions) Respawn(id SessionID, command string) error {
+	actualID, err := t.resolveSession(id)
+	if err != nil {
+		return err
+	}
+	return t.sess.Respawn(actualID, command)
+}
 
-// Send sends text to a session (resolves using optimistic-with-retry).
+// --- Communication methods ---
+
+// Send sends text to a session.
 func (t *TownSessions) Send(id SessionID, text string) error {
 	actualID, err := t.resolveSession(id)
 	if err != nil {
@@ -103,7 +114,7 @@ func (t *TownSessions) Nudge(id SessionID, message string) error {
 	return t.sess.Nudge(actualID, message)
 }
 
-// --- Observation methods (pass-through after resolution) ---
+// --- Observation methods ---
 
 // Capture captures pane content from a session.
 func (t *TownSessions) Capture(id SessionID, lines int) (string, error) {
@@ -112,6 +123,15 @@ func (t *TownSessions) Capture(id SessionID, lines int) (string, error) {
 		return "", err
 	}
 	return t.sess.Capture(actualID, lines)
+}
+
+// CaptureAll captures the entire scrollback history.
+func (t *TownSessions) CaptureAll(id SessionID) (string, error) {
+	actualID, err := t.resolveSession(id)
+	if err != nil {
+		return "", err
+	}
+	return t.sess.CaptureAll(actualID)
 }
 
 // IsRunning checks if a session is running specified processes.
@@ -132,9 +152,18 @@ func (t *TownSessions) WaitFor(id SessionID, timeout time.Duration, processNames
 	return t.sess.WaitFor(actualID, timeout, processNames...)
 }
 
+// GetStartCommand returns the command that started the session.
+func (t *TownSessions) GetStartCommand(id SessionID) (string, error) {
+	actualID, err := t.resolveSession(id)
+	if err != nil {
+		return "", err
+	}
+	return t.sess.GetStartCommand(actualID)
+}
+
 // --- Management methods ---
 
-// List returns all sessions belonging to this town.
+// List returns all logical session names belonging to this town.
 // Filters out sessions from other towns, but includes legacy sessions.
 func (t *TownSessions) List() ([]SessionID, error) {
 	all, err := t.sess.List()
@@ -142,24 +171,15 @@ func (t *TownSessions) List() ([]SessionID, error) {
 		return nil, err
 	}
 
-	// No filtering if no town root (legacy mode)
-	if t.townRoot == "" {
-		return all, nil
-	}
-
 	var filtered []SessionID
-	for _, id := range all {
-		if MatchesTown(string(id), t.townRoot) {
-			filtered = append(filtered, id)
+	for _, uniqueID := range all {
+		uniqueName := string(uniqueID)
+		logicalID, owned := FromUniqueHumanReadableName(uniqueName, t.townRoot)
+		if owned {
+			filtered = append(filtered, logicalID)
 		}
 	}
 	return filtered, nil
-}
-
-// ListAll returns all sessions without filtering.
-// Use this when you need to see sessions from all towns.
-func (t *TownSessions) ListAll() ([]SessionID, error) {
-	return t.sess.List()
 }
 
 // GetInfo returns information about a session.
@@ -171,53 +191,53 @@ func (t *TownSessions) GetInfo(id SessionID) (*Info, error) {
 	return t.sess.GetInfo(actualID)
 }
 
-// --- Internal helpers ---
-
-// appendTownSuffix adds the town ID suffix to a session name.
-// Returns name unchanged if no town root is configured.
-func (t *TownSessions) appendTownSuffix(name string) string {
-	if t.townRoot == "" {
-		return name
+// Attach attaches to a session.
+func (t *TownSessions) Attach(id SessionID) error {
+	actualID, err := t.resolveSession(id)
+	if err != nil {
+		return err
 	}
-	return name + townSuffix(t.townRoot)
+	return t.sess.Attach(actualID)
 }
+
+// SwitchTo switches the current tmux client to the target session.
+// Only works when inside tmux.
+func (t *TownSessions) SwitchTo(id SessionID) error {
+	actualID, err := t.resolveSession(id)
+	if err != nil {
+		return err
+	}
+	return t.sess.SwitchTo(actualID)
+}
+
+// --- Internal helpers ---
 
 // resolveSession implements optimistic-with-retry lookup.
 // Given a logical session ID, finds the actual session (new or legacy format).
 func (t *TownSessions) resolveSession(id SessionID) (SessionID, error) {
-	name := string(id)
+	uniqueName := ToUniqueHumanReadableName(id, t.townRoot)
 
-	// If the ID already has a town suffix, use it directly
-	if ExtractTownID(name) != "" {
-		exists, err := t.sess.Exists(id)
-		if err != nil {
-			return "", err
-		}
-		if exists {
-			return id, nil
-		}
-		return "", ErrSessionNotFound
-	}
-
-	// Try new format first (with town suffix)
-	if t.townRoot != "" {
-		newID := SessionID(t.appendTownSuffix(name))
-		exists, err := t.sess.Exists(newID)
-		if err != nil {
-			return "", err
-		}
-		if exists {
-			return newID, nil
-		}
-	}
-
-	// Fall back to legacy format (no suffix)
-	exists, err := t.sess.Exists(id)
+	// Try the new format first (with town suffix)
+	uniqueID := SessionID(uniqueName)
+	exists, err := t.sess.Exists(uniqueID)
 	if err != nil {
 		return "", err
 	}
 	if exists {
-		return id, nil
+		return uniqueID, nil
+	}
+
+	// Fall back to legacy format (without town suffix) for migration
+	if t.townRoot != "" {
+		legacyName := ToUniqueHumanReadableName(id, "")
+		legacyID := SessionID(legacyName)
+		exists, err := t.sess.Exists(legacyID)
+		if err != nil {
+			return "", err
+		}
+		if exists {
+			return legacyID, nil
+		}
 	}
 
 	return "", ErrSessionNotFound

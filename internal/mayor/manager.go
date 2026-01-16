@@ -26,14 +26,20 @@ type Manager struct {
 }
 
 // NewManager creates a new mayor manager for a town.
-// The Agents should be backed by a Sessions pre-configured with session settings
-// (e.g., tmux.WithSessionConfig). For tests, pass an agent.Double.
-func NewManager(townRoot, agentName string, agents agent.Agents) *Manager {
+// agents is the Agents implementation (real or test double) to use for agent lifecycle.
+// townRoot is the path to the town root directory.
+// agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
+func NewManager(agents agent.Agents, townRoot, agentName string) *Manager {
 	return &Manager{
 		townRoot:  townRoot,
 		agentName: agentName,
 		agents:    agents,
 	}
+}
+
+// address returns the agent address for the mayor.
+func (m *Manager) address() agent.AgentID {
+	return agent.MayorAddress()
 }
 
 // SessionName returns the tmux session name for the mayor.
@@ -66,42 +72,46 @@ func (m *Manager) Start() error {
 	startupCmd := config.BuildAgentCommand(m.agentName, "")
 
 	// Start the agent (handles zombie detection and readiness)
-	agentID, err := m.agents.Start(m.SessionName(), mayorDir, startupCmd)
-	if err != nil {
+	if err := m.agents.Start(m.address(), mayorDir, startupCmd); err != nil {
 		return err // ErrAlreadyRunning or other errors
 	}
 
 	// Wait for agent to be ready
-	_ = m.agents.WaitReady(agentID)
+	_ = m.agents.WaitReady(m.address())
 
 	return nil
 }
 
 // Stop stops the mayor session.
+// Returns ErrNotRunning if the agent was not running (for user messaging).
+// Always cleans up zombie sessions (tmux exists but process dead).
 func (m *Manager) Stop() error {
-	agentID := agent.AgentID(m.SessionName())
+	wasRunning := m.agents.Exists(m.address())
 
-	// Check if agent exists
-	if !m.agents.Exists(agentID) {
-		return ErrNotRunning
+	// Always call Stop to clean up zombies
+	if err := m.agents.Stop(m.address(), true); err != nil {
+		return err
 	}
 
-	// Stop gracefully
-	return m.agents.Stop(agentID, true)
+	if !wasRunning {
+		return ErrNotRunning
+	}
+	return nil
 }
 
 // IsRunning checks if the mayor session is active.
 func (m *Manager) IsRunning() (bool, error) {
-	return m.agents.Exists(agent.AgentID(m.SessionName())), nil
+	return m.agents.Exists(m.address()), nil
 }
 
-// Status returns information about the mayor session.
-func (m *Manager) Status() (*session.Info, error) {
-	agentID := agent.AgentID(m.SessionName())
-
-	if !m.agents.Exists(agentID) {
-		return nil, ErrNotRunning
+// Status returns the current mayor status.
+func (m *Manager) Status() (*Mayor, error) {
+	state := StateStopped
+	if m.agents.Exists(m.address()) {
+		state = StateRunning
 	}
-
-	return m.agents.GetInfo(agentID)
+	return &Mayor{
+		State: state,
+		Name:  m.SessionName(),
+	}, nil
 }

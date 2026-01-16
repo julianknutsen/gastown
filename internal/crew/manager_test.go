@@ -41,7 +41,7 @@ func TestManagerAddAndGet(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	mgr := NewManager(r, g, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, g, "claude")
 
 	// Test Add
 	worker, err := mgr.Add("dave", false)
@@ -148,7 +148,7 @@ func TestManagerAddUsesLocalRepoReference(t *testing.T) {
 		LocalRepo: localRepoPath,
 	}
 
-	mgr := NewManager(r, git.NewGit(rigPath), agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, git.NewGit(rigPath), "claude")
 
 	worker, err := mgr.Add("dave", false)
 	if err != nil {
@@ -217,7 +217,7 @@ func TestManagerAddWithBranch(t *testing.T) {
 		GitURL: sourceRepoPath,
 	}
 
-	mgr := NewManager(r, g, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, g, "claude")
 
 	// Test Add with branch
 	worker, err := mgr.Add("emma", true)
@@ -258,7 +258,7 @@ func TestManagerList(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	mgr := NewManager(r, g, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, g, "claude")
 
 	// Initially empty
 	workers, err := mgr.List()
@@ -316,7 +316,7 @@ func TestManagerRemove(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	mgr := NewManager(r, g, agent.NewDouble(), "claude")
+	mgr := NewManager(agent.NewDouble(), r, g, "claude")
 
 	// Add a worker
 	_, err = mgr.Add("charlie", false)
@@ -358,7 +358,7 @@ func TestManagerStart_CreatesSession(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Add a worker first
 	_, err := mgr.Add("alice", false)
@@ -393,7 +393,7 @@ func TestManagerStart_AutoCreatesWorker(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Start without Add - should auto-create
 	err := mgr.Start("bob", StartOptions{})
@@ -422,7 +422,7 @@ func TestManagerStart_AlreadyRunning_ReturnsError(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Start once
 	err := mgr.Start("charlie", StartOptions{})
@@ -448,7 +448,7 @@ func TestManagerStart_KillExisting(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Start once
 	err := mgr.Start("dave", StartOptions{})
@@ -474,7 +474,7 @@ func TestManagerStart_InvalidName_ReturnsError(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Start with empty name
 	err := mgr.Start("", StartOptions{})
@@ -494,7 +494,7 @@ func TestManagerStop_TerminatesSession(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Start
 	err := mgr.Start("emma", StartOptions{})
@@ -526,7 +526,7 @@ func TestManagerStop_NotRunning_ReturnsError(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Add but don't start
 	_, err := mgr.Add("frank", false)
@@ -552,7 +552,7 @@ func TestManagerStop_InvalidName_ReturnsError(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Stop with empty name
 	err := mgr.Stop("")
@@ -572,7 +572,7 @@ func TestManagerRemove_RunningWorker_Fails(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Start a worker
 	err := mgr.Start("grace", StartOptions{})
@@ -598,7 +598,7 @@ func TestManagerIsRunning_CorrectState(t *testing.T) {
 	}
 
 	sess := agent.NewDouble()
-	mgr := NewManager(r, git.NewGit(rigPath), sess, "claude")
+	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
 
 	// Not running initially
 	running, _ := mgr.IsRunning("henry")

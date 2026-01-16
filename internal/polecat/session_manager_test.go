@@ -8,7 +8,6 @@ import (
 
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
 )
 
 func TestSessionName(t *testing.T) {
@@ -17,8 +16,7 @@ func TestSessionName(t *testing.T) {
 		Polecats: []string{"Toast"},
 	}
 	agents := agent.NewDouble()
-	sess := session.NewDouble()
-	m := NewSessionManager(agents, sess, r, "")
+	m := NewSessionManager(agents, r, "")
 
 	name := m.SessionName("Toast")
 	if name != "gt-gastown-Toast" {
@@ -33,8 +31,7 @@ func TestSessionManagerPolecatDir(t *testing.T) {
 		Polecats: []string{"Toast"},
 	}
 	agents := agent.NewDouble()
-	sess := session.NewDouble()
-	m := NewSessionManager(agents, sess, r, "")
+	m := NewSessionManager(agents, r, "")
 
 	dir := m.polecatDir("Toast")
 	expected := "/home/user/ai/gastown/polecats/Toast"
@@ -58,8 +55,7 @@ func TestHasPolecat(t *testing.T) {
 		Polecats: []string{"Toast", "Cheedo"},
 	}
 	agents := agent.NewDouble()
-	sess := session.NewDouble()
-	m := NewSessionManager(agents, sess, r, "")
+	m := NewSessionManager(agents, r, "")
 
 	if !m.hasPolecat("Toast") {
 		t.Error("expected hasPolecat(Toast) = true")
@@ -78,8 +74,7 @@ func TestStartPolecatNotFound(t *testing.T) {
 		Polecats: []string{"Toast"},
 	}
 	agents := agent.NewDouble()
-	sess := session.NewDouble()
-	m := NewSessionManager(agents, sess, r, "")
+	m := NewSessionManager(agents, r, "")
 
 	err := m.Start("Unknown")
 	if err == nil {
@@ -93,8 +88,7 @@ func TestIsRunningNoSession(t *testing.T) {
 		Polecats: []string{"Toast"},
 	}
 	agents := agent.NewDouble()
-	sess := session.NewDouble()
-	m := NewSessionManager(agents, sess, r, "")
+	m := NewSessionManager(agents, r, "")
 
 	running, err := m.IsRunning("Toast")
 	if err != nil {
@@ -111,8 +105,7 @@ func TestSessionManagerListEmpty(t *testing.T) {
 		Polecats: []string{},
 	}
 	agents := agent.NewDouble()
-	sess := session.NewDouble()
-	m := NewSessionManager(agents, sess, r, "")
+	m := NewSessionManager(agents, r, "")
 
 	infos, err := m.List()
 	if err != nil {
@@ -129,8 +122,7 @@ func TestStopNotFound(t *testing.T) {
 		Polecats: []string{"Toast"},
 	}
 	agents := agent.NewDouble()
-	sess := session.NewDouble()
-	m := NewSessionManager(agents, sess, r, "")
+	m := NewSessionManager(agents, r, "")
 
 	err := m.Stop("Toast", false)
 	if err != ErrSessionNotFound {
@@ -144,8 +136,7 @@ func TestCaptureNotFound(t *testing.T) {
 		Polecats: []string{"Toast"},
 	}
 	agents := agent.NewDouble()
-	sess := session.NewDouble()
-	m := NewSessionManager(agents, sess, r, "")
+	m := NewSessionManager(agents, r, "")
 
 	_, err := m.Capture("Toast", 50)
 	if err != ErrSessionNotFound {
@@ -159,8 +150,7 @@ func TestInjectNotFound(t *testing.T) {
 		Polecats: []string{"Toast"},
 	}
 	agents := agent.NewDouble()
-	sess := session.NewDouble()
-	m := NewSessionManager(agents, sess, r, "")
+	m := NewSessionManager(agents, r, "")
 
 	err := m.Inject("Toast", "hello")
 	if err != ErrSessionNotFound {

@@ -4,6 +4,8 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 )
 
+// Note: session import used for GetInfo return type
+
 // =============================================================================
 // Test Stubs for Error Injection
 //
@@ -31,11 +33,11 @@ func NewAgentsStub(wrapped Agents) *AgentsStub {
 }
 
 // Start creates a new agent, or returns StartErr if set.
-func (s *AgentsStub) Start(name, workDir, command string) (AgentID, error) {
+func (s *AgentsStub) Start(id AgentID, workDir, command string) error {
 	if s.StartErr != nil {
-		return "", s.StartErr
+		return s.StartErr
 	}
-	return s.Agents.Start(name, workDir, command)
+	return s.Agents.Start(id, workDir, command)
 }
 
 // Stop terminates an agent, or returns StopErr if set.
@@ -59,11 +61,6 @@ func (s *AgentsStub) WaitReady(id AgentID) error {
 // Exists checks if an agent exists.
 func (s *AgentsStub) Exists(id AgentID) bool {
 	return s.Agents.Exists(id)
-}
-
-// SessionID returns the session ID for an agent.
-func (s *AgentsStub) SessionID(id AgentID) session.SessionID {
-	return s.Agents.SessionID(id)
 }
 
 // GetInfo returns information about an agent's session, or returns GetInfoErr if set.

@@ -14,7 +14,9 @@ import (
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -198,41 +200,6 @@ func execRuntime(prompt, rigPath, configDir string) error {
 	return syscall.Exec(binPath, args, env)
 }
 
-// isInTmuxSession checks if we're currently inside the target tmux session.
-func isInTmuxSession(targetSession string) bool {
-	// TMUX env var format: /tmp/tmux-501/default,12345,0
-	// We need to get the current session name via tmux display-message
-	tmuxEnv := os.Getenv("TMUX")
-	if tmuxEnv == "" {
-		return false // Not in tmux at all
-	}
-
-	// Get current session name
-	cmd := exec.Command("tmux", "display-message", "-p", "#{session_name}")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-
-	currentSession := strings.TrimSpace(string(out))
-	return currentSession == targetSession
-}
-
-// attachToTmuxSession attaches to a tmux session.
-// Should only be called from outside tmux.
-func attachToTmuxSession(sessionID string) error {
-	tmuxPath, err := exec.LookPath("tmux")
-	if err != nil {
-		return fmt.Errorf("tmux not found: %w", err)
-	}
-
-	cmd := exec.Command(tmuxPath, "attach-session", "-t", sessionID)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
 // ensureDefaultBranch checks if a git directory is on the default branch.
 // If not, warns the user and offers to switch.
 // Returns true if on default branch (or switched to it), false if user declined.
@@ -283,57 +250,32 @@ func ensureDefaultBranch(dir, roleName, rigPath string) bool { //nolint:unparam 
 	return true
 }
 
-// parseCrewSessionName extracts rig and crew name from a tmux session name.
-// Format: gt-<rig>-crew-<name>
-// Returns empty strings and false if the format doesn't match.
-func parseCrewSessionName(sessionName string) (rigName, crewName string, ok bool) {
-	// Must start with "gt-" and contain "-crew-"
-	if !strings.HasPrefix(sessionName, "gt-") {
-		return "", "", false
-	}
-
-	// Remove "gt-" prefix
-	rest := sessionName[3:]
-
-	// Find "-crew-" separator
-	idx := strings.Index(rest, "-crew-")
-	if idx == -1 {
-		return "", "", false
-	}
-
-	rigName = rest[:idx]
-	crewName = rest[idx+6:] // len("-crew-") = 6
-
-	if rigName == "" || crewName == "" {
-		return "", "", false
-	}
-
-	return rigName, crewName, true
-}
-
 // findRigCrewSessions returns all crew sessions for a given rig, sorted alphabetically.
-// Uses tmux list-sessions to find sessions matching gt-<rig>-crew-* pattern.
-func findRigCrewSessions(rigName string) ([]string, error) { //nolint:unparam // error return kept for future use
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-	out, err := cmd.Output()
+// townID filters to sessions in the same town (empty matches any).
+func findRigCrewSessions(rigName, townID string) ([]string, error) { //nolint:unparam // error return kept for future use
+	t := tmux.NewTmux()
+	allSessions, err := t.List()
 	if err != nil {
 		// No tmux server or no sessions
 		return nil, nil
 	}
 
-	prefix := fmt.Sprintf("gt-%s-crew-", rigName)
 	var sessions []string
 
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
+	for _, id := range allSessions {
+		name := string(id)
+		// Parse session name to check role, rig, and town
+		identity, err := session.ParseSessionName(name)
+		if err != nil {
 			continue
 		}
-		if strings.HasPrefix(line, prefix) {
-			sessions = append(sessions, line)
+		// Match: crew role, same rig, same town (or legacy with no town ID)
+		if identity.Role == session.RoleCrew &&
+			identity.Rig == rigName &&
+			(townID == "" || identity.TownID == "" || identity.TownID == townID) {
+			sessions = append(sessions, name)
 		}
 	}
 
-	// Sessions are already sorted by tmux, but sort explicitly for consistency
-	// (alphabetical by session name means alphabetical by crew name)
 	return sessions, nil
 }

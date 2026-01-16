@@ -6,12 +6,12 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/factory"
+	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // Polecat identity command flags
@@ -170,7 +170,7 @@ func runPolecatIdentityAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get rig
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -178,8 +178,8 @@ func runPolecatIdentityAdd(cmd *cobra.Command, args []string) error {
 	// Generate name if not provided
 	if polecatName == "" {
 		polecatGit := git.NewGit(r.Path)
-		t := tmux.NewTmux()
-		mgr := polecat.NewManager(r, polecatGit, t)
+		agents := agent.ForTownPath(townRoot)
+		mgr := polecat.NewManager(agents, r, polecatGit)
 		polecatName, err = mgr.AllocateName()
 		if err != nil {
 			return fmt.Errorf("generating polecat name: %w", err)
@@ -219,7 +219,7 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
 	// Get rig
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -233,8 +233,8 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 
 	// Filter for polecat beads in this rig
 	identities := []IdentityInfo{} // Initialize to empty slice (not nil) for JSON
-	t := tmux.NewTmux()
-	polecatMgr := factory.PolecatSessionManager(r, "")
+	agents := agent.ForTownPath(townRoot)
+	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 
 	for id, issue := range agentBeads {
 		// Parse the bead ID to check if it's a polecat for this rig
@@ -252,7 +252,7 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 
 		// Check if worktree exists
 		worktreeExists := false
-		mgr := polecat.NewManager(r, nil, t)
+		mgr := polecat.NewManager(agents, r, nil)
 		if p, err := mgr.Get(name); err == nil && p != nil {
 			worktreeExists = true
 		}
@@ -345,7 +345,7 @@ func runPolecatIdentityShow(cmd *cobra.Command, args []string) error {
 	polecatName := args[1]
 
 	// Get rig
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -362,9 +362,9 @@ func runPolecatIdentityShow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check worktree and session
-	t := tmux.NewTmux()
-	polecatMgr := factory.PolecatSessionManager(r, "")
-	mgr := polecat.NewManager(r, nil, t)
+	agents := agent.ForTownPath(townRoot)
+	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+	mgr := polecat.NewManager(agents, r, nil)
 
 	worktreeExists := false
 	if p, err := mgr.Get(polecatName); err == nil && p != nil {
@@ -490,7 +490,7 @@ func runPolecatIdentityRename(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get rig
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -515,7 +515,7 @@ func runPolecatIdentityRename(cmd *cobra.Command, args []string) error {
 	}
 
 	// Safety check: no active session
-	polecatMgr := factory.PolecatSessionManager(r, "")
+	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 	running, _ := polecatMgr.IsRunning(oldName)
 	if running {
 		return fmt.Errorf("cannot rename: polecat session %s is running", oldName)
@@ -557,7 +557,7 @@ func runPolecatIdentityRemove(cmd *cobra.Command, args []string) error {
 	polecatName := args[1]
 
 	// Get rig
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -582,7 +582,7 @@ func runPolecatIdentityRemove(cmd *cobra.Command, args []string) error {
 		var reasons []string
 
 		// Check for active session
-		polecatMgr := factory.PolecatSessionManager(r, "")
+		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 		running, _ := polecatMgr.IsRunning(polecatName)
 		if running {
 			reasons = append(reasons, "session is running")

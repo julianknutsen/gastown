@@ -8,13 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/agent"
 )
 
-// SessionChecker is the minimal interface for checking if sessions exist.
-type SessionChecker interface {
-	Exists(id session.SessionID) (bool, error)
+// AgentChecker is the minimal interface for checking if agents exist.
+type AgentChecker interface {
+	Exists(id agent.AgentID) bool
 }
 
 // StaleHookConfig holds configurable parameters for stale hook detection.
@@ -23,10 +22,10 @@ type StaleHookConfig struct {
 	MaxAge time.Duration `json:"max_age"`
 	// DryRun if true, only reports what would be done without making changes.
 	DryRun bool `json:"dry_run"`
-	// SessionChecker is used to check if agent sessions exist.
-	// If nil, a real tmux.Tmux instance is used.
+	// AgentChecker is used to check if agents exist.
+	// If nil, agent.ForTown() is used.
 	// This field enables testing without real tmux sessions.
-	SessionChecker SessionChecker `json:"-"`
+	AgentChecker AgentChecker `json:"-"`
 }
 
 // DefaultStaleHookConfig returns the default stale hook config.
@@ -88,10 +87,10 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 	// Filter to stale ones (older than threshold)
 	threshold := time.Now().Add(-cfg.MaxAge)
 
-	// Use injected SessionChecker if provided, otherwise create real tmux instance
-	checker := cfg.SessionChecker
+	// Use injected AgentChecker if provided, otherwise use agent.ForTown
+	checker := cfg.AgentChecker
 	if checker == nil {
-		checker = tmux.NewTmux()
+		checker = agent.ForTown(townRoot)
 	}
 
 	for _, bead := range hookedBeads {
@@ -110,12 +109,9 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 		}
 
 		// Check if assignee agent is still alive
+		// The assignee format (e.g., "gastown/polecats/max") IS the AgentID format
 		if bead.Assignee != "" {
-			sessionName := assigneeToSessionName(bead.Assignee)
-			if sessionName != "" {
-				alive, _ := checker.Exists(session.SessionID(sessionName))
-				hookResult.AgentAlive = alive
-			}
+			hookResult.AgentAlive = checker.Exists(agent.AgentID(bead.Assignee))
 		}
 
 		// If agent is dead/gone and not dry run, unhook the bead
@@ -158,47 +154,6 @@ func listHookedBeads(townRoot string) ([]*HookedBead, error) {
 	}
 
 	return beads, nil
-}
-
-// assigneeToSessionName converts an assignee address to a tmux session name.
-// Supports formats like "gastown/polecats/max", "gastown/crew/joe", etc.
-func assigneeToSessionName(assignee string) string {
-	parts := strings.Split(assignee, "/")
-
-	switch len(parts) {
-	case 1:
-		// Simple names like "deacon", "mayor"
-		switch assignee {
-		case "deacon":
-			return session.DeaconSessionName()
-		case "mayor":
-			return session.MayorSessionName()
-		default:
-			return ""
-		}
-	case 2:
-		// rig/role: "gastown/witness", "gastown/refinery"
-		rig, role := parts[0], parts[1]
-		switch role {
-		case "witness", "refinery":
-			return fmt.Sprintf("gt-%s-%s", rig, role)
-		default:
-			return ""
-		}
-	case 3:
-		// rig/type/name: "gastown/polecats/max", "gastown/crew/joe"
-		rig, agentType, name := parts[0], parts[1], parts[2]
-		switch agentType {
-		case "polecats":
-			return fmt.Sprintf("gt-%s-%s", rig, name)
-		case "crew":
-			return fmt.Sprintf("gt-%s-crew-%s", rig, name)
-		default:
-			return ""
-		}
-	default:
-		return ""
-	}
 }
 
 // unhookBead sets a bead's status back to 'open'.

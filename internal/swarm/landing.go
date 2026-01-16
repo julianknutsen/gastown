@@ -57,7 +57,7 @@ func (m *Manager) ExecuteLanding(swarmID string, config LandingConfig) (*Landing
 	}
 
 	// Phase 1: Stop all polecat sessions
-	polecatMgr := factory.PolecatSessionManager(m.rig, "")
+	polecatMgr := factory.PolecatSessionManager(m.rig, config.TownRoot, "")
 
 	for _, worker := range swarm.Workers {
 		running, _ := polecatMgr.IsRunning(worker)

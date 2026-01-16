@@ -6,9 +6,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -94,19 +94,7 @@ func getMayorManager(agentOverride string) (*mayor.Manager, error) {
 		return nil, fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 	agentName := config.ResolveAgentForRole("mayor", townRoot, "", agentOverride)
-
-	// Get env vars and visual config for mayor role
-	envVars := config.AgentEnv(config.AgentEnvConfig{
-		Role:     "mayor",
-		TownRoot: townRoot,
-	})
-	sessionCfg := tmux.SessionConfigForRole("mayor", "").WithEnvVars(envVars)
-
-	// Create configured tmux and Agents
-	t := tmux.NewTmux().WithSessionConfig(sessionCfg)
-	agents := agent.New(t, agent.FromPreset(agentName).WithEnvVars(envVars))
-
-	return mayor.NewManager(townRoot, agentName, agents), nil
+	return factory.MayorManager(townRoot, agentName), nil
 }
 
 // getMayorSessionName returns the Mayor session name.
@@ -154,6 +142,11 @@ func runMayorStop(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorAttach(cmd *cobra.Command, args []string) error {
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
 	mgr, err := getMayorManager(mayorAgentOverride)
 	if err != nil {
 		return err
@@ -171,8 +164,9 @@ func runMayorAttach(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Use shared attach helper (smart: links if inside tmux, attaches if outside)
-	return attachToTmuxSession(mgr.SessionName())
+	// Smart attach: switches if inside tmux, attaches if outside
+	agents := agent.ForTown(townRoot)
+	return agents.Attach(agent.MayorAddress())
 }
 
 func runMayorStatus(cmd *cobra.Command, args []string) error {
@@ -181,27 +175,22 @@ func runMayorStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	info, err := mgr.Status()
+	status, err := mgr.Status()
 	if err != nil {
-		if err == mayor.ErrNotRunning {
-			fmt.Printf("%s Mayor session is %s\n",
-				style.Dim.Render("○"),
-				"not running")
-			fmt.Printf("\nStart with: %s\n", style.Dim.Render("gt mayor start"))
-			return nil
-		}
 		return fmt.Errorf("checking status: %w", err)
 	}
 
-	status := "detached"
-	if info.Attached {
-		status = "attached"
+	if status.State == mayor.StateStopped {
+		fmt.Printf("%s Mayor session is %s\n",
+			style.Dim.Render("○"),
+			"not running")
+		fmt.Printf("\nStart with: %s\n", style.Dim.Render("gt mayor start"))
+		return nil
 	}
+
 	fmt.Printf("%s Mayor session is %s\n",
 		style.Bold.Render("●"),
 		style.Bold.Render("running"))
-	fmt.Printf("  Status: %s\n", status)
-	fmt.Printf("  Created: %s\n", info.Created)
 	fmt.Printf("\nAttach with: %s\n", style.Dim.Render("gt mayor attach"))
 
 	return nil

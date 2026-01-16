@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
@@ -15,7 +16,6 @@ import (
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/townlog"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -585,7 +585,7 @@ func selfNukePolecat(roleInfo RoleInfo, _ string) error {
 	}
 
 	// Get polecat manager using existing helper
-	mgr, _, err := getPolecatManager(roleInfo.Rig)
+	mgr, _, _, err := getPolecatManager(roleInfo.Rig)
 	if err != nil {
 		return fmt.Errorf("getting polecat manager: %w", err)
 	}
@@ -599,13 +599,12 @@ func selfNukePolecat(roleInfo RoleInfo, _ string) error {
 	return nil
 }
 
-// selfKillSession terminates the polecat's own tmux session after logging the event.
+// selfKillSession terminates the polecat's own session after logging the event.
 // This completes the self-cleaning model: "done means gone" - both worktree and session.
 //
-// The polecat determines its session from environment variables:
+// The polecat determines its identity from environment variables:
 // - GT_RIG: the rig name
 // - GT_POLECAT: the polecat name
-// Session name format: gt-<rig>-<polecat>
 func selfKillSession(townRoot string, roleInfo RoleInfo) error {
 	// Get session info from environment (set at session startup)
 	rigName := os.Getenv("GT_RIG")
@@ -623,23 +622,25 @@ func selfKillSession(townRoot string, roleInfo RoleInfo) error {
 		return fmt.Errorf("cannot determine session: rig=%q, polecat=%q", rigName, polecatName)
 	}
 
-	sessionName := fmt.Sprintf("gt-%s-%s", rigName, polecatName)
-	agentID := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
+	// Construct proper AgentID
+	agentID := agent.PolecatAddress(rigName, polecatName)
 
 	// Log to townlog (human-readable audit log)
 	if townRoot != "" {
 		logger := townlog.NewLogger(townRoot)
-		_ = logger.Log(townlog.EventKill, agentID, "self-clean: done means gone")
+		_ = logger.Log(townlog.EventKill, agentID.String(), "self-clean: done means gone")
 	}
 
 	// Log to events (JSON audit log with structured payload)
-	_ = events.LogFeed(events.TypeSessionDeath, agentID,
-		events.SessionDeathPayload(sessionName, agentID, "self-clean: done means gone", "gt done"))
+	// Use unique name for the session name in the payload (for backwards compat with logs)
+	uniqueName := session.ToUniqueHumanReadableName(session.SessionID(agentID), townRoot)
+	_ = events.LogFeed(events.TypeSessionDeath, agentID.String(),
+		events.SessionDeathPayload(uniqueName, agentID.String(), "self-clean: done means gone", "gt done"))
 
-	// Kill our own tmux session (this kills all descendant processes first)
-	t := tmux.NewTmux()
-	if err := t.Stop(session.SessionID(sessionName)); err != nil {
-		return fmt.Errorf("killing session %s: %w", sessionName, err)
+	// Kill our own session (not graceful - immediate termination)
+	agentsAPI := agent.ForTown(townRoot)
+	if err := agentsAPI.Stop(agentID, false); err != nil {
+		return fmt.Errorf("killing session for %s: %w", agentID, err)
 	}
 
 	return nil

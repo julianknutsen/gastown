@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 // townCycleSession is the --session flag for town next/prev commands.
@@ -13,22 +14,15 @@ import (
 // correct, so we pass the session name explicitly via #{session_name} expansion.
 var townCycleSession string
 
-// getTownLevelSessions returns the town-level session names for the current workspace.
-func getTownLevelSessions() []string {
-	mayorSession := getMayorSessionName()
-	deaconSession := getDeaconSessionName()
-	return []string{mayorSession, deaconSession}
-}
-
 // isTownLevelSession checks if the given session name is a town-level session.
-// Town-level sessions (Mayor, Deacon) use the "hq-" prefix, so we can identify
-// them by name alone without requiring workspace context. This is critical for
-// tmux run-shell which may execute from outside the workspace directory.
+// Town-level sessions (Mayor, Deacon) are identified by parsing the session name.
+// This handles town ID suffixes correctly.
 func isTownLevelSession(sessionName string) bool {
-	// Town-level sessions are identified by their fixed names
-	mayorSession := getMayorSessionName()   // "hq-mayor"
-	deaconSession := getDeaconSessionName() // "hq-deacon"
-	return sessionName == mayorSession || sessionName == deaconSession
+	identity, err := session.ParseSessionName(sessionName)
+	if err != nil {
+		return false
+	}
+	return identity.Role == session.RoleMayor || identity.Role == session.RoleDeacon
 }
 
 func init() {
@@ -91,14 +85,15 @@ func cycleTownSession(direction int, sessionOverride string) error {
 		}
 	}
 
-	// Check if current session is a town-level session
-	if !isTownLevelSession(currentSession) {
+	// Parse current session to get town ID
+	currentIdentity, err := session.ParseSessionName(currentSession)
+	if err != nil || (currentIdentity.Role != session.RoleMayor && currentIdentity.Role != session.RoleDeacon) {
 		// Not a town session - no cycling, just stay put
 		return nil
 	}
 
-	// Find running town sessions
-	sessions, err := findRunningTownSessions()
+	// Find running town sessions in the same town
+	sessions, err := findRunningTownSessions(currentIdentity.TownID)
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
@@ -144,17 +139,12 @@ func cycleTownSession(direction int, sessionOverride string) error {
 }
 
 // findRunningTownSessions returns a list of currently running town-level sessions.
-func findRunningTownSessions() ([]string, error) {
+// townID filters to sessions in the same town (empty matches any).
+func findRunningTownSessions(townID string) ([]string, error) {
 	// Get all tmux sessions
 	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
 		return nil, fmt.Errorf("listing tmux sessions: %w", err)
-	}
-
-	// Get town-level session names
-	townLevelSessions := getTownLevelSessions()
-	if townLevelSessions == nil {
-		return nil, fmt.Errorf("cannot determine town-level sessions")
 	}
 
 	var running []string
@@ -162,12 +152,15 @@ func findRunningTownSessions() ([]string, error) {
 		if line == "" {
 			continue
 		}
-		// Check if this is a town-level session
-		for _, townSession := range townLevelSessions {
-			if line == townSession {
-				running = append(running, line)
-				break
-			}
+		// Parse session name to check if it's a town-level session
+		identity, err := session.ParseSessionName(line)
+		if err != nil {
+			continue
+		}
+		// Match: mayor or deacon, same town (or legacy with no town ID)
+		if (identity.Role == session.RoleMayor || identity.Role == session.RoleDeacon) &&
+			(townID == "" || identity.TownID == "" || identity.TownID == townID) {
+			running = append(running, line)
 		}
 	}
 

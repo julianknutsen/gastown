@@ -14,12 +14,19 @@ import (
 // These tests verify the test helper methods on agent.Double work correctly.
 // =============================================================================
 
+// testAgentID creates a test AgentID for double tests.
+func testAgentID(name string) agent.AgentID {
+	return agent.PolecatAddress("testrig", name)
+}
+
 func TestDouble_Clear_RemovesAllAgents(t *testing.T) {
 	d := agent.NewDouble()
 
 	// Add some agents
-	_, _ = d.Start("agent1", "/tmp", "cmd1")
-	_, _ = d.Start("agent2", "/tmp", "cmd2")
+	id1 := testAgentID("agent1")
+	id2 := testAgentID("agent2")
+	_ = d.Start(id1, "/tmp", "cmd1")
+	_ = d.Start(id2, "/tmp", "cmd2")
 
 	d.Clear()
 
@@ -31,58 +38,66 @@ func TestDouble_AgentCount_ReturnsCorrectCount(t *testing.T) {
 
 	assert.Equal(t, 0, d.AgentCount())
 
-	_, _ = d.Start("agent1", "/tmp", "cmd1")
+	id1 := testAgentID("agent1")
+	_ = d.Start(id1, "/tmp", "cmd1")
 	assert.Equal(t, 1, d.AgentCount())
 
-	_, _ = d.Start("agent2", "/tmp", "cmd2")
+	id2 := testAgentID("agent2")
+	_ = d.Start(id2, "/tmp", "cmd2")
 	assert.Equal(t, 2, d.AgentCount())
 
-	_ = d.Stop("agent1", false)
+	_ = d.Stop(id1, false)
 	assert.Equal(t, 1, d.AgentCount())
 }
 
 func TestDouble_CreateAgent_AddsAgentWithoutStart(t *testing.T) {
 	d := agent.NewDouble()
 
-	d.CreateAgent("pre-created")
+	id := testAgentID("pre-created")
+	d.CreateAgent(id)
 
-	assert.True(t, d.Exists("pre-created"))
+	assert.True(t, d.Exists(id))
 	assert.Equal(t, 1, d.AgentCount())
 }
 
 func TestDouble_GetWorkDir_ReturnsWorkDir(t *testing.T) {
 	d := agent.NewDouble()
 
-	_, _ = d.Start("test", "/custom/workdir", "cmd")
+	id := testAgentID("test")
+	_ = d.Start(id, "/custom/workdir", "cmd")
 
-	assert.Equal(t, "/custom/workdir", d.GetWorkDir("test"))
+	assert.Equal(t, "/custom/workdir", d.GetWorkDir(id))
 }
 
 func TestDouble_GetWorkDir_ReturnsEmptyForNonexistent(t *testing.T) {
 	d := agent.NewDouble()
 
-	assert.Equal(t, "", d.GetWorkDir("nonexistent"))
+	id := testAgentID("nonexistent")
+	assert.Equal(t, "", d.GetWorkDir(id))
 }
 
 func TestDouble_GetCommand_ReturnsCommand(t *testing.T) {
 	d := agent.NewDouble()
 
-	_, _ = d.Start("test", "/tmp", "echo hello world")
+	id := testAgentID("test")
+	_ = d.Start(id, "/tmp", "echo hello world")
 
-	assert.Equal(t, "echo hello world", d.GetCommand("test"))
+	assert.Equal(t, "echo hello world", d.GetCommand(id))
 }
 
 func TestDouble_GetCommand_ReturnsEmptyForNonexistent(t *testing.T) {
 	d := agent.NewDouble()
 
-	assert.Equal(t, "", d.GetCommand("nonexistent"))
+	id := testAgentID("nonexistent")
+	assert.Equal(t, "", d.GetCommand(id))
 }
 
 func TestDouble_Start_ReturnsAlreadyRunning(t *testing.T) {
 	d := agent.NewDouble()
 
-	_, _ = d.Start("test", "/tmp", "cmd")
-	_, err := d.Start("test", "/tmp", "cmd")
+	id := testAgentID("test")
+	_ = d.Start(id, "/tmp", "cmd")
+	err := d.Start(id, "/tmp", "cmd")
 
 	assert.ErrorIs(t, err, agent.ErrAlreadyRunning)
 }
@@ -90,7 +105,8 @@ func TestDouble_Start_ReturnsAlreadyRunning(t *testing.T) {
 func TestDouble_WaitReady_ReturnsNotRunning_WhenAgentDoesNotExist(t *testing.T) {
 	d := agent.NewDouble()
 
-	err := d.WaitReady("nonexistent")
+	id := testAgentID("nonexistent")
+	err := d.WaitReady(id)
 
 	assert.ErrorIs(t, err, agent.ErrNotRunning)
 }
@@ -98,7 +114,8 @@ func TestDouble_WaitReady_ReturnsNotRunning_WhenAgentDoesNotExist(t *testing.T) 
 func TestDouble_GetInfo_ReturnsNotRunning_WhenAgentDoesNotExist(t *testing.T) {
 	d := agent.NewDouble()
 
-	_, err := d.GetInfo("nonexistent")
+	id := testAgentID("nonexistent")
+	_, err := d.GetInfo(id)
 
 	assert.ErrorIs(t, err, agent.ErrNotRunning)
 }
@@ -114,7 +131,8 @@ func TestAgentsStub_StartErr_CausesStartToFail(t *testing.T) {
 
 	stub.StartErr = expectedErr
 
-	_, err := stub.Start("test", "/tmp", "cmd")
+	id := testAgentID("test")
+	err := stub.Start(id, "/tmp", "cmd")
 	assert.ErrorIs(t, err, expectedErr)
 }
 
@@ -123,7 +141,8 @@ func TestAgentsStub_StopErr_CausesStopToFail(t *testing.T) {
 	stub := newAgentsStub(d)
 	expectedErr := errors.New("stop failed")
 
-	id, _ := stub.Start("test", "/tmp", "cmd")
+	id := testAgentID("test")
+	_ = stub.Start(id, "/tmp", "cmd")
 	stub.StopErr = expectedErr
 
 	err := stub.Stop(id, false)
@@ -135,7 +154,8 @@ func TestAgentsStub_WaitReadyErr_CausesWaitReadyToFail(t *testing.T) {
 	stub := newAgentsStub(d)
 	expectedErr := errors.New("waitready failed")
 
-	id, _ := stub.Start("test", "/tmp", "cmd")
+	id := testAgentID("test")
+	_ = stub.Start(id, "/tmp", "cmd")
 	stub.WaitReadyErr = expectedErr
 
 	err := stub.WaitReady(id)

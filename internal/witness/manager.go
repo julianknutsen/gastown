@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Common errors
@@ -33,7 +32,7 @@ type Manager struct {
 // NewManager creates a new witness manager for a rig.
 // agents is the Agents implementation (real or test double) to use for agent lifecycle.
 // agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
-func NewManager(r *rig.Rig, agents agent.Agents, agentName string) *Manager {
+func NewManager(agents agent.Agents, r *rig.Rig, agentName string) *Manager {
 	return &Manager{
 		rig:       r,
 		agents:    agents,
@@ -46,6 +45,11 @@ func NewManager(r *rig.Rig, agents agent.Agents, agentName string) *Manager {
 			}
 		}),
 	}
+}
+
+// address returns the agent address for the witness.
+func (m *Manager) address() agent.AgentID {
+	return agent.WitnessAddress(m.rig.Name)
 }
 
 // stateFile returns the path to the witness state file.
@@ -68,6 +72,16 @@ func (m *Manager) SessionName() string {
 	return fmt.Sprintf("gt-%s-witness", m.rig.Name)
 }
 
+// ID returns the AgentID for the witness.
+func (m *Manager) ID() agent.AgentID {
+	return m.address()
+}
+
+// IsRunning checks if the witness session is currently active.
+func (m *Manager) IsRunning() bool {
+	return m.agents.Exists(m.address())
+}
+
 // Status returns the current witness status.
 // Reconciles persisted state with actual agent existence.
 func (m *Manager) Status() (*Witness, error) {
@@ -77,8 +91,7 @@ func (m *Manager) Status() (*Witness, error) {
 	}
 
 	// Reconcile state with reality (don't persist, just report accurately)
-	agentID := agent.AgentID(m.SessionName())
-	if w.State == StateRunning && !m.agents.Exists(agentID) {
+	if w.State == StateRunning && !m.agents.Exists(m.address()) {
 		w.State = StateStopped // Agent crashed
 	}
 
@@ -124,8 +137,7 @@ func (m *Manager) Start() error {
 	command := config.BuildAgentCommand(m.agentName, "")
 
 	// Start the agent (handles zombie detection, env vars, theming, and readiness)
-	agentID, err := m.agents.Start(m.SessionName(), witnessDir, command)
-	if err != nil {
+	if err := m.agents.Start(m.address(), witnessDir, command); err != nil {
 		return err // ErrAlreadyRunning or other errors
 	}
 
@@ -135,47 +147,45 @@ func (m *Manager) Start() error {
 	w.StartedAt = &now
 	w.MonitoredPolecats = m.rig.Polecats
 	if err := m.saveState(w); err != nil {
-		_ = m.agents.Stop(agentID, false) // best-effort cleanup on state save failure
+		_ = m.agents.Stop(m.address(), false) // best-effort cleanup on state save failure
 		return fmt.Errorf("saving state: %w", err)
 	}
 
 	// Wait for agent to be ready
-	_ = m.agents.WaitReady(agentID)
+	_ = m.agents.WaitReady(m.address())
 
 	// Propulsion is handled by the CLI prompt ("gt prime") passed at startup.
 
 	return nil
 }
 
-func (m *Manager) townRoot() string {
-	townRoot, err := workspace.Find(m.rig.Path)
-	if err != nil || townRoot == "" {
-		return m.rig.Path
-	}
-	return townRoot
-}
-
 // Stop stops the witness.
+// Returns ErrNotRunning if the agent was not running (for user messaging).
+// Always cleans up zombie sessions (tmux exists but process dead).
 func (m *Manager) Stop() error {
 	w, err := m.loadState()
 	if err != nil {
 		return err
 	}
 
-	agentID := agent.AgentID(m.SessionName())
+	stateWasRunning := w.State == StateRunning
+	processWasRunning := m.agents.Exists(m.address())
 
-	// If neither state nor session indicates running, it's not running
-	if w.State != StateRunning && !m.agents.Exists(agentID) {
-		return ErrNotRunning
-	}
-
-	// Stop gracefully
-	stopErr := m.agents.Stop(agentID, true)
+	// Always call Stop to clean up zombies
+	stopErr := m.agents.Stop(m.address(), true)
 
 	w.State = StateStopped
-
 	if err := m.saveState(w); err != nil {
 		return err
 	}
-	return stopErr
+
+	if stopErr != nil {
+		return stopErr
+	}
+
+	// Only report "not running" if neither state nor process indicated running
+	if !stateWasRunning && !processWasRunning {
+		return ErrNotRunning
+	}
+	return nil
 }

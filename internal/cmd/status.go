@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -20,7 +21,6 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 	"golang.org/x/term"
 )
@@ -213,14 +213,12 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 	g := git.NewGit(townRoot)
 	mgr := rig.NewManager(townRoot, rigsConfig, g)
 
-	// Create tmux instance for runtime checks
-	t := tmux.NewTmux()
-
-	// Pre-fetch all tmux sessions for O(1) lookup
+	// Pre-fetch all running agents for O(1) lookup
 	allSessions := make(map[string]bool)
-	if sessions, err := t.List(); err == nil {
-		for _, s := range sessions {
-			allSessions[string(s)] = true
+	agents := agent.ForTown(townRoot)
+	if agentIDs, err := agents.List(); err == nil {
+		for _, id := range agentIDs {
+			allSessions[string(id)] = true
 		}
 	}
 

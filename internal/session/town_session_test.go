@@ -22,24 +22,26 @@ func TestTownSessions_Start(t *testing.T) {
 	townRoot := "/home/user/gastown"
 	townID := TownID(townRoot)
 
-	t.Run("appends town suffix", func(t *testing.T) {
+	t.Run("translates and appends town suffix", func(t *testing.T) {
 		double := newTestDouble()
 		ts := NewTownSessions(double, townRoot)
 
-		id, err := ts.Start("hq-mayor", "/work", "sleep 60")
+		// Pass logical name "mayor", expect it returned as logical SessionID
+		id, err := ts.Start("mayor", "/work", "sleep 60")
 		if err != nil {
 			t.Fatalf("Start error: %v", err)
 		}
 
-		expected := "hq-mayor-" + townID
-		if string(id) != expected {
-			t.Errorf("expected %q, got %q", expected, id)
+		// Start returns the logical name, not the tmux name
+		if string(id) != "mayor" {
+			t.Errorf("expected logical name %q, got %q", "mayor", id)
 		}
 
-		// Verify session was created with suffixed name
-		exists, _ := double.Exists(SessionID(expected))
+		// Verify underlying session was created with translated tmux name + suffix
+		expectedTmux := "hq-mayor-" + townID
+		exists, _ := double.Exists(SessionID(expectedTmux))
 		if !exists {
-			t.Error("session should exist with town suffix")
+			t.Errorf("session should exist with tmux name %q", expectedTmux)
 		}
 	})
 
@@ -47,13 +49,21 @@ func TestTownSessions_Start(t *testing.T) {
 		double := newTestDouble()
 		ts := NewTownSessions(double, "")
 
-		id, err := ts.Start("hq-mayor", "/work", "sleep 60")
+		// Pass logical name
+		id, err := ts.Start("mayor", "/work", "sleep 60")
 		if err != nil {
 			t.Fatalf("Start error: %v", err)
 		}
 
-		if string(id) != "hq-mayor" {
-			t.Errorf("expected legacy name, got %q", id)
+		// Returns logical name
+		if string(id) != "mayor" {
+			t.Errorf("expected logical name %q, got %q", "mayor", id)
+		}
+
+		// Verify underlying session was created with translated tmux name (no suffix)
+		exists, _ := double.Exists(SessionID("hq-mayor"))
+		if !exists {
+			t.Error("session should exist with tmux name hq-mayor")
 		}
 	})
 }
@@ -256,14 +266,14 @@ func TestTownSessions_ListAll(t *testing.T) {
 		}
 	})
 
-	t.Run("ListAll returns all sessions", func(t *testing.T) {
-		sessions, err := ts.ListAll()
+	t.Run("List returns this town's sessions", func(t *testing.T) {
+		sessions, err := ts.List()
 		if err != nil {
-			t.Fatalf("ListAll error: %v", err)
+			t.Fatalf("List error: %v", err)
 		}
-		// Should have all 3 sessions
-		if len(sessions) != 3 {
-			t.Errorf("expected 3 total sessions, got %d", len(sessions))
+		// Should only have town1 sessions (filtered by TownSessions)
+		if len(sessions) != 2 {
+			t.Errorf("expected 2 town sessions, got %d", len(sessions))
 		}
 	})
 }

@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/daemon"
@@ -19,7 +19,6 @@ import (
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
@@ -86,11 +85,6 @@ func runDown(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	t := tmux.NewTmux()
-	if !t.IsAvailable() {
-		return fmt.Errorf("tmux not available (is tmux installed and on PATH?)")
-	}
-
 	// Phase 0: Acquire shutdown lock (skip for dry-run)
 	if !downDryRun {
 		lock, err := acquireShutdownLock(townRoot)
@@ -124,7 +118,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Println("Stopping polecats...")
 		}
-		polecatsStopped := stopAllPolecats(t, townRoot, rigs, downForce, downDryRun)
+		polecatsStopped := stopAllPolecats(townRoot, rigs, downForce, downDryRun)
 		if downDryRun {
 			if polecatsStopped > 0 {
 				printDownStatus("Polecats", true, fmt.Sprintf("%d would stop", polecatsStopped))
@@ -225,22 +219,33 @@ func runDown(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Phase 3: Stop town-level sessions (Mayor, Boot, Deacon)
-	for _, ts := range session.TownSessionInfos() {
+	// Phase 3: Stop town-level agents (Mayor, Boot, Deacon)
+	// Order matters: Boot (Deacon's watchdog) must stop before Deacon.
+	agents := agent.ForTown(townRoot)
+	townAgents := []struct {
+		name string
+		id   agent.AgentID
+	}{
+		{"Mayor", agent.MayorAddress()},
+		{"Boot", agent.BootAddress()},
+		{"Deacon", agent.DeaconAddress()},
+	}
+	for _, ta := range townAgents {
 		if downDryRun {
-			if running, _ := t.Exists(session.SessionID(ts.SessionID)); running {
-				printDownStatus(ts.Name, true, "would stop")
+			if agents.Exists(ta.id) {
+				printDownStatus(ta.name, true, "would stop")
 			}
 			continue
 		}
-		stopped, err := session.StopTownSessionInfo(t, ts, downForce)
+		wasRunning := agents.Exists(ta.id)
+		err := agents.Stop(ta.id, !downForce) // graceful = !force
 		if err != nil {
-			printDownStatus(ts.Name, false, err.Error())
+			printDownStatus(ta.name, false, err.Error())
 			allOK = false
-		} else if stopped {
-			printDownStatus(ts.Name, true, "stopped")
+		} else if wasRunning {
+			printDownStatus(ta.name, true, "stopped")
 		} else {
-			printDownStatus(ts.Name, true, "not running")
+			printDownStatus(ta.name, true, "not running")
 		}
 	}
 
@@ -269,7 +274,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 	// Phase 5: Verification (--all only)
 	if downAll && !downDryRun {
 		time.Sleep(500 * time.Millisecond)
-		respawned := verifyShutdown(t, townRoot)
+		respawned := verifyShutdown(agents, townRoot)
 		if len(respawned) > 0 {
 			fmt.Println()
 			fmt.Printf("%s Warning: Some processes may have respawned:\n", style.Bold.Render("⚠"))
@@ -299,6 +304,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 			fmt.Printf("To proceed, run with: %s\n", style.Bold.Render("GT_NUKE_ACKNOWLEDGED=1 gt down --nuke"))
 			allOK = false
 		} else {
+			t := tmux.NewTmux()
 			if err := t.KillServer(); err != nil {
 				printDownStatus("Tmux server", false, err.Error())
 				allOK = false
@@ -342,7 +348,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 // stopAllPolecats stops all polecat sessions across all rigs.
 // Returns the number of polecats stopped (or would be stopped in dry-run).
-func stopAllPolecats(t *tmux.Tmux, townRoot string, rigNames []string, force bool, dryRun bool) int {
+func stopAllPolecats(townRoot string, rigNames []string, force bool, dryRun bool) int {
 	stopped := 0
 
 	// Load rigs config
@@ -361,7 +367,7 @@ func stopAllPolecats(t *tmux.Tmux, townRoot string, rigNames []string, force boo
 			continue
 		}
 
-		polecatMgr := factory.PolecatSessionManager(r, "")
+		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
 		infos, err := polecatMgr.List()
 		if err != nil {
 			continue
@@ -425,7 +431,7 @@ func acquireShutdownLock(townRoot string) (*flock.Flock, error) {
 
 // verifyShutdown checks for respawned processes after shutdown.
 // Returns list of things that are still running or respawned.
-func verifyShutdown(t *tmux.Tmux, townRoot string) []string {
+func verifyShutdown(agents agent.Agents, townRoot string) []string {
 	var respawned []string
 
 	if count := beads.CountBdDaemons(); count > 0 {
@@ -436,13 +442,11 @@ func verifyShutdown(t *tmux.Tmux, townRoot string) []string {
 		respawned = append(respawned, fmt.Sprintf("bd activity (%d running)", count))
 	}
 
-	sessions, err := t.List()
-	if err == nil {
-		for _, sess := range sessions {
-			sessStr := string(sess)
-			if strings.HasPrefix(sessStr, "gt-") || strings.HasPrefix(sessStr, "hq-") {
-				respawned = append(respawned, fmt.Sprintf("tmux session %s", sessStr))
-			}
+	// Check if any agents respawned
+	agentIDs, err := agents.List()
+	if err == nil && len(agentIDs) > 0 {
+		for _, id := range agentIDs {
+			respawned = append(respawned, fmt.Sprintf("agent %s", id))
 		}
 	}
 
