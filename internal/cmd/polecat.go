@@ -31,7 +31,7 @@ var (
 
 var polecatCmd = &cobra.Command{
 	Use:     "polecat",
-	Aliases: []string{"cat", "polecats"},
+	Aliases: []string{"polecats"},
 	GroupID: GroupAgents,
 	Short:   "Manage polecats in rigs",
 	RunE:    requireSubcommand,
