@@ -41,45 +41,62 @@ var (
 	orphansDays int
 	orphansAll  bool
 
-	// GC command flags (for git orphan commit cleanup)
-	orphansGcDryRun bool
-	orphansGcDays   int
-	orphansGcAll    bool
-	orphansGcForce  bool
+	// Kill commits command flags
+	orphansKillDryRun bool
+	orphansKillDays   int
+	orphansKillAll    bool
+	orphansKillForce  bool
 
-	// Process kill command flags
-	orphansProcessForce bool
+	// Process orphan flags
+	orphansProcsForce bool
 )
 
-// GC command - prunes orphaned git commits
-var orphansGcCmd = &cobra.Command{
-	Use:   "gc",
-	Short: "Remove orphaned commits permanently",
-	Long: `Remove orphaned commits by running git garbage collection.
+// Commit orphan kill command
+var orphansKillCmd = &cobra.Command{
+	Use:   "kill",
+	Short: "Remove all orphans (commits and processes)",
+	Long: `Remove orphaned commits and kill orphaned Claude processes.
 
-This command finds orphaned commits and then runs 'git gc --prune=now'
-to permanently delete unreachable objects from the repository.
+This command performs a complete orphan cleanup:
+1. Finds and removes orphaned commits via 'git gc --prune=now'
+2. Finds and kills orphaned Claude processes (PPID=1)
 
 WARNING: This operation is irreversible. Once commits are pruned,
 they cannot be recovered.
 
 The command will:
 1. Find orphaned commits (same as 'gt orphans')
-2. Show what will be removed
-3. Ask for confirmation (unless --force)
-4. Run git gc --prune=now
+2. Find orphaned Claude processes (same as 'gt orphans procs')
+3. Show what will be removed/killed
+4. Ask for confirmation (unless --force)
+5. Run git gc and kill processes
 
 Examples:
-  gt orphans gc              # GC orphans from last 7 days (default)
-  gt orphans gc --days=14    # GC orphans from last 2 weeks
-  gt orphans gc --all        # GC all orphans
-  gt orphans gc --dry-run    # Preview without deleting
-  gt orphans gc --force      # Skip confirmation prompt`,
-	RunE: runOrphansGc,
+  gt orphans kill              # Kill orphans from last 7 days (default)
+  gt orphans kill --days=14    # Kill orphans from last 2 weeks
+  gt orphans kill --all        # Kill all orphans
+  gt orphans kill --dry-run    # Preview without deleting
+  gt orphans kill --force      # Skip confirmation prompt`,
+	RunE: runOrphansKill,
 }
 
-// Subcommands for process orphan management
-var orphansListCmd = &cobra.Command{
+// Process orphan commands
+var orphansProcsCmd = &cobra.Command{
+	Use:   "procs",
+	Short: "Manage orphaned Claude processes",
+	Long: `Find and kill Claude processes that have become orphaned (PPID=1).
+
+These are processes that survived session termination and are now
+parented to init/launchd. They consume resources and should be killed.
+
+Examples:
+  gt orphans procs        # List orphaned Claude processes
+  gt orphans procs list   # Same as above
+  gt orphans procs kill   # Kill orphaned processes`,
+	RunE: runOrphansListProcesses, // Default to list
+}
+
+var orphansProcsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List orphaned Claude processes",
 	Long: `List Claude processes that have become orphaned (PPID=1).
@@ -92,11 +109,11 @@ Excludes:
 - Claude.app desktop application processes
 
 Examples:
-  gt orphans list      # Show all orphan Claude processes`,
+  gt orphans procs list      # Show all orphan Claude processes`,
 	RunE: runOrphansListProcesses,
 }
 
-var orphansKillCmd = &cobra.Command{
+var orphansProcsKillCmd = &cobra.Command{
 	Use:   "kill",
 	Short: "Kill orphaned Claude processes",
 	Long: `Kill Claude processes that have become orphaned (PPID=1).
@@ -105,8 +122,8 @@ Without flags, prompts for confirmation before killing.
 Use -f/--force to kill without confirmation.
 
 Examples:
-  gt orphans kill      # Kill with confirmation
-  gt orphans kill -f   # Force kill without confirmation`,
+  gt orphans procs kill      # Kill with confirmation
+  gt orphans procs kill -f   # Force kill without confirmation`,
 	RunE: runOrphansKillProcesses,
 }
 
@@ -114,18 +131,22 @@ func init() {
 	orphansCmd.Flags().IntVar(&orphansDays, "days", 7, "Show orphans from last N days")
 	orphansCmd.Flags().BoolVar(&orphansAll, "all", false, "Show all orphans (no date filter)")
 
-	// GC command flags (for git orphan commit cleanup)
-	orphansGcCmd.Flags().BoolVar(&orphansGcDryRun, "dry-run", false, "Preview without deleting")
-	orphansGcCmd.Flags().IntVar(&orphansGcDays, "days", 7, "GC orphans from last N days")
-	orphansGcCmd.Flags().BoolVar(&orphansGcAll, "all", false, "GC all orphans (no date filter)")
-	orphansGcCmd.Flags().BoolVar(&orphansGcForce, "force", false, "Skip confirmation prompt")
+	// Kill commits command flags
+	orphansKillCmd.Flags().BoolVar(&orphansKillDryRun, "dry-run", false, "Preview without deleting")
+	orphansKillCmd.Flags().IntVar(&orphansKillDays, "days", 7, "Kill orphans from last N days")
+	orphansKillCmd.Flags().BoolVar(&orphansKillAll, "all", false, "Kill all orphans (no date filter)")
+	orphansKillCmd.Flags().BoolVar(&orphansKillForce, "force", false, "Skip confirmation prompt")
 
-	// Process kill command flags
-	orphansKillCmd.Flags().BoolVarP(&orphansProcessForce, "force", "f", false, "Kill without confirmation")
+	// Process orphan kill command flags
+	orphansProcsKillCmd.Flags().BoolVarP(&orphansProcsForce, "force", "f", false, "Kill without confirmation")
 
-	orphansCmd.AddCommand(orphansGcCmd)
-	orphansCmd.AddCommand(orphansListCmd)
+	// Wire up subcommands
+	orphansProcsCmd.AddCommand(orphansProcsListCmd)
+	orphansProcsCmd.AddCommand(orphansProcsKillCmd)
+
 	orphansCmd.AddCommand(orphansKillCmd)
+	orphansCmd.AddCommand(orphansProcsCmd)
+
 	rootCmd.AddCommand(orphansCmd)
 }
 
@@ -326,8 +347,8 @@ func formatAge(t time.Time) string {
 	return fmt.Sprintf("%d days ago", days)
 }
 
-// runOrphansGc removes orphaned commits by running git gc
-func runOrphansGc(cmd *cobra.Command, args []string) error {
+// runOrphansKill removes orphaned commits and kills orphaned processes
+func runOrphansKill(cmd *cobra.Command, args []string) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
@@ -339,64 +360,126 @@ func runOrphansGc(cmd *cobra.Command, args []string) error {
 	}
 
 	mayorPath := r.Path + "/mayor/rig"
-	fmt.Printf("Scanning for orphaned commits in %s...\n\n", rigName)
 
-	orphans, err := findOrphanCommits(mayorPath)
+	// Find orphaned commits
+	fmt.Printf("Scanning for orphaned commits in %s...\n", rigName)
+	commitOrphans, err := findOrphanCommits(mayorPath)
 	if err != nil {
-		return fmt.Errorf("finding orphans: %w", err)
+		return fmt.Errorf("finding orphan commits: %w", err)
 	}
 
-	if len(orphans) == 0 {
-		fmt.Printf("%s No orphaned commits found\n", style.Bold.Render("✓"))
-		return nil
-	}
-
-	cutoff := time.Now().AddDate(0, 0, -orphansGcDays)
-	var filtered []OrphanCommit
-	for _, o := range orphans {
-		if orphansGcAll || o.Date.After(cutoff) {
-			filtered = append(filtered, o)
+	// Filter commits by date
+	cutoff := time.Now().AddDate(0, 0, -orphansKillDays)
+	var filteredCommits []OrphanCommit
+	for _, o := range commitOrphans {
+		if orphansKillAll || o.Date.After(cutoff) {
+			filteredCommits = append(filteredCommits, o)
 		}
 	}
 
-	if len(filtered) == 0 {
-		fmt.Printf("%s No orphaned commits in the last %d days\n", style.Bold.Render("✓"), orphansGcDays)
-		fmt.Printf("%s Use --days=N or --all to target older orphans\n", style.Dim.Render("Hint:"))
+	// Find orphaned processes
+	fmt.Printf("Scanning for orphaned Claude processes...\n\n")
+	procOrphans, err := findOrphanProcesses()
+	if err != nil {
+		return fmt.Errorf("finding orphan processes: %w", err)
+	}
+
+	// Check if there's anything to do
+	if len(filteredCommits) == 0 && len(procOrphans) == 0 {
+		fmt.Printf("%s No orphans found\n", style.Bold.Render("✓"))
 		return nil
 	}
 
-	fmt.Printf("%s Found %d orphaned commit(s) to remove:\n\n", style.Warning.Render("⚠"), len(filtered))
-	for _, o := range filtered {
-		fmt.Printf("  %s %s\n", style.Bold.Render(o.SHA[:8]), o.Subject)
-		fmt.Printf("    %s by %s\n\n", style.Dim.Render(formatAge(o.Date)), o.Author)
+	// Show orphaned commits
+	if len(filteredCommits) > 0 {
+		fmt.Printf("%s Found %d orphaned commit(s) to remove:\n\n", style.Warning.Render("⚠"), len(filteredCommits))
+		for _, o := range filteredCommits {
+			fmt.Printf("  %s %s\n", style.Bold.Render(o.SHA[:8]), o.Subject)
+			fmt.Printf("    %s by %s\n\n", style.Dim.Render(formatAge(o.Date)), o.Author)
+		}
+	} else if len(commitOrphans) > 0 {
+		fmt.Printf("%s No orphaned commits in the last %d days (use --days=N or --all)\n\n",
+			style.Dim.Render("ℹ"), orphansKillDays)
 	}
 
-	if orphansGcDryRun {
+	// Show orphaned processes
+	if len(procOrphans) > 0 {
+		fmt.Printf("%s Found %d orphaned Claude process(es) to kill:\n\n", style.Warning.Render("⚠"), len(procOrphans))
+		for _, o := range procOrphans {
+			displayArgs := o.Args
+			if len(displayArgs) > 80 {
+				displayArgs = displayArgs[:77] + "..."
+			}
+			fmt.Printf("  %s %s\n", style.Bold.Render(fmt.Sprintf("PID %d", o.PID)), displayArgs)
+		}
+		fmt.Println()
+	}
+
+	if orphansKillDryRun {
 		fmt.Printf("%s Dry run - no changes made\n", style.Dim.Render("ℹ"))
 		return nil
 	}
 
-	if !orphansGcForce {
+	// Confirmation
+	if !orphansKillForce {
 		fmt.Printf("%s\n", style.Warning.Render("WARNING: This operation is irreversible!"))
-		fmt.Printf("Remove %d orphaned commit(s)? [y/N] ", len(filtered))
+		total := len(filteredCommits) + len(procOrphans)
+		fmt.Printf("Remove %d orphan(s)? [y/N] ", total)
 		var response string
-		fmt.Scanln(&response)
+		_, _ = fmt.Scanln(&response)
 		if strings.ToLower(strings.TrimSpace(response)) != "y" {
-			fmt.Printf("%s Cancelled\n", style.Dim.Render("ℹ"))
+			fmt.Printf("%s Canceled\n", style.Dim.Render("ℹ"))
 			return nil
 		}
 	}
 
-	fmt.Printf("\nRunning git gc --prune=now...\n")
-	gcCmd := exec.Command("git", "gc", "--prune=now")
-	gcCmd.Dir = mayorPath
-	gcCmd.Stdout = os.Stdout
-	gcCmd.Stderr = os.Stderr
-	if err := gcCmd.Run(); err != nil {
-		return fmt.Errorf("git gc failed: %w", err)
+	// Kill orphaned commits
+	if len(filteredCommits) > 0 {
+		fmt.Printf("\nRunning git gc --prune=now...\n")
+		gcCmd := exec.Command("git", "gc", "--prune=now")
+		gcCmd.Dir = mayorPath
+		gcCmd.Stdout = os.Stdout
+		gcCmd.Stderr = os.Stderr
+		if err := gcCmd.Run(); err != nil {
+			return fmt.Errorf("git gc failed: %w", err)
+		}
+		fmt.Printf("%s Removed %d orphaned commit(s)\n", style.Bold.Render("✓"), len(filteredCommits))
 	}
 
-	fmt.Printf("\n%s Removed %d orphaned commit(s)\n", style.Bold.Render("✓"), len(filtered))
+	// Kill orphaned processes
+	if len(procOrphans) > 0 {
+		fmt.Printf("\nKilling orphaned processes...\n")
+		var killed, failed int
+		for _, o := range procOrphans {
+			proc, err := os.FindProcess(o.PID)
+			if err != nil {
+				fmt.Printf("  %s PID %d: %v\n", style.Error.Render("✗"), o.PID, err)
+				failed++
+				continue
+			}
+
+			if err := proc.Signal(syscall.SIGTERM); err != nil {
+				if err == os.ErrProcessDone {
+					fmt.Printf("  %s PID %d: already terminated\n", style.Dim.Render("○"), o.PID)
+					continue
+				}
+				fmt.Printf("  %s PID %d: %v\n", style.Error.Render("✗"), o.PID, err)
+				failed++
+				continue
+			}
+
+			fmt.Printf("  %s PID %d killed\n", style.Bold.Render("✓"), o.PID)
+			killed++
+		}
+
+		fmt.Printf("%s %d process(es) killed", style.Bold.Render("✓"), killed)
+		if failed > 0 {
+			fmt.Printf(", %d failed", failed)
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("\n%s Orphan cleanup complete\n", style.Bold.Render("✓"))
 	return nil
 }
 
@@ -517,7 +600,7 @@ func runOrphansListProcesses(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s %s\n", style.Bold.Render(fmt.Sprintf("PID %d", o.PID)), displayArgs)
 	}
 
-	fmt.Printf("\n%s\n", style.Dim.Render("Use 'gt orphans kill' to terminate these processes"))
+	fmt.Printf("\n%s\n", style.Dim.Render("Use 'gt orphans procs kill' to terminate these processes"))
 
 	return nil
 }
@@ -546,10 +629,10 @@ func runOrphansKillProcesses(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Confirm unless --force
-	if !orphansProcessForce {
+	if !orphansProcsForce {
 		fmt.Printf("Kill these %d process(es)? [y/N] ", len(orphans))
 		var response string
-		fmt.Scanln(&response)
+		_, _ = fmt.Scanln(&response)
 		response = strings.ToLower(strings.TrimSpace(response))
 		if response != "y" && response != "yes" {
 			fmt.Println("Aborted")
