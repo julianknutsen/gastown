@@ -285,10 +285,12 @@ func handleStepContinue(cwd, townRoot, _ string, nextStep *beads.Issue, dryRun b
 	}
 
 	// Pin the next step bead
-	pinCmd := exec.Command("bd", "update", nextStep.ID, "--status=pinned", "--assignee="+agentID)
-	pinCmd.Dir = gitRoot
-	pinCmd.Stderr = os.Stderr
-	if err := pinCmd.Run(); err != nil {
+	// Use BeadsOps interface
+	// cmd.Dir = gitRoot - REQUIRED for operating on specific git root
+	// BEADS_DIR was N/A - not set
+	b := beads.New(gitRoot)
+	pinnedStatus := beads.StatusPinned
+	if err := b.Update(nextStep.ID, beads.UpdateOptions{Status: &pinnedStatus, Assignee: &agentID}); err != nil {
 		return fmt.Errorf("pinning next step: %w", err)
 	}
 
@@ -373,10 +375,12 @@ func handleMoleculeComplete(cwd, townRoot, moleculeID string, dryRun bool) error
 		})
 		if err == nil && len(pinnedBeads) > 0 {
 			// Unpin by setting status to open
-			unpinCmd := exec.Command("bd", "update", pinnedBeads[0].ID, "--status=open")
-			unpinCmd.Dir = gitRoot
-			unpinCmd.Stderr = os.Stderr
-			if err := unpinCmd.Run(); err != nil {
+			// Use BeadsOps interface
+			// cmd.Dir = gitRoot - REQUIRED for operating on specific git root
+			// BEADS_DIR was N/A - not set
+			bGit := beads.New(gitRoot)
+			openStatus := "open"
+			if err := bGit.Update(pinnedBeads[0].ID, beads.UpdateOptions{Status: &openStatus}); err != nil {
 				style.PrintWarning("could not unpin bead: %v", err)
 			} else {
 				fmt.Printf("%s Work unpinned\n", style.Bold.Render("✓"))

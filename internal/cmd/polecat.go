@@ -573,6 +573,9 @@ func runPolecatSync(cmd *cobra.Command, args []string) error {
 		}
 
 		// Build sync command
+		// Use BeadsOps interface
+		// cmd.Dir = p.ClonePath - REQUIRED for operating in polecat's clone path
+		// BEADS_DIR was N/A - not set
 		syncArgs := []string{"sync"}
 		if polecatSyncFromMain {
 			syncArgs = append(syncArgs, "--from-main")
@@ -580,9 +583,8 @@ func runPolecatSync(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("Syncing %s/%s...\n", rigName, name)
 
-		syncCmd := exec.Command("bd", syncArgs...)
-		syncCmd.Dir = p.ClonePath
-		output, err := syncCmd.CombinedOutput()
+		b := beads.New(p.ClonePath)
+		output, err := b.Run(syncArgs...)
 		if err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", name, err))
 			if len(output) > 0 {
@@ -1214,14 +1216,16 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		}
 
 		// Step 5: Close agent bead (if exists)
+		// Use BeadsOps interface
+		// cmd.Dir = filepath.Join(p.r.Path, "mayor", "rig") - REQUIRED for operating on specific path
+		// BEADS_DIR was N/A - not set
 		agentBeadID := beads.PolecatBeadID(p.rigName, p.polecatName)
 		closeArgs := []string{"close", agentBeadID, "--reason=nuked"}
 		if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
 			closeArgs = append(closeArgs, "--session="+sessionID)
 		}
-		closeCmd := exec.Command("bd", closeArgs...)
-		closeCmd.Dir = filepath.Join(p.r.Path, "mayor", "rig")
-		if err := closeCmd.Run(); err != nil {
+		bClose := beads.New(filepath.Join(p.r.Path, "mayor", "rig"))
+		if _, err := bClose.Run(closeArgs...); err != nil {
 			// Non-fatal - agent bead might not exist
 			fmt.Printf("  %s agent bead not found or already closed\n", style.Dim.Render("○"))
 		} else {

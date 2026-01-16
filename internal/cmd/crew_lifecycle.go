@@ -124,12 +124,15 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 		prefix := beads.GetPrefixForRig(townRoot, r.Name)
 		agentBeadID := beads.CrewBeadIDWithPrefix(prefix, r.Name, name)
 
+		// Use BeadsOps interface
+		// cmd.Dir = r.Path - REQUIRED for operating on rig path
+		// BEADS_DIR was N/A - not set
+		b := beads.New(r.Path)
+
 		if crewPurge {
 			// --purge: DELETE the agent bead entirely (obliterate)
-			deleteArgs := []string{"delete", agentBeadID, "--force"}
-			deleteCmd := exec.Command("bd", deleteArgs...)
-			deleteCmd.Dir = r.Path
-			if output, err := deleteCmd.CombinedOutput(); err != nil {
+			output, err := b.Run("delete", agentBeadID, "--force")
+			if err != nil {
 				// Non-fatal: bead might not exist
 				if !strings.Contains(string(output), "no issue found") &&
 					!strings.Contains(string(output), "not found") {
@@ -141,18 +144,14 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 
 			// Unassign any beads assigned to this crew member
 			agentAddr := fmt.Sprintf("%s/crew/%s", r.Name, name)
-			unassignArgs := []string{"list", "--assignee=" + agentAddr, "--format=id"}
-			unassignCmd := exec.Command("bd", unassignArgs...)
-			unassignCmd.Dir = r.Path
-			if output, err := unassignCmd.CombinedOutput(); err == nil {
-				ids := strings.Fields(strings.TrimSpace(string(output)))
+			listOutput, err := b.Run("list", "--assignee="+agentAddr, "--format=id")
+			if err == nil {
+				ids := strings.Fields(strings.TrimSpace(string(listOutput)))
 				for _, id := range ids {
 					if id == "" {
 						continue
 					}
-					updateCmd := exec.Command("bd", "update", id, "--unassign")
-					updateCmd.Dir = r.Path
-					if _, err := updateCmd.CombinedOutput(); err == nil {
+					if _, err := b.Run("update", id, "--unassign"); err == nil {
 						fmt.Printf("Unassigned: %s\n", id)
 					}
 				}
@@ -170,9 +169,8 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 			if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
 				closeArgs = append(closeArgs, "--session="+sessionID)
 			}
-			closeCmd := exec.Command("bd", closeArgs...)
-			closeCmd.Dir = r.Path
-			if output, err := closeCmd.CombinedOutput(); err != nil {
+			output, err := b.Run(closeArgs...)
+			if err != nil {
 				// Non-fatal: bead might not exist or already be closed
 				if !strings.Contains(string(output), "no issue found") &&
 					!strings.Contains(string(output), "already closed") {

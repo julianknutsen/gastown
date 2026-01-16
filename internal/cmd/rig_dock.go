@@ -145,11 +145,12 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sync beads to propagate to other clones
+	// Use BeadsOps interface (bd variable is already beads.New(r.BeadsPath()))
+	// cmd.Dir = r.BeadsPath() - REQUIRED for operating on specific rig's beads path
+	// BEADS_DIR was N/A - not set
 	fmt.Printf("  Syncing beads...\n")
-	syncCmd := exec.Command("bd", "sync")
-	syncCmd.Dir = r.BeadsPath()
-	if output, err := syncCmd.CombinedOutput(); err != nil {
-		fmt.Printf("  %s bd sync warning: %v\n%s", style.Warning.Render("!"), err, string(output))
+	if output, err := bd.Run("sync"); err != nil {
+		fmt.Printf("  %s bd sync warning: %v\n%s", style.Warning.Render("!"), err, output)
 	}
 
 	// Output
@@ -211,11 +212,12 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sync beads to propagate to other clones
+	// Use BeadsOps interface (bd variable is already beads.New(r.BeadsPath()))
+	// cmd.Dir = r.BeadsPath() - REQUIRED for operating on specific rig's beads path
+	// BEADS_DIR was N/A - not set
 	fmt.Printf("  Syncing beads...\n")
-	syncCmd := exec.Command("bd", "sync")
-	syncCmd.Dir = r.BeadsPath()
-	if output, err := syncCmd.CombinedOutput(); err != nil {
-		fmt.Printf("  %s bd sync warning: %v\n%s", style.Warning.Render("!"), err, string(output))
+	if output, err := bd.Run("sync"); err != nil {
+		fmt.Printf("  %s bd sync warning: %v\n%s", style.Warning.Render("!"), err, output)
 	}
 
 	fmt.Printf("%s Rig %s undocked\n", style.Success.Render("✓"), rigName)

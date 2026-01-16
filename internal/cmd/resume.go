@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -93,8 +94,12 @@ func runResume(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check gate status
-	gateCheck := exec.Command("bd", "gate", "show", parked.GateID, "--json")
-	gateOutput, err := gateCheck.Output()
+	// Use BeadsOps interface
+	// cmd.Dir was N/A - ran from cwd
+	// BEADS_DIR was N/A - not set
+	// NOTE: Using Run because Gate struct lacks CloseReason field
+	b := beads.New(cloneRoot)
+	gateOutput, err := b.Run("gate", "show", parked.GateID, "--json")
 	gateNotFound := false
 	if err != nil {
 		// Gate might have been deleted (wisp cleanup) or is inaccessible
@@ -108,7 +113,7 @@ func runResume(cmd *cobra.Command, args []string) error {
 			Status      string `json:"status"`
 			CloseReason string `json:"close_reason"`
 		}
-		if err := json.Unmarshal(gateOutput, &gateInfo); err == nil {
+		if err := json.Unmarshal([]byte(gateOutput), &gateInfo); err == nil {
 			status.GateClosed = gateInfo.Status == "closed"
 			status.CloseReason = gateInfo.CloseReason
 		}
@@ -155,10 +160,11 @@ func runResume(cmd *cobra.Command, args []string) error {
 
 	// Pin the bead to restore work
 	if parked.BeadID != "" {
-		pinCmd := exec.Command("bd", "update", parked.BeadID, "--status=pinned", "--assignee="+agentID)
-		pinCmd.Dir = cloneRoot
-		pinCmd.Stderr = os.Stderr
-		if err := pinCmd.Run(); err != nil {
+		// Use BeadsOps interface
+		// cmd.Dir = cloneRoot - REQUIRED for operating on specific clone root
+		// BEADS_DIR was N/A - not set
+		pinnedStatus := beads.StatusPinned
+		if err := b.Update(parked.BeadID, beads.UpdateOptions{Status: &pinnedStatus, Assignee: &agentID}); err != nil {
 			return fmt.Errorf("pinning bead: %w", err)
 		}
 

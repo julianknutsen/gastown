@@ -343,26 +343,20 @@ func detectRole(cwd, townRoot string) RoleInfo {
 // runBdPrime runs `bd prime` and outputs the result.
 // This provides beads workflow context to the agent.
 func runBdPrime(workDir string) {
-	cmd := exec.Command("bd", "prime")
-	cmd.Dir = workDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	// Use BeadsOps interface
+	// cmd.Dir = workDir - REQUIRED for operating on specific workDir
+	// BEADS_DIR was N/A - not set
+	b := beads.New(workDir)
+	output, err := b.Run("prime")
+	if err != nil {
 		// Skip if bd prime fails (beads might not be available)
-		// But log stderr if present for debugging
-		if errMsg := strings.TrimSpace(stderr.String()); errMsg != "" {
-			fmt.Fprintf(os.Stderr, "bd prime: %s\n", errMsg)
-		}
 		return
 	}
 
-	output := strings.TrimSpace(stdout.String())
-	if output != "" {
+	outputStr := strings.TrimSpace(string(output))
+	if outputStr != "" {
 		fmt.Println()
-		fmt.Println(output)
+		fmt.Println(outputStr)
 	}
 }
 
@@ -477,19 +471,15 @@ func checkSlungWork(ctx RoleContext) bool {
 	fmt.Println()
 
 	// Show bead preview using bd show
+	// Use BeadsOps interface
+	// cmd.Dir was N/A - ran from cwd (ctx.WorkDir)
+	// BEADS_DIR was N/A - not set
 	fmt.Println("**Bead details:**")
-	cmd := exec.Command("bd", "show", hookedBead.ID)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if errMsg := strings.TrimSpace(stderr.String()); errMsg != "" {
-			fmt.Fprintf(os.Stderr, "  bd show %s: %s\n", hookedBead.ID, errMsg)
-		} else {
-			fmt.Fprintf(os.Stderr, "  bd show %s: %v\n", hookedBead.ID, err)
-		}
+	showOutput, err := b.Run("show", hookedBead.ID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  bd show %s: %v\n", hookedBead.ID, err)
 	} else {
-		lines := strings.Split(stdout.String(), "\n")
+		lines := strings.Split(string(showOutput), "\n")
 		maxLines := 15
 		if len(lines) > maxLines {
 			lines = lines[:maxLines]
@@ -673,15 +663,13 @@ func ensureBeadsRedirect(ctx RoleContext) {
 // checkPendingEscalations queries for open escalation beads and displays them prominently.
 // This is called on Mayor startup to surface issues needing human attention.
 func checkPendingEscalations(ctx RoleContext) {
-	// Query for open escalations using bd list with tag filter
-	cmd := exec.Command("bd", "list", "--status=open", "--tag=escalation", "--json")
-	cmd.Dir = ctx.WorkDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	// Query for open escalations using BeadsOps interface
+	// cmd.Dir = ctx.WorkDir - REQUIRED for operating on specific workDir
+	// BEADS_DIR was N/A - not set
+	// NOTE: Using Run because ListOptions doesn't support --tag filter
+	b := beads.New(ctx.WorkDir)
+	listOutput, err := b.Run("list", "--status=open", "--tag=escalation", "--json")
+	if err != nil {
 		// Silently skip - escalation check is best-effort
 		return
 	}
@@ -695,7 +683,7 @@ func checkPendingEscalations(ctx RoleContext) {
 		Created     string `json:"created"`
 	}
 
-	if err := json.Unmarshal(stdout.Bytes(), &escalations); err != nil || len(escalations) == 0 {
+	if err := json.Unmarshal(listOutput, &escalations); err != nil || len(escalations) == 0 {
 		// No escalations or parse error
 		return
 	}
