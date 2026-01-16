@@ -11,6 +11,15 @@ import (
 	"github.com/steveyegge/gastown/internal/rig"
 )
 
+// =============================================================================
+// Crew Manager Unit Tests
+// Using agent.Double for testable abstraction
+//
+// Note: Start operations are handled by factory.Start().
+// The Manager handles workspace management (Add, Remove, List, Get, Rename, Pristine)
+// and delegates lifecycle operations to agent.Agents.
+// =============================================================================
+
 func TestManagerAddAndGet(t *testing.T) {
 	// Create temp directory for test
 	tmpDir, err := os.MkdirTemp("", "crew-test-*")
@@ -41,7 +50,7 @@ func TestManagerAddAndGet(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, g, "claude")
+	mgr := NewManager(agent.NewDouble(), r, g, "claude", "")
 
 	// Test Add
 	worker, err := mgr.Add("dave", false)
@@ -148,7 +157,7 @@ func TestManagerAddUsesLocalRepoReference(t *testing.T) {
 		LocalRepo: localRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, git.NewGit(rigPath), "claude")
+	mgr := NewManager(agent.NewDouble(), r, git.NewGit(rigPath), "claude", "")
 
 	worker, err := mgr.Add("dave", false)
 	if err != nil {
@@ -217,7 +226,7 @@ func TestManagerAddWithBranch(t *testing.T) {
 		GitURL: sourceRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, g, "claude")
+	mgr := NewManager(agent.NewDouble(), r, g, "claude", "")
 
 	// Test Add with branch
 	worker, err := mgr.Add("emma", true)
@@ -258,7 +267,7 @@ func TestManagerList(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, g, "claude")
+	mgr := NewManager(agent.NewDouble(), r, g, "claude", "")
 
 	// Initially empty
 	workers, err := mgr.List()
@@ -316,7 +325,7 @@ func TestManagerRemove(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, g, "claude")
+	mgr := NewManager(agent.NewDouble(), r, g, "claude", "")
 
 	// Add a worker
 	_, err = mgr.Add("charlie", false)
@@ -344,144 +353,12 @@ func TestManagerRemove(t *testing.T) {
 }
 
 // =============================================================================
-// Lifecycle Tests (Start, Stop, IsRunning)
+// Lifecycle Tests (Stop, IsRunning)
+// Using agent.Double for testable abstraction
+//
+// Note: Start operations are handled by factory.Start().
+// These tests verify Stop and IsRunning which delegate to agent.Agents.
 // =============================================================================
-
-func TestManagerStart_CreatesSession(t *testing.T) {
-	tmpDir, rigPath, bareRepoPath := setupTestRigWithRepo(t)
-	defer os.RemoveAll(tmpDir)
-
-	r := &rig.Rig{
-		Name:   "test-rig",
-		Path:   rigPath,
-		GitURL: bareRepoPath,
-	}
-
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
-
-	// Add a worker first
-	_, err := mgr.Add("alice", false)
-	if err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-
-	// Start the worker
-	err = mgr.Start("alice", StartOptions{})
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-
-	// Verify session exists
-	running, err := mgr.IsRunning("alice")
-	if err != nil {
-		t.Fatalf("IsRunning failed: %v", err)
-	}
-	if !running {
-		t.Error("expected IsRunning = true after Start")
-	}
-}
-
-func TestManagerStart_AutoCreatesWorker(t *testing.T) {
-	tmpDir, rigPath, bareRepoPath := setupTestRigWithRepo(t)
-	defer os.RemoveAll(tmpDir)
-
-	r := &rig.Rig{
-		Name:   "test-rig",
-		Path:   rigPath,
-		GitURL: bareRepoPath,
-	}
-
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
-
-	// Start without Add - should auto-create
-	err := mgr.Start("bob", StartOptions{})
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-
-	// Worker should exist
-	worker, err := mgr.Get("bob")
-	if err != nil {
-		t.Fatalf("Get failed: %v", err)
-	}
-	if worker.Name != "bob" {
-		t.Errorf("expected worker name 'bob', got '%s'", worker.Name)
-	}
-}
-
-func TestManagerStart_AlreadyRunning_ReturnsError(t *testing.T) {
-	tmpDir, rigPath, bareRepoPath := setupTestRigWithRepo(t)
-	defer os.RemoveAll(tmpDir)
-
-	r := &rig.Rig{
-		Name:   "test-rig",
-		Path:   rigPath,
-		GitURL: bareRepoPath,
-	}
-
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
-
-	// Start once
-	err := mgr.Start("charlie", StartOptions{})
-	if err != nil {
-		t.Fatalf("First Start failed: %v", err)
-	}
-
-	// Start again should fail
-	err = mgr.Start("charlie", StartOptions{})
-	if err == nil {
-		t.Error("expected error for already running session")
-	}
-}
-
-func TestManagerStart_KillExisting(t *testing.T) {
-	tmpDir, rigPath, bareRepoPath := setupTestRigWithRepo(t)
-	defer os.RemoveAll(tmpDir)
-
-	r := &rig.Rig{
-		Name:   "test-rig",
-		Path:   rigPath,
-		GitURL: bareRepoPath,
-	}
-
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
-
-	// Start once
-	err := mgr.Start("dave", StartOptions{})
-	if err != nil {
-		t.Fatalf("First Start failed: %v", err)
-	}
-
-	// Start again with KillExisting should succeed
-	err = mgr.Start("dave", StartOptions{KillExisting: true})
-	if err != nil {
-		t.Fatalf("Start with KillExisting failed: %v", err)
-	}
-}
-
-func TestManagerStart_InvalidName_ReturnsError(t *testing.T) {
-	tmpDir, rigPath, bareRepoPath := setupTestRigWithRepo(t)
-	defer os.RemoveAll(tmpDir)
-
-	r := &rig.Rig{
-		Name:   "test-rig",
-		Path:   rigPath,
-		GitURL: bareRepoPath,
-	}
-
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
-
-	// Start with empty name
-	err := mgr.Start("", StartOptions{})
-	if err == nil {
-		t.Error("expected error for empty name")
-	}
-}
 
 func TestManagerStop_TerminatesSession(t *testing.T) {
 	tmpDir, rigPath, bareRepoPath := setupTestRigWithRepo(t)
@@ -493,23 +370,27 @@ func TestManagerStop_TerminatesSession(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
+	agents := agent.NewDouble()
+	mgr := NewManager(agents, r, git.NewGit(rigPath), "claude", "")
 
-	// Start
-	err := mgr.Start("emma", StartOptions{})
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
+	// Create an agent directly (simulating factory.Start())
+	agentID := agent.CrewAddress("test-rig", "emma")
+	agents.CreateAgent(agentID)
+
+	// Verify running
+	running, _ := mgr.IsRunning("emma")
+	if !running {
+		t.Error("expected IsRunning = true before Stop")
 	}
 
 	// Stop
-	err = mgr.Stop("emma")
+	err := mgr.Stop("emma")
 	if err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
 
 	// Verify not running
-	running, _ := mgr.IsRunning("emma")
+	running, _ = mgr.IsRunning("emma")
 	if running {
 		t.Error("expected IsRunning = false after Stop")
 	}
@@ -525,10 +406,10 @@ func TestManagerStop_NotRunning_ReturnsError(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
+	agents := agent.NewDouble()
+	mgr := NewManager(agents, r, git.NewGit(rigPath), "claude", "")
 
-	// Add but don't start
+	// Add but don't create agent (don't start)
 	_, err := mgr.Add("frank", false)
 	if err != nil {
 		t.Fatalf("Add failed: %v", err)
@@ -551,39 +432,13 @@ func TestManagerStop_InvalidName_ReturnsError(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
+	agents := agent.NewDouble()
+	mgr := NewManager(agents, r, git.NewGit(rigPath), "claude", "")
 
 	// Stop with empty name
 	err := mgr.Stop("")
 	if err == nil {
 		t.Error("expected error for empty name")
-	}
-}
-
-func TestManagerRemove_RunningWorker_Fails(t *testing.T) {
-	tmpDir, rigPath, bareRepoPath := setupTestRigWithRepo(t)
-	defer os.RemoveAll(tmpDir)
-
-	r := &rig.Rig{
-		Name:   "test-rig",
-		Path:   rigPath,
-		GitURL: bareRepoPath,
-	}
-
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
-
-	// Start a worker
-	err := mgr.Start("grace", StartOptions{})
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-
-	// Remove without force should fail
-	err = mgr.Remove("grace", false)
-	if err == nil {
-		t.Error("expected error when removing running worker without force")
 	}
 }
 
@@ -597,27 +452,95 @@ func TestManagerIsRunning_CorrectState(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	sess := agent.NewDouble()
-	mgr := NewManager(sess, r, git.NewGit(rigPath), "claude")
+	agents := agent.NewDouble()
+	mgr := NewManager(agents, r, git.NewGit(rigPath), "claude", "")
 
 	// Not running initially
 	running, _ := mgr.IsRunning("henry")
 	if running {
-		t.Error("expected IsRunning = false before Start")
+		t.Error("expected IsRunning = false when no agent")
 	}
 
-	// Start
-	_ = mgr.Start("henry", StartOptions{})
+	// Create agent directly
+	agentID := agent.CrewAddress("test-rig", "henry")
+	agents.CreateAgent(agentID)
+
 	running, _ = mgr.IsRunning("henry")
 	if !running {
-		t.Error("expected IsRunning = true after Start")
+		t.Error("expected IsRunning = true when agent exists")
 	}
 
-	// Stop
-	_ = mgr.Stop("henry")
+	// Stop via agents
+	_ = agents.Stop(agentID, false)
+
 	running, _ = mgr.IsRunning("henry")
 	if running {
 		t.Error("expected IsRunning = false after Stop")
+	}
+}
+
+// =============================================================================
+// SessionName and RigName Tests
+// =============================================================================
+
+func TestManagerSessionName_Format(t *testing.T) {
+	r := &rig.Rig{
+		Name: "testrig",
+		Path: "/tmp/testrig",
+	}
+	agents := agent.NewDouble()
+	mgr := NewManager(agents, r, git.NewGit(r.Path), "claude", "")
+
+	name := mgr.SessionName("alice")
+	expected := "gt-testrig-crew-alice"
+	if name != expected {
+		t.Errorf("SessionName = %q, want %q", name, expected)
+	}
+}
+
+func TestManagerRigName(t *testing.T) {
+	r := &rig.Rig{
+		Name: "myrig",
+		Path: "/tmp/myrig",
+	}
+	agents := agent.NewDouble()
+	mgr := NewManager(agents, r, git.NewGit(r.Path), "claude", "")
+
+	if mgr.RigName() != "myrig" {
+		t.Errorf("RigName = %q, want myrig", mgr.RigName())
+	}
+}
+
+// =============================================================================
+// Name Validation Tests
+// =============================================================================
+
+func TestValidateCrewName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"valid name", "alice", false},
+		{"valid underscore", "alice_bob", false},
+		{"empty name", "", true},
+		{"dot only", ".", true},
+		{"dotdot only", "..", true},
+		{"contains slash", "alice/bob", true},
+		{"contains backslash", "alice\\bob", true},
+		{"contains dotdot", "alice..bob", true},
+		{"contains hyphen", "alice-bob", true},
+		{"contains dot", "alice.bob", true},
+		{"contains space", "alice bob", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCrewName(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateCrewName(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
 	}
 }
 

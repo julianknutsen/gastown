@@ -16,7 +16,6 @@ import (
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -68,42 +67,24 @@ func validateCrewName(name string) error {
 	return nil
 }
 
-// Manager handles crew worker lifecycle.
+// Manager handles crew worker operations.
+// Start operations are handled via factory.Start().
 type Manager struct {
-	rig       *rig.Rig
-	git       *git.Git
-	agents    agent.Agents
-	agentName string
-
-	// startOpts holds options for the current Start() call, used by onSessionCreated callback
-	startOpts *StartOptions
-	// startWorker holds the worker for the current Start() call
-	startWorker *CrewWorker
-	// startCrewName holds the crew name for the current Start() call
-	startCrewName string
+	rig      *rig.Rig
+	git      *git.Git
+	agents   agent.Agents
+	townRoot string
 }
 
 // NewManager creates a new crew manager.
-// agents is the Agents implementation for session lifecycle.
-// agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
-func NewManager(agents agent.Agents, r *rig.Rig, g *git.Git, agentName string) *Manager {
+// The manager handles workspace management and status queries.
+// Lifecycle operations (Start) should use factory.Start().
+func NewManager(agents agent.Agents, r *rig.Rig, g *git.Git, _, townRoot string) *Manager {
 	return &Manager{
-		rig:       r,
-		git:       g,
-		agents:    agents,
-		agentName: agentName,
-	}
-}
-
-// envConfig returns the environment configuration for the current crew member.
-// Must be called after m.startCrewName is set.
-func (m *Manager) envConfig() config.AgentEnvConfig {
-	return config.AgentEnvConfig{
-		Role:          "crew",
-		Rig:           m.rig.Name,
-		AgentName:     m.startCrewName,
-		TownRoot:      filepath.Dir(m.rig.Path),
-		BeadsNoDaemon: true,
+		rig:      r,
+		git:      g,
+		agents:   agents,
+		townRoot: townRoot,
 	}
 }
 
@@ -461,87 +442,9 @@ func (m *Manager) SessionName(name string) string {
 	return fmt.Sprintf("gt-%s-crew-%s", m.rig.Name, name)
 }
 
-// StartingCrewName returns the name of the crew member currently being started.
-// This is only valid during a Start() call and is used by callbacks.
-func (m *Manager) StartingCrewName() string {
-	return m.startCrewName
-}
-
 // RigName returns the rig name for this manager.
 func (m *Manager) RigName() string {
 	return m.rig.Name
-}
-
-// Start creates and starts a tmux session for a crew member.
-// If the crew member doesn't exist, it will be created first.
-func (m *Manager) Start(name string, opts StartOptions) error {
-	if err := validateCrewName(name); err != nil {
-		return err
-	}
-
-	// Get or create the crew worker
-	worker, err := m.Get(name)
-	if err == ErrCrewNotFound {
-		worker, err = m.Add(name, false) // No feature branch for crew
-		if err != nil {
-			return fmt.Errorf("creating crew workspace: %w", err)
-		}
-	} else if err != nil {
-		return fmt.Errorf("getting crew worker: %w", err)
-	}
-
-	// Handle KillExisting option - force restart by stopping first
-	if opts.KillExisting {
-		id := m.agentID(name)
-		if m.agents.Exists(id) {
-			_ = m.agents.Stop(id, false)
-		}
-	}
-
-	// Ensure runtime settings exist in the working directory.
-	// Claude Code does NOT traverse parent directories for settings.json.
-	// See: https://github.com/anthropics/claude-code/issues/12962
-	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(worker.ClonePath, "crew", runtimeConfig); err != nil {
-		return fmt.Errorf("ensuring runtime settings: %w", err)
-	}
-
-	// Build the startup beacon for predecessor discovery via /resume
-	// Pass it as Claude's initial prompt - processed when Claude is ready
-	address := fmt.Sprintf("%s/crew/%s", m.rig.Name, name)
-	topic := opts.Topic
-	if topic == "" {
-		topic = "start"
-	}
-	beacon := session.FormatStartupNudge(session.StartupNudgeConfig{
-		Recipient: address,
-		Sender:    "human",
-		Topic:     topic,
-	})
-
-	// Store context for onSessionCreated callback and envConfig
-	m.startCrewName = name
-	m.startOpts = &opts
-	m.startWorker = worker
-
-	// Build startup command
-	claudeCmd := config.PrependEnv(config.BuildAgentCommand(m.agentName, beacon), config.AgentEnv(m.envConfig()))
-
-	// For interactive/refresh mode, remove --dangerously-skip-permissions
-	if opts.Interactive {
-		claudeCmd = strings.Replace(claudeCmd, " --dangerously-skip-permissions", "", 1)
-	}
-
-	// Start the agent (handles zombie detection, env vars, theming via callback)
-	if err := m.agents.Start(m.agentID(name), worker.ClonePath, claudeCmd); err != nil {
-		return err // ErrAlreadyRunning or other errors
-	}
-
-	// Note: We intentionally don't wait for Claude to start here.
-	// The session is created in detached mode, and blocking serves no purpose.
-	// If the caller needs to know when Claude is ready, they can check with IsRunning().
-
-	return nil
 }
 
 // agentID returns the AgentID for a crew member's session.

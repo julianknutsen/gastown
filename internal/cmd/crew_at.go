@@ -6,7 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/crew"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -94,16 +96,23 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		fmt.Printf("[DEBUG] sessionName=%q (r.Name=%q, name=%q)\n", sessionName, r.Name, name)
 	}
 
-	// Check if session exists
-	hasSession, _ := crewMgr.IsRunning(name)
+	// Check if session exists using agents interface
+	crewID := agent.CrewAddress(r.Name, name)
+	agents := factory.Agents(townRoot)
+	hasSession := agents.Exists(crewID)
 	if debug {
 		fmt.Printf("[DEBUG] hasSession=%v\n", hasSession)
 	}
 
-	// Start session if not running (manager handles env vars, theming, etc.)
+	// Start session if not running
 	if !hasSession {
 		fmt.Printf("Starting session for %s/%s...\n", r.Name, name)
-		if err := crewMgr.Start(name, crew.StartOptions{Topic: "start"}); err != nil {
+		crewAgentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
+		if crewAgentOverride != "" {
+			crewAgentName = crewAgentOverride
+		}
+		opts := []factory.StartOption{factory.WithTopic("start")}
+		if _, err := factory.Start(townRoot, crewID, crewAgentName, opts...); err != nil {
 			return fmt.Errorf("starting crew session: %w", err)
 		}
 		fmt.Printf("%s Created session for %s/%s\n", style.Bold.Render("✓"), r.Name, name)
@@ -117,8 +126,6 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 
 	// Smart attach: switches if inside tmux, attaches if outside
 	fmt.Printf("Attaching to %s...\n", sessionName)
-	agents := agent.ForTown(townRoot)
-	crewID := agent.CrewAddress(r.Name, name)
 	if debug {
 		fmt.Printf("[DEBUG] calling agents.Attach(%q)\n", crewID)
 	}

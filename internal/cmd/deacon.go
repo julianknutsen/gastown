@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/polecat"
@@ -42,9 +43,9 @@ func addressToAgentID(address string) (agent.AgentID, error) {
 
 	switch address {
 	case "deacon":
-		return agent.DeaconAddress(), nil
+		return agent.DeaconAddress, nil
 	case "mayor":
-		return agent.MayorAddress(), nil
+		return agent.MayorAddress, nil
 	}
 
 	parts := strings.Split(address, "/")
@@ -67,7 +68,7 @@ func addressToAgentID(address string) (agent.AgentID, error) {
 		switch first {
 		case "deacon":
 			// Deacon sub-agents like "deacon/dogs/name" - treat as deacon for now
-			return agent.DeaconAddress(), nil
+			return agent.DeaconAddress, nil
 		}
 		// Normal rig/role/name
 		switch role {
@@ -365,15 +366,11 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	// Resolve agent name (with optional override)
-	agentName, _ := config.ResolveRoleAgentName("deacon", townRoot, deaconAgentOverride)
-
-	// Create manager with resolved agent name
-	mgr := factory.DeaconManager(townRoot, agentName)
+	agents := factory.Agents(townRoot)
+	id := agent.AgentID(constants.RoleDeacon)
 
 	// Check if already running
-	running, _ := mgr.IsRunning()
-	if running {
+	if agents.Exists(id) {
 		return fmt.Errorf("Deacon session already running. Attach with: gt deacon attach")
 	}
 
@@ -385,15 +382,16 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Starting Deacon session...")
 
-	// Start the deacon agent
-	if err := mgr.Start(); err != nil {
+	// Resolve agent name (with optional override) and start
+	agentName, _ := config.ResolveRoleAgentName("deacon", townRoot, deaconAgentOverride)
+	if _, err := factory.Start(townRoot, agent.DeaconAddress, agentName); err != nil {
 		return fmt.Errorf("starting deacon: %w", err)
 	}
 
 	// Run startup fallback (dismiss dialogs, etc.)
 	runtimeConfig := config.LoadRuntimeConfig(townRoot)
 	for _, fallbackCmd := range runtime.StartupFallbackCommands("deacon", runtimeConfig) {
-		_ = mgr.Nudge(fallbackCmd)
+		_ = agents.Nudge(id, fallbackCmd)
 	}
 
 	// Inject startup nudge for predecessor discovery via /resume
@@ -402,12 +400,12 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 		Sender:    "daemon",
 		Topic:     "patrol",
 	})
-	_ = mgr.Nudge(startupMsg)
+	_ = agents.Nudge(id, startupMsg)
 
 	// GUPP: Gas Town Universal Propulsion Principle
 	// Send the propulsion nudge to trigger autonomous patrol execution.
 	time.Sleep(2 * time.Second)
-	_ = mgr.Nudge(session.PropulsionNudgeForRole("deacon", deaconDir))
+	_ = agents.Nudge(id, session.PropulsionNudgeForRole("deacon", deaconDir))
 
 	fmt.Printf("%s Deacon session started. Attach with: %s\n",
 		style.Bold.Render("✓"),
@@ -416,29 +414,23 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// createDeaconManager creates a deacon manager with optional agent override.
-func createDeaconManager(townRoot, agentOverride string) *deacon.Manager {
-	agentName, _ := config.ResolveRoleAgentName("deacon", townRoot, agentOverride)
-	return factory.DeaconManager(townRoot, agentName)
-}
-
 func runDeaconStop(cmd *cobra.Command, args []string) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	mgr := createDeaconManager(townRoot, "")
+	agents := factory.Agents(townRoot)
+	id := agent.AgentID(constants.RoleDeacon)
 
 	// Check if running
-	running, _ := mgr.IsRunning()
-	if !running {
+	if !agents.Exists(id) {
 		return errors.New("Deacon session is not running")
 	}
 
 	fmt.Println("Stopping Deacon session...")
 
-	if err := mgr.Stop(); err != nil {
+	if err := agents.Stop(id, true); err != nil {
 		return fmt.Errorf("stopping deacon: %w", err)
 	}
 
@@ -452,11 +444,11 @@ func runDeaconAttach(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	mgr := createDeaconManager(townRoot, deaconAgentOverride)
+	agents := factory.Agents(townRoot)
+	id := agent.AgentID(constants.RoleDeacon)
 
 	// Check if running
-	running, _ := mgr.IsRunning()
-	if !running {
+	if !agents.Exists(id) {
 		// Auto-start if not running
 		fmt.Println("Deacon session not running, starting...")
 		if err := runDeaconStart(cmd, args); err != nil {
@@ -465,8 +457,7 @@ func runDeaconAttach(cmd *cobra.Command, args []string) error {
 	}
 
 	// Smart attach: switches if inside tmux, attaches if outside
-	agents := agent.ForTown(townRoot)
-	return agents.Attach(agent.DeaconAddress())
+	return agents.Attach(agent.DeaconAddress)
 }
 
 func runDeaconStatus(cmd *cobra.Command, args []string) error {
@@ -489,10 +480,10 @@ func runDeaconStatus(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 
-	mgr := createDeaconManager(townRoot, "")
+	agents := factory.Agents(townRoot)
+	id := agent.AgentID(constants.RoleDeacon)
 
-	status, _ := mgr.Status()
-	if status.State == deacon.StateRunning {
+	if agents.Exists(id) {
 		fmt.Printf("%s Deacon session is %s\n",
 			style.Bold.Render("●"),
 			style.Bold.Render("running"))
@@ -513,17 +504,12 @@ func runDeaconRestart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	mgr := createDeaconManager(townRoot, deaconAgentOverride)
-
 	fmt.Println("Restarting Deacon...")
 
-	running, _ := mgr.IsRunning()
-	if running {
-		// Stop existing session
-		if err := mgr.Stop(); err != nil {
-			style.PrintWarning("failed to stop session: %v", err)
-		}
-	}
+	// Stop if running (ignore errors - we'll start fresh anyway)
+	agents := factory.Agents(townRoot)
+	id := agent.AgentID(constants.RoleDeacon)
+	_ = agents.Stop(id, true)
 
 	// Start fresh
 	if err := runDeaconStart(cmd, args); err != nil {

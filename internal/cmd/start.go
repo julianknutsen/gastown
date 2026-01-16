@@ -14,15 +14,11 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/daemon"
-	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/polecat"
-	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -190,16 +186,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// startCoreAgents starts Mayor and Deacon sessions using the Manager pattern.
+// startCoreAgents starts Mayor and Deacon sessions.
 func startCoreAgents(townRoot string, agentOverride string) error {
-	// Resolve agents: command line override takes precedence over config
-	mayorAgent := config.ResolveAgentForRole("mayor", townRoot, "", agentOverride)
-	deaconAgent := config.ResolveAgentForRole("deacon", townRoot, "", agentOverride)
+	// Resolve agent names: command line override takes precedence over config
+	mayorAgentName := config.ResolveAgentForRole("mayor", townRoot, "", agentOverride)
+	deaconAgentName := config.ResolveAgentForRole("deacon", townRoot, "", agentOverride)
 
 	// Start Mayor first (so Deacon sees it as up)
-	mayorMgr := factory.MayorManager(townRoot, mayorAgent)
-	if err := mayorMgr.Start(); err != nil {
-		if err == mayor.ErrAlreadyRunning {
+	if _, err := factory.Start(townRoot, agent.MayorAddress, mayorAgentName); err != nil {
+		if err == agent.ErrAlreadyRunning {
 			fmt.Printf("  %s Mayor already running\n", style.Dim.Render("○"))
 		} else {
 			return fmt.Errorf("starting Mayor: %w", err)
@@ -209,9 +204,8 @@ func startCoreAgents(townRoot string, agentOverride string) error {
 	}
 
 	// Start Deacon (health monitor)
-	deaconMgr := factory.DeaconManager(townRoot, deaconAgent)
-	if err := deaconMgr.Start(); err != nil {
-		if err == deacon.ErrAlreadyRunning {
+	if _, err := factory.Start(townRoot, agent.DeaconAddress, deaconAgentName); err != nil {
+		if err == agent.ErrAlreadyRunning {
 			fmt.Printf("  %s Deacon already running\n", style.Dim.Render("○"))
 		} else {
 			return fmt.Errorf("starting Deacon: %w", err)
@@ -233,11 +227,11 @@ func startRigAgents(townRoot string) {
 	}
 
 	for _, r := range rigs {
-		// Start Witness (manager handles existence check)
+		// Start Witness
 		agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
-		witMgr := factory.WitnessManager(r, townRoot, agentName)
-		if err := witMgr.Start(); err != nil {
-			if err == witness.ErrAlreadyRunning {
+		witnessID := agent.WitnessAddress(r.Name)
+		if _, err := factory.Start(townRoot, witnessID, agentName); err != nil {
+			if err == agent.ErrAlreadyRunning {
 				fmt.Printf("  %s %s witness already running\n", style.Dim.Render("○"), r.Name)
 			} else {
 				fmt.Printf("  %s %s witness failed: %v\n", style.Dim.Render("○"), r.Name, err)
@@ -246,11 +240,11 @@ func startRigAgents(townRoot string) {
 			fmt.Printf("  %s %s witness started\n", style.Bold.Render("✓"), r.Name)
 		}
 
-		// Start Refinery (manager handles existence check)
+		// Start Refinery
 		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
-		refineryMgr := factory.RefineryManager(r, townRoot, refineryAgentName)
-		if err := refineryMgr.Start(); err != nil {
-			if errors.Is(err, refinery.ErrAlreadyRunning) {
+		refineryID := agent.RefineryAddress(r.Name)
+		if _, err := factory.Start(townRoot, refineryID, refineryAgentName); err != nil {
+			if errors.Is(err, agent.ErrAlreadyRunning) {
 				fmt.Printf("  %s %s refinery already running\n", style.Dim.Render("○"), r.Name)
 			} else {
 				fmt.Printf("  %s %s refinery failed: %v\n", style.Dim.Render("○"), r.Name, err)
@@ -452,7 +446,7 @@ func stopAgentsInOrder(agents agent.Agents, toStop []agent.AgentID, graceful boo
 	}
 
 	// 1. Stop Deacon first
-	deaconID := agent.DeaconAddress()
+	deaconID := agent.DeaconAddress
 	if inList(deaconID) {
 		if err := agents.Stop(deaconID, graceful); err == nil {
 			fmt.Printf("  %s %s stopped\n", style.Bold.Render("✓"), deaconID)
@@ -461,7 +455,7 @@ func stopAgentsInOrder(agents agent.Agents, toStop []agent.AgentID, graceful boo
 	}
 
 	// 2. Stop others (except Mayor)
-	mayorID := agent.MayorAddress()
+	mayorID := agent.MayorAddress
 	for _, id := range toStop {
 		if id == deaconID || id == mayorID {
 			continue
@@ -636,18 +630,18 @@ func runStartCrew(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("rig '%s' not found", rigName)
 	}
 
-	// Create crew manager
+	// Resolve agent name
 	agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
 	if startCrewAgentOverride != "" {
 		agentName = startCrewAgentOverride
 	}
-	crewMgr := factory.CrewManager(r, townRoot, agentName)
 
-	// Use manager's Start() method - handles workspace creation, settings, and session
-	err = crewMgr.Start(name, crew.StartOptions{})
-	if err != nil {
-		if errors.Is(err, crew.ErrSessionRunning) {
-			fmt.Printf("%s Session already running: %s\n", style.Dim.Render("○"), crewMgr.SessionName(name))
+	// Use factory.Start() for crew
+	crewID := agent.CrewAddress(rigName, name)
+	sessionName := fmt.Sprintf("gt-%s-c-%s", rigName, name)
+	if _, err = factory.Start(townRoot, crewID, agentName); err != nil {
+		if errors.Is(err, agent.ErrAlreadyRunning) {
+			fmt.Printf("%s Session already running: %s\n", style.Dim.Render("○"), sessionName)
 		} else {
 			return err
 		}
@@ -679,7 +673,7 @@ func getCrewToStart(r *rig.Rig, townRoot string) []string {
 	// Handle "all" - list all existing crew
 	if startup == "all" {
 		agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
-		crewMgr := factory.CrewManager(r, townRoot, agentName)
+		crewMgr := factory.New(townRoot).CrewManager(r, agentName)
 		workers, err := crewMgr.List()
 		if err != nil {
 			return nil
@@ -726,11 +720,11 @@ func startCrewMember(rigName, crewName, townRoot string) error {
 		return fmt.Errorf("rig '%s' not found", rigName)
 	}
 
-	// Create crew manager and use Start() method
+	// Use factory.Start() for crew
 	agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
-	crewMgr := factory.CrewManager(r, townRoot, agentName)
+	crewID := agent.CrewAddress(rigName, crewName)
 
-	// Start handles workspace creation, settings, and session all in one
-	// Zombie sessions are detected and restarted automatically by agent.Implementation.Start()
-	return crewMgr.Start(crewName, crew.StartOptions{})
+	// Zombie sessions are detected and restarted automatically by factory.Start()
+	_, err = factory.Start(townRoot, crewID, agentName)
+	return err
 }

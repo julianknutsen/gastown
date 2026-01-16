@@ -259,7 +259,7 @@ func getRefineryManager(rigName string) (*refinery.Manager, *rig.Rig, string, er
 	}
 
 	agentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
-	mgr := factory.RefineryManager(r, townRoot, agentName)
+	mgr := factory.New(townRoot).RefineryManager(r, agentName)
 	return mgr, r, rigName, nil
 }
 
@@ -269,15 +269,33 @@ func runRefineryStart(cmd *cobra.Command, args []string) error {
 		rigName = args[0]
 	}
 
-	mgr, _, rigName, err := getRefineryManager(rigName)
+	// Infer rig from cwd if not provided
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+	if rigName == "" {
+		rigName, err = inferRigFromCwd(townRoot)
+		if err != nil {
+			return fmt.Errorf("could not determine rig: %w\nUsage: gt refinery start <rig>", err)
+		}
+	}
+
+	// Validate rig exists
+	_, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
 
+	// Resolve agent name
+	agentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+
 	fmt.Printf("Starting refinery for %s...\n", rigName)
 
-	if err := mgr.Start(); err != nil {
-		if err == refinery.ErrAlreadyRunning {
+	// Use factory.Start() with RefineryAddress
+	id := agent.RefineryAddress(rigName)
+	if _, err := factory.Start(townRoot, id, agentName); err != nil {
+		if err == agent.ErrAlreadyRunning {
 			fmt.Printf("%s Refinery is already running\n", style.Dim.Render("⚠"))
 			return nil
 		}
@@ -295,16 +313,28 @@ func runRefineryStop(cmd *cobra.Command, args []string) error {
 		rigName = args[0]
 	}
 
-	mgr, _, rigName, err := getRefineryManager(rigName)
+	// Infer rig from cwd if not provided
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+	if rigName == "" {
+		rigName, err = inferRigFromCwd(townRoot)
+		if err != nil {
+			return fmt.Errorf("could not determine rig: %w\nUsage: gt refinery stop <rig>", err)
+		}
 	}
 
-	if err := mgr.Stop(); err != nil {
-		if err == refinery.ErrNotRunning {
-			fmt.Printf("%s Refinery is not running\n", style.Dim.Render("⚠"))
-			return nil
-		}
+	// Use factory.Agents().Stop() with RefineryAddress
+	agents := factory.Agents(townRoot)
+	id := agent.RefineryAddress(rigName)
+
+	if !agents.Exists(id) {
+		fmt.Printf("%s Refinery is not running\n", style.Dim.Render("⚠"))
+		return nil
+	}
+
+	if err := agents.Stop(id, true); err != nil {
 		return fmt.Errorf("stopping refinery: %w", err)
 	}
 
@@ -340,11 +370,11 @@ func runRefineryStatus(cmd *cobra.Command, args []string) error {
 
 	stateStr := string(ref.State)
 	switch ref.State {
-	case refinery.StateRunning:
+	case agent.StateRunning:
 		stateStr = style.Bold.Render("● running")
-	case refinery.StateStopped:
+	case agent.StateStopped:
 		stateStr = style.Dim.Render("○ stopped")
-	case refinery.StatePaused:
+	case agent.StatePaused:
 		stateStr = style.Dim.Render("⏸ paused")
 	}
 	fmt.Printf("  State: %s\n", stateStr)
@@ -468,24 +498,26 @@ func runRefineryAttach(cmd *cobra.Command, args []string) error {
 	}
 
 	// Use getRefineryManager to validate rig (and infer from cwd if needed)
-	mgr, _, rigName, err := getRefineryManager(rigName)
+	_, r, rigName, err := getRefineryManager(rigName)
 	if err != nil {
 		return err
 	}
 
 	// Check if session exists
-	if !mgr.IsRunning() {
+	agents := factory.Agents(townRoot)
+	refineryID := agent.RefineryAddress(rigName)
+	if !agents.Exists(refineryID) {
 		// Auto-start if not running
 		fmt.Printf("Refinery not running for %s, starting...\n", rigName)
-		if err := mgr.Start(); err != nil {
+		agentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+		if _, err := factory.Start(townRoot, refineryID, agentName); err != nil {
 			return fmt.Errorf("starting refinery: %w", err)
 		}
 		fmt.Printf("%s Refinery started\n", style.Bold.Render("✓"))
 	}
 
 	// Smart attach: switches if inside tmux, attaches if outside
-	agents := agent.ForTown(townRoot)
-	return agents.Attach(agent.RefineryAddress(rigName))
+	return agents.Attach(refineryID)
 }
 
 func runRefineryRestart(cmd *cobra.Command, args []string) error {
@@ -494,20 +526,23 @@ func runRefineryRestart(cmd *cobra.Command, args []string) error {
 		rigName = args[0]
 	}
 
-	mgr, _, rigName, err := getRefineryManager(rigName)
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	_, r, rigName, err := getRefineryManager(rigName)
 	if err != nil {
 		return err
 	}
 
 	fmt.Printf("Restarting refinery for %s...\n", rigName)
 
-	// Stop if running (ignore ErrNotRunning)
-	if err := mgr.Stop(); err != nil && err != refinery.ErrNotRunning {
-		return fmt.Errorf("stopping refinery: %w", err)
-	}
-
-	// Start fresh
-	if err := mgr.Start(); err != nil {
+	// Resolve agent name and use factory.Start() with KillExisting
+	agentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+	refineryID := agent.RefineryAddress(rigName)
+	opts := []factory.StartOption{factory.WithKillExisting()}
+	if _, err := factory.Start(townRoot, refineryID, agentName, opts...); err != nil {
 		return fmt.Errorf("starting refinery: %w", err)
 	}
 

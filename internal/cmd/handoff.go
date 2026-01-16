@@ -201,10 +201,10 @@ func resolveRoleToAgentID(role string) (agent.AgentID, error) {
 
 	switch strings.ToLower(role) {
 	case "mayor", "may":
-		return agent.MayorAddress(), nil
+		return agent.MayorAddress, nil
 
 	case "deacon", "dea":
-		return agent.DeaconAddress(), nil
+		return agent.DeaconAddress, nil
 
 	case "crew":
 		// Try to get rig and crew name from environment or cwd

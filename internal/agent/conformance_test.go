@@ -48,7 +48,7 @@ func TestConformance_Start_CreatesAgent(t *testing.T) {
 			agents := factory()
 
 			id := testAgent("test-agent")
-			err := agents.Start(id, "/tmp", "echo hello")
+			err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 			require.NoError(t, err)
 			assert.True(t, agents.Exists(id))
 		})
@@ -62,11 +62,11 @@ func TestConformance_Start_AlreadyRunning_ReturnsError(t *testing.T) {
 
 			// Start first agent
 			id := testAgent("test-agent")
-			err := agents.Start(id, "/tmp", "echo hello")
+			err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 			require.NoError(t, err)
 
 			// Try to start again with same name
-			err = agents.Start(id, "/tmp", "echo hello")
+			err = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 			assert.ErrorIs(t, err, agent.ErrAlreadyRunning)
 
 			// Original agent should still exist
@@ -93,7 +93,7 @@ func TestConformance_Stop_TerminatesAgent(t *testing.T) {
 			agents := factory()
 
 			id := testAgent("test-agent")
-			_ = agents.Start(id, "/tmp", "echo hello")
+			_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 			err := agents.Stop(id, false)
 			require.NoError(t, err)
 
@@ -120,7 +120,7 @@ func TestConformance_Stop_Graceful(t *testing.T) {
 			agents := factory()
 
 			id := testAgent("test-agent")
-			_ = agents.Start(id, "/tmp", "echo hello")
+			_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 			err := agents.Stop(id, true) // graceful=true
 			require.NoError(t, err)
 
@@ -137,7 +137,7 @@ func TestConformance_GetInfo_ReturnsName(t *testing.T) {
 			agents := factory()
 
 			id := testAgent("test-agent")
-			_ = agents.Start(id, "/tmp", "echo hello")
+			_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 			info, err := agents.GetInfo(id)
 
 			require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestConformance_WaitReady_WhenRunning_ReturnsNil(t *testing.T) {
 			agents := factory()
 
 			id := testAgent("test-agent")
-			_ = agents.Start(id, "/tmp", "echo hello")
+			_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 			err := agents.WaitReady(id)
 			assert.NoError(t, err)
 		})
@@ -181,7 +181,7 @@ func TestConformance_GetInfo_ReturnsInfo(t *testing.T) {
 			agents := factory()
 
 			id := testAgent("test-agent")
-			_ = agents.Start(id, "/tmp", "echo hello")
+			_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 			info, err := agents.GetInfo(id)
 
 			require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestConformance_FullLifecycle(t *testing.T) {
 
 			// Start
 			id := testAgent("lifecycle-test")
-			err := agents.Start(id, "/tmp", "echo hello")
+			err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 			require.NoError(t, err)
 			assert.True(t, agents.Exists(id))
 
@@ -227,7 +227,7 @@ func TestConformance_FullLifecycle(t *testing.T) {
 			assert.False(t, agents.Exists(id))
 
 			// Start again (should work after stop)
-			err = agents.Start(id, "/tmp", "echo hello again")
+			err = agents.StartWithConfig(id, startCfg("/tmp", "echo hello again"))
 			require.NoError(t, err)
 			assert.True(t, agents.Exists(id))
 		})
@@ -245,11 +245,11 @@ func TestConformance_MultipleAgents(t *testing.T) {
 			id1 := testAgent("agent-1")
 			id2 := testAgent("agent-2")
 			id3 := testAgent("agent-3")
-			err := agents.Start(id1, "/tmp", "echo 1")
+			err := agents.StartWithConfig(id1, startCfg("/tmp", "echo 1"))
 			require.NoError(t, err)
-			err = agents.Start(id2, "/tmp", "echo 2")
+			err = agents.StartWithConfig(id2, startCfg("/tmp", "echo 2"))
 			require.NoError(t, err)
-			err = agents.Start(id3, "/tmp", "echo 3")
+			err = agents.StartWithConfig(id3, startCfg("/tmp", "echo 3"))
 			require.NoError(t, err)
 
 			// All should exist

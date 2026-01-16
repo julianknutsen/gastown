@@ -13,8 +13,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
@@ -235,13 +237,24 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Sent handoff mail to %s/%s\n", r.Name, name)
 
-	// Use manager's Start() with refresh options
-	err = crewMgr.Start(name, crew.StartOptions{
-		KillExisting: true,      // Kill old session if running
-		Topic:        "refresh", // Startup nudge topic
-		Interactive:  true,      // No --dangerously-skip-permissions
-	})
-	if err != nil {
+	// Resolve agent name
+	townRoot, _ := workspace.Find(r.Path)
+	if townRoot == "" {
+		townRoot = r.Path
+	}
+	agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
+	if crewAgentOverride != "" {
+		agentName = crewAgentOverride
+	}
+
+	// Use factory.Start() with refresh options
+	id := agent.CrewAddress(r.Name, name)
+	opts := []factory.StartOption{
+		factory.WithKillExisting(),
+		factory.WithTopic("refresh"),
+		factory.WithInteractive(),
+	}
+	if _, err = factory.Start(townRoot, id, agentName, opts...); err != nil {
 		return fmt.Errorf("starting crew session: %w", err)
 	}
 
@@ -299,8 +312,15 @@ func runCrewStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Build start options (shared across all crew members)
-	opts := crew.StartOptions{}
+	// Resolve agent name and townRoot for factory.Start()
+	townRoot, _ := workspace.Find(r.Path)
+	if townRoot == "" {
+		townRoot = r.Path
+	}
+	agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
+	if crewAgentOverride != "" {
+		agentName = crewAgentOverride
+	}
 
 	// Start each crew member in parallel
 	type result struct {
@@ -317,8 +337,9 @@ func runCrewStart(cmd *cobra.Command, args []string) error {
 		wg.Add(1)
 		go func(crewName string) {
 			defer wg.Done()
-			err := crewMgr.Start(crewName, opts)
-			skipped := errors.Is(err, crew.ErrSessionRunning)
+			id := agent.CrewAddress(rigName, crewName)
+			_, err := factory.Start(townRoot, id, agentName)
+			skipped := errors.Is(err, agent.ErrAlreadyRunning)
 			if skipped {
 				err = nil // Not an error, just already running
 			}
@@ -379,20 +400,30 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 			name = crewName
 		}
 
-		crewMgr, r, err := getCrewManager(rigOverride, crewAgentOverride)
+		_, r, err := getCrewManager(rigOverride, crewAgentOverride)
 		if err != nil {
 			fmt.Printf("Error restarting %s: %v\n", arg, err)
 			lastErr = err
 			continue
 		}
 
-		// Use manager's Start() with restart options
-		// Start() will create workspace if needed (idempotent)
-		err = crewMgr.Start(name, crew.StartOptions{
-			KillExisting: true,      // Kill old session if running
-			Topic:        "restart", // Startup nudge topic
-		})
-		if err != nil {
+		// Resolve agent name and townRoot
+		townRoot, _ := workspace.Find(r.Path)
+		if townRoot == "" {
+			townRoot = r.Path
+		}
+		agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
+		if crewAgentOverride != "" {
+			agentName = crewAgentOverride
+		}
+
+		// Use factory.Start() with restart options
+		id := agent.CrewAddress(r.Name, name)
+		opts := []factory.StartOption{
+			factory.WithKillExisting(),
+			factory.WithTopic("restart"),
+		}
+		if _, err = factory.Start(townRoot, id, agentName, opts...); err != nil {
 			fmt.Printf("Error restarting %s: %v\n", arg, err)
 			lastErr = err
 			continue
@@ -452,37 +483,29 @@ func runCrewRestartAll() error {
 	var succeeded, failed int
 	var failures []string
 
-	for _, agent := range targets {
-		agentName := fmt.Sprintf("%s/crew/%s", agent.Rig, agent.AgentName)
+	// Resolve agent runtime (use override if set)
+	aiRuntime, _ := config.ResolveRoleAgentName("crew", townRoot, "")
+	if crewAgentOverride != "" {
+		aiRuntime = crewAgentOverride
+	}
 
-		// Use crewRig temporarily to get the right crew manager
-		savedRig := crewRig
-		crewRig = agent.Rig
+	for _, as := range targets {
+		agentDisplay := fmt.Sprintf("%s/crew/%s", as.Rig, as.AgentName)
 
-		crewMgr, _, err := getCrewManager(crewRig, crewAgentOverride)
-		if err != nil {
-			failed++
-			failures = append(failures, fmt.Sprintf("%s: %v", agentName, err))
-			fmt.Printf("  %s %s\n", style.ErrorPrefix, agentName)
-			crewRig = savedRig
-			continue
+		// Use factory.Start() with restart options
+		id := agent.CrewAddress(as.Rig, as.AgentName)
+		opts := []factory.StartOption{
+			factory.WithKillExisting(),
+			factory.WithTopic("restart"),
 		}
-
-		// Use manager's Start() with restart options
-		err = crewMgr.Start(agent.AgentName, crew.StartOptions{
-			KillExisting: true,      // Kill old session if running
-			Topic:        "restart", // Startup nudge topic
-		})
-		if err != nil {
+		if _, err := factory.Start(townRoot, id, aiRuntime, opts...); err != nil {
 			failed++
-			failures = append(failures, fmt.Sprintf("%s: %v", agentName, err))
-			fmt.Printf("  %s %s\n", style.ErrorPrefix, agentName)
+			failures = append(failures, fmt.Sprintf("%s: %v", agentDisplay, err))
+			fmt.Printf("  %s %s\n", style.ErrorPrefix, agentDisplay)
 		} else {
 			succeeded++
-			fmt.Printf("  %s %s\n", style.SuccessPrefix, agentName)
+			fmt.Printf("  %s %s\n", style.SuccessPrefix, agentDisplay)
 		}
-
-		crewRig = savedRig
 
 		// Small delay between restarts to avoid overwhelming the system
 		time.Sleep(constants.ShutdownNotifyDelay)

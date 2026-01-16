@@ -55,7 +55,7 @@ func runCrewAdd(cmd *cobra.Command, args []string) error {
 
 	// Create crew manager
 	agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
-	crewMgr := factory.CrewManager(r, townRoot, agentName)
+	crewMgr := factory.New(townRoot).CrewManager(r, agentName)
 
 	bd := beads.New(beads.ResolveBeadsDir(r.Path))
 

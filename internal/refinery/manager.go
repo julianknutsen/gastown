@@ -17,45 +17,39 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/mrqueue"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/runtime"
 )
 
-// Common errors
-var (
-	ErrNotRunning     = errors.New("refinery not running")
-	ErrAlreadyRunning = agent.ErrAlreadyRunning
-	ErrNoQueue        = errors.New("no items in queue")
-)
+// ErrNoQueue indicates there are no items in the queue.
+var ErrNoQueue = errors.New("no items in queue")
 
-// Manager handles refinery lifecycle and queue operations.
+// Manager handles refinery status and queue operations.
+// Start/Stop operations are handled via factory.Start()/factory.Agents().Stop().
 type Manager struct {
-	rig          *rig.Rig
-	agents       agent.Agents
-	agentName    string
-	workDir      string
 	stateManager *agent.StateManager[Refinery]
+	agents       agent.Agents
+	rigName      string
+	rigPath      string
+	address      agent.AgentID
+	rig          *rig.Rig
 	output       io.Writer // Output destination for user-facing messages
 }
 
 // NewManager creates a new refinery manager for a rig.
-// agents is the Agents implementation (real or test double) to use for agent lifecycle.
-// agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
-func NewManager(agents agent.Agents, r *rig.Rig, agentName string) *Manager {
-	return &Manager{
-		rig:       r,
-		agents:    agents,
-		agentName: agentName,
-		workDir:   r.Path,
-		stateManager: agent.NewStateManager[Refinery](r.Path, "refinery.json", func() *Refinery {
-			return &Refinery{RigName: r.Name, State: StateStopped}
-		}),
-		output: os.Stdout,
+// The manager handles status queries and queue operations.
+// Lifecycle operations (Start/Stop) should use factory.Start()/factory.Agents().Stop().
+func NewManager(agents agent.Agents, r *rig.Rig, _ string) *Manager {
+	stateFactory := func() *Refinery {
+		return &Refinery{RigName: r.Name, State: agent.StateStopped}
 	}
-}
-
-// address returns the agent address for the refinery.
-func (m *Manager) address() agent.AgentID {
-	return agent.RefineryAddress(m.rig.Name)
+	return &Manager{
+		stateManager: agent.NewStateManager[Refinery](r.Path, "refinery.json", stateFactory),
+		agents:       agents,
+		rigName:      r.Name,
+		rigPath:      r.Path,
+		address:      agent.RefineryAddress(r.Name),
+		rig:          r,
+		output:       os.Stdout,
+	}
 }
 
 // SetOutput sets the output writer for user-facing messages.
@@ -64,125 +58,61 @@ func (m *Manager) SetOutput(w io.Writer) {
 	m.output = w
 }
 
-// stateFile returns the path to the refinery state file.
-func (m *Manager) stateFile() string {
-	return filepath.Join(m.rig.Path, ".runtime", "refinery.json")
+// refineryDir returns the working directory for the refinery.
+// Prefers refinery/rig/, falls back to mayor/rig (legacy).
+func (m *Manager) refineryDir() string {
+	refineryRigDir := filepath.Join(m.rig.Path, "refinery", "rig")
+	if _, err := os.Stat(refineryRigDir); err == nil {
+		return refineryRigDir
+	}
+	// Fall back to mayor/rig (legacy architecture)
+	return filepath.Join(m.rig.Path, "mayor", "rig")
 }
-
-// SessionName returns the tmux session name for this refinery.
-func (m *Manager) SessionName() string {
-	return fmt.Sprintf("gt-%s-refinery", m.rig.Name)
-}
-
-// ID returns the AgentID for the refinery.
-func (m *Manager) ID() agent.AgentID {
-	return m.address()
-}
-
-// IsRunning checks if the refinery session is currently active.
-func (m *Manager) IsRunning() bool {
-	return m.agents.Exists(m.address())
-}
-
-// loadState loads refinery state from disk.
-func (m *Manager) loadState() (*Refinery, error) {
-	return m.stateManager.Load()
-}
-
-// saveState persists refinery state to disk using atomic write.
-func (m *Manager) saveState(ref *Refinery) error {
-	return m.stateManager.Save(ref)
-}
-
 
 // Status returns the current refinery status.
 // Reconciles persisted state with actual agent existence.
 func (m *Manager) Status() (*Refinery, error) {
-	ref, err := m.loadState()
+	ref, err := m.stateManager.Load()
 	if err != nil {
 		return nil, err
 	}
 
 	// Reconcile state with reality (don't persist, just report accurately)
-	if ref.State == StateRunning && !m.agents.Exists(m.address()) {
-		ref.State = StateStopped // Agent crashed
+	if ref.IsRunning() && !m.agents.Exists(m.address) {
+		ref.SetStopped() // Agent crashed
 	}
 
 	return ref, nil
 }
 
-// Start starts the refinery in a tmux session.
-func (m *Manager) Start() error {
-	ref, err := m.loadState()
-	if err != nil {
-		return err
-	}
-
-	// Working directory is the refinery worktree (shares .git with mayor/polecats)
-	refineryRigDir := filepath.Join(m.rig.Path, "refinery", "rig")
-	if _, err := os.Stat(refineryRigDir); os.IsNotExist(err) {
-		// Fall back to mayor/rig (legacy architecture)
-		refineryRigDir = filepath.Join(m.rig.Path, "mayor", "rig")
-	}
-
-	// Ensure runtime settings exist in the working directory
-	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(refineryRigDir, "refinery", runtimeConfig); err != nil {
-		return fmt.Errorf("ensuring runtime settings: %w", err)
-	}
-
-	// Build startup command (env vars are prepended by the Agents layer)
-	command := config.BuildAgentCommand(m.agentName, "")
-
-	// Start the agent session
-	if err := m.agents.Start(m.address(), refineryRigDir, command); err != nil {
-		return err
-	}
-
-	// Update state to running
-	now := time.Now()
-	ref.State = StateRunning
-	ref.StartedAt = &now
-	if err := m.saveState(ref); err != nil {
-		_ = m.agents.Stop(m.address(), false) // best-effort cleanup on state save failure
-		return fmt.Errorf("saving state: %w", err)
-	}
-
-	// Wait for agent to be ready
-	_ = m.agents.WaitReady(m.address())
-
-	return nil
+// SessionName returns the tmux session name for this refinery.
+func (m *Manager) SessionName() string {
+	return fmt.Sprintf("gt-%s-refinery", m.rigName)
 }
 
-// Stop stops the refinery.
-// Returns ErrNotRunning if the agent was not running (for user messaging).
-// Always cleans up zombie sessions (tmux exists but process dead).
-func (m *Manager) Stop() error {
-	ref, err := m.loadState()
-	if err != nil {
-		return err
-	}
+// IsRunning checks if the refinery session is currently active.
+func (m *Manager) IsRunning() bool {
+	return m.agents.Exists(m.address)
+}
 
-	stateWasRunning := ref.State == StateRunning
-	processWasRunning := m.agents.Exists(m.address())
+// Address returns the agent's AgentID.
+func (m *Manager) Address() agent.AgentID {
+	return m.address
+}
 
-	// Always call Stop to clean up zombies
-	stopErr := m.agents.Stop(m.address(), true)
+// RigPath returns the path to the rig directory.
+func (m *Manager) RigPath() string {
+	return m.rigPath
+}
 
-	ref.State = StateStopped
-	if err := m.saveState(ref); err != nil {
-		return err
-	}
+// LoadState loads the refinery state from disk.
+func (m *Manager) LoadState() (*Refinery, error) {
+	return m.stateManager.Load()
+}
 
-	if stopErr != nil {
-		return stopErr
-	}
-
-	// Only report "not running" if neither state nor process indicated running
-	if !stateWasRunning && !processWasRunning {
-		return ErrNotRunning
-	}
-	return nil
+// SaveState persists the refinery state to disk.
+func (m *Manager) SaveState(ref *Refinery) error {
+	return m.stateManager.Save(ref)
 }
 
 // Queue returns the current merge queue.
@@ -201,7 +131,7 @@ func (m *Manager) Queue() ([]QueueItem, error) {
 	}
 
 	// Load any current processing state
-	ref, err := m.loadState()
+	ref, err := m.LoadState()
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +345,7 @@ var (
 
 // GetMR returns a merge request by ID from the state.
 func (m *Manager) GetMR(id string) (*MergeRequest, error) {
-	ref, err := m.loadState()
+	ref, err := m.LoadState()
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +397,7 @@ func (m *Manager) FindMR(idOrBranch string) (*MergeRequest, error) {
 // The processNow parameter is deprecated - the Refinery agent handles processing.
 // Clearing the error is sufficient; the agent will pick up the MR in its next patrol cycle.
 func (m *Manager) Retry(id string, processNow bool) error {
-	ref, err := m.loadState()
+	ref, err := m.LoadState()
 	if err != nil {
 		return err
 	}
@@ -490,7 +420,7 @@ func (m *Manager) Retry(id string, processNow bool) error {
 	mr.Error = ""
 
 	// Save the state
-	if err := m.saveState(ref); err != nil {
+	if err := m.SaveState(ref); err != nil {
 		return err
 	}
 
@@ -506,7 +436,7 @@ func (m *Manager) Retry(id string, processNow bool) error {
 
 // RegisterMR adds a merge request to the pending queue.
 func (m *Manager) RegisterMR(mr *MergeRequest) error {
-	ref, err := m.loadState()
+	ref, err := m.LoadState()
 	if err != nil {
 		return err
 	}
@@ -516,7 +446,7 @@ func (m *Manager) RegisterMR(mr *MergeRequest) error {
 	}
 
 	ref.PendingMRs[mr.ID] = mr
-	return m.saveState(ref)
+	return m.SaveState(ref)
 }
 
 // RejectMR manually rejects a merge request.
@@ -549,7 +479,7 @@ func (m *Manager) RejectMR(idOrBranch string, reason string, notify bool) (*Merg
 
 // notifyWorkerRejected sends a rejection notification to a polecat.
 func (m *Manager) notifyWorkerRejected(mr *MergeRequest, reason string) {
-	router := mail.NewRouter(m.workDir)
+	router := mail.NewRouter(m.RigPath())
 	msg := &mail.Message{
 		From:    fmt.Sprintf("%s/refinery", m.rig.Name),
 		To:      fmt.Sprintf("%s/%s", m.rig.Name, mr.Worker),

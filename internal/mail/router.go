@@ -884,8 +884,8 @@ func (r *Router) notifyRecipient(msg *Message) error {
 // Returns empty AgentID if address format is not recognized.
 //
 // Mail addresses use these formats:
-//   - "mayor" or "mayor/" → agent.MayorAddress()
-//   - "deacon" or "deacon/" → agent.DeaconAddress()
+//   - "mayor" or "mayor/" → agent.MayorAddress
+//   - "deacon" or "deacon/" → agent.DeaconAddress
 //   - "rig/witness" → agent.WitnessAddress(rig)
 //   - "rig/refinery" → agent.RefineryAddress(rig)
 //   - "rig/name" → agent.PolecatAddress(rig, name) (polecats use simple name format)
@@ -894,10 +894,10 @@ func addressToAgentID(address string) agent.AgentID {
 
 	// Town-level agents
 	if addr == "mayor" {
-		return agent.MayorAddress()
+		return agent.MayorAddress
 	}
 	if addr == "deacon" {
-		return agent.DeaconAddress()
+		return agent.DeaconAddress
 	}
 
 	// Rig-based address: "rig/target"

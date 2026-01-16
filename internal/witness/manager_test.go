@@ -16,6 +16,9 @@ import (
 // =============================================================================
 // Witness Manager Unit Tests
 // Using agent.Double for testable abstraction
+//
+// Note: Start/Stop operations are handled by factory.Start()/factory.Agents().Stop()
+// The Manager only handles status queries and state persistence.
 // =============================================================================
 
 func setupTestRig(t *testing.T) (*rig.Rig, string) {
@@ -39,183 +42,87 @@ func setupTestRig(t *testing.T) (*rig.Rig, string) {
 	}, rigPath
 }
 
-// --- Start() Tests ---
+// --- Status() Tests ---
 
-func TestManager_Start_CreatesAgent(t *testing.T) {
-	r, _ := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
-
-	err := mgr.Start()
-	require.NoError(t, err)
-
-	// Verify agent exists with correct name
-	agentID := agent.WitnessAddress(r.Name)
-	assert.True(t, agents.Exists(agentID), "agent should exist after Start")
-}
-
-func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
-	r, _ := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
-
-	// Pre-create agent using agent.WitnessAddress(r.Name)
-	agents.CreateAgent(agent.WitnessAddress(r.Name))
-
-	err := mgr.Start()
-
-	assert.ErrorIs(t, err, witness.ErrAlreadyRunning)
-}
-
-func TestManager_Start_UpdatesStateToRunning(t *testing.T) {
+func TestManager_Status_WhenAgentRunning_ReportsRunning(t *testing.T) {
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
 	mgr := witness.NewManager(agents, r, "claude")
 
-	err := mgr.Start()
-	require.NoError(t, err)
-
-	// Verify state file
-	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	data, err := os.ReadFile(stateFile)
-	require.NoError(t, err, "state file should exist")
-
-	var state witness.Witness
-	require.NoError(t, json.Unmarshal(data, &state))
-	assert.Equal(t, witness.StateRunning, state.State)
-	assert.NotNil(t, state.StartedAt)
-}
-
-// --- Stop() Tests ---
-
-func TestManager_Stop_TerminatesAgent(t *testing.T) {
-	r, _ := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
-
-	_ = mgr.Start()
-	err := mgr.Stop()
-	require.NoError(t, err)
-
-	agentID := agent.WitnessAddress(r.Name)
-	assert.False(t, agents.Exists(agentID), "agent should be gone after Stop")
-}
-
-func TestManager_Stop_WhenNotRunning_ReturnsError(t *testing.T) {
-	r, _ := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
-
-	err := mgr.Stop()
-	assert.ErrorIs(t, err, witness.ErrNotRunning)
-}
-
-func TestManager_Stop_UpdatesStateToStopped(t *testing.T) {
-	r, rigPath := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
-
-	_ = mgr.Start()
-	err := mgr.Stop()
-	require.NoError(t, err)
-
-	// Verify state file
-	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	data, err := os.ReadFile(stateFile)
-	require.NoError(t, err)
-
-	var state witness.Witness
-	require.NoError(t, json.Unmarshal(data, &state))
-	assert.Equal(t, witness.StateStopped, state.State)
-}
-
-func TestManager_Stop_StateRunningButNoAgent_Succeeds(t *testing.T) {
-	r, rigPath := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
-
-	// Write stale state (says running but no agent)
-	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	staleState := witness.Witness{
-		RigName: "testrig",
-		State:   witness.StateRunning,
-	}
-	data, _ := json.Marshal(staleState)
-	require.NoError(t, os.WriteFile(stateFile, data, 0644))
-
-	// Stop should succeed and update state
-	err := mgr.Stop()
-	require.NoError(t, err)
-
-	// Verify state updated
-	data, _ = os.ReadFile(stateFile)
-	var state witness.Witness
-	_ = json.Unmarshal(data, &state)
-	assert.Equal(t, witness.StateStopped, state.State)
-}
-
-func TestManager_Stop_StateStoppedButAgentExists_Succeeds(t *testing.T) {
-	r, rigPath := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
-
-	// Create agent manually (simulating stale agent)
+	// Simulate running agent
 	agentID := agent.WitnessAddress(r.Name)
 	agents.CreateAgent(agentID)
 
-	// Write state that says stopped
+	// Write state file that says running
 	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	staleState := witness.Witness{
-		RigName: "testrig",
-		State:   witness.StateStopped,
-	}
-	data, _ := json.Marshal(staleState)
+	state := witness.Witness{RigName: "testrig", State: agent.StateRunning}
+	data, _ := json.Marshal(state)
 	require.NoError(t, os.WriteFile(stateFile, data, 0644))
-
-	// Stop should succeed and kill the agent
-	err := mgr.Stop()
-	require.NoError(t, err)
-
-	// Agent should be gone
-	assert.False(t, agents.Exists(agentID))
-}
-
-// --- Status() Tests ---
-
-func TestManager_Status_ReturnsState(t *testing.T) {
-	r, _ := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
-
-	_ = mgr.Start()
 
 	status, err := mgr.Status()
 	require.NoError(t, err)
-	assert.Equal(t, witness.StateRunning, status.State)
+	assert.Equal(t, agent.StateRunning, status.State)
 	assert.Equal(t, []string{"p1", "p2"}, status.MonitoredPolecats)
 }
 
 func TestManager_Status_WhenAgentCrashed_DetectsMismatch(t *testing.T) {
-	// Scenario: Agent starts successfully, then crashes (killed externally).
-	// Status() should detect that state=running but agent doesn't exist.
-	r, _ := setupTestRig(t)
+	// Scenario: State says running but agent doesn't exist (crashed).
+	// Status() should detect mismatch and report stopped.
+	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
 	mgr := witness.NewManager(agents, r, "claude")
 
-	// Start the witness
-	require.NoError(t, mgr.Start())
+	// Write state that says running (but don't create agent)
+	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
+	staleState := witness.Witness{RigName: "testrig", State: agent.StateRunning}
+	data, _ := json.Marshal(staleState)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
 
-	// Simulate crash: kill agent directly without going through manager.Stop()
+	// Agent doesn't exist
 	agentID := agent.WitnessAddress(r.Name)
-	_ = agents.Stop(agentID, false) // Direct kill, bypasses manager state update
-
-	// Agent is dead
-	assert.False(t, agents.Exists(agentID), "agent should be dead after crash")
+	assert.False(t, agents.Exists(agentID), "agent should not exist")
 
 	// Status() detects the mismatch and reports stopped
 	status, err := mgr.Status()
 	require.NoError(t, err)
-	assert.Equal(t, witness.StateStopped, status.State, "should detect crashed agent")
+	assert.Equal(t, agent.StateStopped, status.State, "should detect crashed agent")
+}
+
+func TestManager_Status_WhenStateStopped_ReportsStopped(t *testing.T) {
+	r, rigPath := setupTestRig(t)
+	agents := agent.NewDouble()
+	mgr := witness.NewManager(agents, r, "claude")
+
+	// Write state that says stopped
+	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
+	state := witness.Witness{RigName: "testrig", State: agent.StateStopped}
+	data, _ := json.Marshal(state)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
+
+	status, err := mgr.Status()
+	require.NoError(t, err)
+	assert.Equal(t, agent.StateStopped, status.State)
+}
+
+// --- IsRunning() Tests ---
+
+func TestManager_IsRunning_WhenAgentExists_ReturnsTrue(t *testing.T) {
+	r, _ := setupTestRig(t)
+	agents := agent.NewDouble()
+	mgr := witness.NewManager(agents, r, "claude")
+
+	agentID := agent.WitnessAddress(r.Name)
+	agents.CreateAgent(agentID)
+
+	assert.True(t, mgr.IsRunning())
+}
+
+func TestManager_IsRunning_WhenAgentNotExists_ReturnsFalse(t *testing.T) {
+	r, _ := setupTestRig(t)
+	agents := agent.NewDouble()
+	mgr := witness.NewManager(agents, r, "claude")
+
+	assert.False(t, mgr.IsRunning())
 }
 
 // --- SessionName() Tests ---
@@ -228,27 +135,64 @@ func TestManager_SessionName_Format(t *testing.T) {
 	assert.Equal(t, "gt-testrig-witness", mgr.SessionName())
 }
 
-// --- Lifecycle Integration ---
+// --- Address() Tests ---
 
-func TestManager_FullLifecycle(t *testing.T) {
+func TestManager_Address_ReturnsCorrectAgentID(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
 	mgr := witness.NewManager(agents, r, "claude")
 
-	// Start
-	require.NoError(t, mgr.Start())
+	expected := agent.WitnessAddress(r.Name)
+	assert.Equal(t, expected, mgr.Address())
+}
 
-	// Status shows running
-	status, _ := mgr.Status()
-	assert.Equal(t, witness.StateRunning, status.State)
+// --- LoadState/SaveState Tests ---
 
-	// Stop
-	require.NoError(t, mgr.Stop())
+func TestManager_LoadState_ReturnsPersistedState(t *testing.T) {
+	r, rigPath := setupTestRig(t)
+	agents := agent.NewDouble()
+	mgr := witness.NewManager(agents, r, "claude")
 
-	// Status shows stopped
-	status, _ = mgr.Status()
-	assert.Equal(t, witness.StateStopped, status.State)
+	// Write a state file
+	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
+	state := witness.Witness{RigName: "testrig", State: agent.StateRunning}
+	data, _ := json.MarshalIndent(state, "", "  ")
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
 
-	// Can start again
-	require.NoError(t, mgr.Start())
+	loaded, err := mgr.LoadState()
+	require.NoError(t, err)
+	assert.Equal(t, "testrig", loaded.RigName)
+	assert.Equal(t, agent.StateRunning, loaded.State)
+}
+
+func TestManager_SaveState_PersistsState(t *testing.T) {
+	r, rigPath := setupTestRig(t)
+	agents := agent.NewDouble()
+	mgr := witness.NewManager(agents, r, "claude")
+
+	state := &witness.Witness{RigName: "testrig", State: agent.StateRunning}
+	err := mgr.SaveState(state)
+	require.NoError(t, err)
+
+	// Verify file was written
+	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
+	data, err := os.ReadFile(stateFile)
+	require.NoError(t, err)
+
+	var loaded witness.Witness
+	require.NoError(t, json.Unmarshal(data, &loaded))
+	assert.Equal(t, "testrig", loaded.RigName)
+	assert.Equal(t, agent.StateRunning, loaded.State)
+}
+
+func TestManager_LoadState_WhenNoFile_ReturnsDefaultState(t *testing.T) {
+	r, _ := setupTestRig(t)
+	agents := agent.NewDouble()
+	mgr := witness.NewManager(agents, r, "claude")
+
+	// Don't create state file - should return default
+	state, err := mgr.LoadState()
+	require.NoError(t, err)
+	assert.Equal(t, "testrig", state.RigName)
+	assert.Equal(t, agent.StateStopped, state.State)
 }

@@ -485,7 +485,7 @@ func showDogStatus(mgr *dog.Manager, name string) error {
 	if townRoot != "" {
 		// Check if deacon is running
 		agentsAPI := agent.ForTown(townRoot)
-		deaconID := agent.DeaconAddress()
+		deaconID := agent.DeaconAddress
 		if agentsAPI.Exists(deaconID) {
 			fmt.Printf("\nSession: deacon (running)\n")
 		}

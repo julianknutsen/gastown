@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
@@ -230,7 +231,7 @@ func getSessionManager(rigName string) (*polecat.SessionManager, *rig.Rig, error
 		return nil, nil, err
 	}
 
-	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+	polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 
 	return polecatMgr, r, nil
 }
@@ -241,7 +242,7 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	polecatMgr, r, err := getSessionManager(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -261,7 +262,9 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-	if err := polecatMgr.Start(polecatName); err != nil {
+	polecatAgentName, _ := config.ResolveRoleAgentName("polecat", townRoot, r.Path)
+	polecatID := agent.PolecatAddress(rigName, polecatName)
+	if _, err := factory.Start(townRoot, polecatID, polecatAgentName); err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
 
@@ -375,7 +378,7 @@ func runSessionList(cmd *cobra.Command, args []string) error {
 	var allSessions []SessionListItem
 
 	for _, r := range rigs {
-		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+		polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 		infos, err := polecatMgr.List()
 		if err != nil {
 			continue
@@ -489,10 +492,12 @@ func runSessionRestart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	polecatMgr, _, err := getSessionManager(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
+
+	polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 
 	// Check if running
 	running, err := polecatMgr.IsRunning(polecatName)
@@ -512,9 +517,11 @@ func runSessionRestart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Start fresh session
+	// Start fresh session using factory.Start()
 	fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-	if err := polecatMgr.Start(polecatName); err != nil {
+	polecatAgentName, _ := config.ResolveRoleAgentName("polecat", townRoot, r.Path)
+	polecatID := agent.PolecatAddress(rigName, polecatName)
+	if _, err := factory.Start(townRoot, polecatID, polecatAgentName); err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
 
@@ -631,7 +638,7 @@ func runSessionCheck(cmd *cobra.Command, args []string) error {
 	totalCrashed := 0
 
 	for _, r := range rigs {
-		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+		polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 
 		for _, polecatName := range r.Polecats {
 			totalChecked++

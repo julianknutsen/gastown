@@ -38,8 +38,8 @@ func TownID(townRoot string) string {
 	return hex.EncodeToString(h[:])[:TownIDLength]
 }
 
-// townSuffix returns the town ID suffix (e.g., "-x7k2f9") or empty string.
-func townSuffix(townRoot string) string {
+// TownSuffix returns the town ID suffix (e.g., "-x7k2f9") or empty string.
+func TownSuffix(townRoot string) string {
 	id := TownID(townRoot)
 	if id == "" {
 		return ""
@@ -157,7 +157,7 @@ func ToUniqueHumanReadableName(id SessionID, townRoot string) string {
 	}
 
 	// Append town suffix for collision prevention
-	return baseName + townSuffix(townRoot)
+	return baseName + TownSuffix(townRoot)
 }
 
 // FromUniqueHumanReadableName translates a unique name back to a logical SessionID.

@@ -5,8 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/wisp"
 )
@@ -66,7 +64,7 @@ func runRigPark(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
 	// Get rig and town root
-	townRoot, r, err := getRig(rigName)
+	townRoot, _, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -77,11 +75,10 @@ func runRigPark(cmd *cobra.Command, args []string) error {
 	agents := agent.ForTownPath(townRoot)
 
 	// Stop witness if running
-	if agents.Exists(agent.WitnessAddress(rigName)) {
+	witnessID := agent.WitnessAddress(rigName)
+	if agents.Exists(witnessID) {
 		fmt.Printf("  Stopping witness...\n")
-		agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
-		witMgr := factory.WitnessManager(r, townRoot, agentName)
-		if err := witMgr.Stop(); err != nil {
+		if err := agents.Stop(witnessID, true); err != nil {
 			fmt.Printf("  %s Failed to stop witness: %v\n", style.Warning.Render("!"), err)
 		} else {
 			stoppedAgents = append(stoppedAgents, "Witness stopped")
@@ -89,11 +86,10 @@ func runRigPark(cmd *cobra.Command, args []string) error {
 	}
 
 	// Stop refinery if running
-	if agents.Exists(agent.RefineryAddress(rigName)) {
+	refineryID := agent.RefineryAddress(rigName)
+	if agents.Exists(refineryID) {
 		fmt.Printf("  Stopping refinery...\n")
-		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
-		refMgr := factory.RefineryManager(r, townRoot, refineryAgentName)
-		if err := refMgr.Stop(); err != nil {
+		if err := agents.Stop(refineryID, true); err != nil {
 			fmt.Printf("  %s Failed to stop refinery: %v\n", style.Warning.Render("!"), err)
 		} else {
 			stoppedAgents = append(stoppedAgents, "Refinery stopped")

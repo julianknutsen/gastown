@@ -11,9 +11,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/agent"
-	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/runtime"
 )
 
 // Session errors
@@ -22,49 +20,28 @@ var (
 	ErrSessionNotFound = errors.New("session not found")
 )
 
-// SessionManager handles polecat session lifecycle.
-// Uses agent.Agents for all operations (same pattern as mayor/deacon/witness/refinery).
+// SessionManager handles polecat status and operations.
+// Start/Stop operations are handled via factory.Start()/factory.Agents().Stop().
 type SessionManager struct {
-	agents    agent.Agents
-	rig       *rig.Rig
-	agentName string
-
-	// startingPolecatName holds the polecat name for the current Start() call.
-	// Used by factory callbacks to access the polecat name during session creation.
-	startingPolecatName string
+	agents   agent.Agents
+	rig      *rig.Rig
+	townRoot string
 }
 
 // NewSessionManager creates a new polecat session manager for a rig.
-// agents is the Agents instance for all agent operations.
-// agentName is the resolved agent to use (from config.ResolveRoleAgentName or command line).
-func NewSessionManager(agents agent.Agents, r *rig.Rig, agentName string) *SessionManager {
+// The manager handles status queries and session operations.
+// Lifecycle operations (Start) should use factory.Start().
+func NewSessionManager(agents agent.Agents, r *rig.Rig, _, townRoot string) *SessionManager {
 	return &SessionManager{
-		agents:    agents,
-		rig:       r,
-		agentName: agentName,
+		agents:   agents,
+		rig:      r,
+		townRoot: townRoot,
 	}
-}
-
-// StartingPolecatName returns the name of the polecat currently being started.
-// This is only valid during a Start() call and is used by factory callbacks.
-func (m *SessionManager) StartingPolecatName() string {
-	return m.startingPolecatName
 }
 
 // RigName returns the rig name for this manager.
 func (m *SessionManager) RigName() string {
 	return m.rig.Name
-}
-
-// envConfig returns the environment configuration for the given polecat.
-func (m *SessionManager) envConfig(polecat string) config.AgentEnvConfig {
-	return config.AgentEnvConfig{
-		Role:          "polecat",
-		Rig:           m.rig.Name,
-		AgentName:     polecat,
-		TownRoot:      filepath.Dir(m.rig.Path),
-		BeadsNoDaemon: true,
-	}
 }
 
 // SessionInfo contains information about a running polecat session.
@@ -142,41 +119,6 @@ func (m *SessionManager) hasPolecat(polecat string) bool {
 		return false
 	}
 	return info.IsDir()
-}
-
-// Start creates and starts a new session for a polecat.
-func (m *SessionManager) Start(polecat string) error {
-	if !m.hasPolecat(polecat) {
-		return fmt.Errorf("%w: %s", ErrPolecatNotFound, polecat)
-	}
-
-	sessionName := m.SessionName(polecat)
-	workDir := m.clonePath(polecat)
-
-	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
-
-	// Ensure runtime settings exist INSIDE the worktree so Claude Code can find them.
-	// Claude Code does NOT traverse parent directories for settings.json, only for CLAUDE.md.
-	// See: https://github.com/anthropics/claude-code/issues/12962
-	if err := runtime.EnsureSettingsForRole(workDir, "polecat", runtimeConfig); err != nil {
-		return fmt.Errorf("ensuring runtime settings: %w", err)
-	}
-
-	// Build startup command with env vars baked in
-	command := config.PrependEnv(config.BuildAgentCommand(m.agentName, ""), config.AgentEnv(m.envConfig(polecat)))
-
-	// Store polecat name for factory callback (OnSessionCreated)
-	m.startingPolecatName = polecat
-
-	// Create session via agent.Agents (handles zombie detection, theming via callback)
-	if err := m.agents.Start(m.agentID(polecat), workDir, command); err != nil {
-		if errors.Is(err, agent.ErrAlreadyRunning) {
-			return fmt.Errorf("%w: %s", ErrSessionRunning, sessionName)
-		}
-		return fmt.Errorf("creating session: %w", err)
-	}
-
-	return nil
 }
 
 // Stop terminates a polecat session.

@@ -114,25 +114,24 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		return nil, fmt.Errorf("getting polecat after creation: %w", err)
 	}
 
-	// Resolve agent for session manager
+	// Resolve agent for session
 	agentName, _ := config.ResolveRoleAgentName("polecat", townRoot, r.Path)
 	if opts.Agent != "" {
 		agentName = opts.Agent
 	}
 
-	// Start session (reuse tmux from manager)
-	polecatSessMgr := factory.PolecatSessionManager(r, townRoot, agentName)
-
-	// Check if already running
-	running, _ := polecatSessMgr.IsRunning(polecatName)
-	if !running {
+	// Check if already running using agents interface
+	id := agent.PolecatAddress(rigName, polecatName)
+	factoryAgents := factory.Agents(townRoot)
+	if !factoryAgents.Exists(id) {
 		fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-		if err := polecatSessMgr.Start(polecatName); err != nil {
+		if _, err := factory.Start(townRoot, id, agentName); err != nil {
 			return nil, fmt.Errorf("starting session: %w", err)
 		}
 	}
 
-	// Get session name
+	// Get session name using session manager
+	polecatSessMgr := factory.New(townRoot).PolecatSessionManager(r, agentName)
 	sessionName := polecatSessMgr.SessionName(polecatName)
 
 	fmt.Printf("%s Polecat %s spawned\n", style.Bold.Render("✓"), polecatName)

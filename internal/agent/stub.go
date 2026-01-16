@@ -32,12 +32,12 @@ func NewAgentsStub(wrapped Agents) *AgentsStub {
 	return &AgentsStub{Agents: wrapped}
 }
 
-// Start creates a new agent, or returns StartErr if set.
-func (s *AgentsStub) Start(id AgentID, workDir, command string) error {
+// StartWithConfig creates a new agent with config, or returns StartErr if set.
+func (s *AgentsStub) StartWithConfig(id AgentID, cfg StartConfig) error {
 	if s.StartErr != nil {
 		return s.StartErr
 	}
-	return s.Agents.Start(id, workDir, command)
+	return s.Agents.StartWithConfig(id, cfg)
 }
 
 // Stop terminates an agent, or returns StopErr if set.

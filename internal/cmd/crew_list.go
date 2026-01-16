@@ -50,7 +50,7 @@ func runCrewList(cmd *cobra.Command, args []string) error {
 	for _, r := range rigs {
 		townRoot := filepath.Dir(r.Path)
 		agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
-		crewMgr := factory.CrewManager(r, townRoot, agentName)
+		crewMgr := factory.New(townRoot).CrewManager(r, agentName)
 
 		workers, err := crewMgr.List()
 		if err != nil {

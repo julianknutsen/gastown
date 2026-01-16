@@ -103,8 +103,13 @@ func (c *OrphanSessionCheck) Run(ctx *CheckContext) *CheckResult {
 			continue
 		}
 
-		// Only check gt-* sessions (Gas Town sessions)
-		if !strings.HasPrefix(sess, "gt-") {
+		// Only check Gas Town sessions (gt-* for rig agents, hq-* for town agents)
+		if !strings.HasPrefix(sess, session.Prefix) && !strings.HasPrefix(sess, session.HQPrefix) {
+			continue
+		}
+
+		// Filter to sessions belonging to this town (skip sessions from other towns)
+		if !session.MatchesTown(sess, ctx.TownRoot) {
 			continue
 		}
 
@@ -216,25 +221,39 @@ func (c *OrphanSessionCheck) getValidRigs(townRoot string) []string {
 //
 // Note: We can't verify polecat names without reading state, so we're permissive.
 func (c *OrphanSessionCheck) isValidSession(sess string, validRigs []string, mayorSession, deaconSession string) bool {
-	// Mayor session is always valid (dynamic name based on town)
-	if mayorSession != "" && sess == mayorSession {
+	// Strip town suffix for comparison with base session names
+	baseName := session.StripTownID(sess)
+
+	// Mayor session is always valid
+	if mayorSession != "" && baseName == mayorSession {
 		return true
 	}
 
-	// Deacon session is always valid (dynamic name based on town)
-	if deaconSession != "" && sess == deaconSession {
+	// Deacon session is always valid
+	if deaconSession != "" && baseName == deaconSession {
 		return true
 	}
 
-	// For rig-specific sessions, extract rig name
-	// Pattern: gt-<rig>-<role>
-	parts := strings.SplitN(sess, "-", 3)
-	if len(parts) < 3 {
+	// Boot session is always valid
+	if baseName == session.BootSessionName {
+		return true
+	}
+
+	// For rig-specific sessions (gt-* prefix), extract rig name
+	// Pattern: gt-<rig>-<role> or gt-<rig>-<polecat>
+	if !strings.HasPrefix(baseName, session.Prefix) {
+		// Not a rig-level session and not matched above - invalid
+		return false
+	}
+
+	suffix := strings.TrimPrefix(baseName, session.Prefix)
+	parts := strings.SplitN(suffix, "-", 2)
+	if len(parts) < 2 {
 		// Invalid format - must be gt-<rig>-<something>
 		return false
 	}
 
-	rigName := parts[1]
+	rigName := parts[0]
 
 	// Check if this rig exists
 	rigFound := false
@@ -250,7 +269,7 @@ func (c *OrphanSessionCheck) isValidSession(sess string, validRigs []string, may
 		return false
 	}
 
-	role := parts[2]
+	role := parts[1]
 
 	// witness and refinery are valid roles
 	if role == "witness" || role == "refinery" {

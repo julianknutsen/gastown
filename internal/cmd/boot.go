@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/gastown/internal/boot"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/deacon"
-	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -103,7 +102,7 @@ func getBootManager() (*boot.Boot, error) {
 
 	// Boot uses deacon's agent configuration since it's the deacon's watchdog
 	agentName, _ := config.ResolveRoleAgentName("deacon", townRoot, "")
-	return factory.BootManager(townRoot, agentName), nil
+	return boot.New(townRoot, agentName)
 }
 
 func runBootStatus(cmd *cobra.Command, args []string) error {
@@ -112,20 +111,20 @@ func runBootStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	status, err := b.LoadStatus()
+	status, err := boot.LoadStatus(b.WorkDir())
 	if err != nil {
 		return fmt.Errorf("loading status: %w", err)
 	}
 
 	isRunning := b.IsRunning()
-	sessionAlive := b.IsSessionAlive()
+	sessionAlive := b.IsRunning()
 
 	if bootStatusJSON {
 		output := map[string]interface{}{
 			"running":       isRunning,
 			"session_alive": sessionAlive,
-			"degraded":      b.IsDegraded(),
-			"boot_dir":      b.Dir(),
+			"degraded":      boot.IsDegraded(),
+			"boot_dir":      b.WorkDir(),
 			"last_status":   status,
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -149,7 +148,7 @@ func runBootStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Session: %s\n", style.Dim.Render("not running"))
 	}
 
-	if b.IsDegraded() {
+	if boot.IsDegraded() {
 		fmt.Printf("  Mode: %s\n", style.Bold.Render("DEGRADED"))
 	} else {
 		fmt.Printf("  Mode: normal\n")
@@ -185,7 +184,7 @@ func runBootStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println()
-	fmt.Printf("  Dir: %s\n", b.Dir())
+	fmt.Printf("  Dir: %s\n", b.WorkDir())
 
 	return nil
 }
@@ -206,20 +205,20 @@ func runBootSpawn(cmd *cobra.Command, args []string) error {
 		Running:   true,
 		StartedAt: time.Now(),
 	}
-	if err := b.SaveStatus(status); err != nil {
+	if err := boot.SaveStatus(b.WorkDir(), status); err != nil {
 		return fmt.Errorf("saving status: %w", err)
 	}
 
 	// Spawn Boot
-	if err := b.Spawn(); err != nil {
+	if err := b.Start(); err != nil {
 		status.Error = err.Error()
 		status.CompletedAt = time.Now()
 		status.Running = false
-		_ = b.SaveStatus(status)
+		_ = boot.SaveStatus(b.WorkDir(), status)
 		return fmt.Errorf("spawning boot: %w", err)
 	}
 
-	if b.IsDegraded() {
+	if boot.IsDegraded() {
 		fmt.Println("Boot spawned in degraded mode (subprocess)")
 	} else {
 		fmt.Printf("Boot spawned in session: %s\n", boot.SessionName)
@@ -259,7 +258,7 @@ func runBootTriage(cmd *cobra.Command, args []string) error {
 		status.Error = triageErr.Error()
 	}
 
-	if err := b.SaveStatus(status); err != nil {
+	if err := boot.SaveStatus(b.WorkDir(), status); err != nil {
 		return fmt.Errorf("saving status: %w", err)
 	}
 
@@ -285,7 +284,7 @@ func runDegradedTriage(b *boot.Boot) (action, target string, err error) {
 	}
 
 	agents := agent.ForTown(townRoot)
-	deaconID := agent.DeaconAddress()
+	deaconID := agent.DeaconAddress
 
 	// Check if Deacon agent exists
 	if !agents.Exists(deaconID) {

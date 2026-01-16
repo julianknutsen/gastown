@@ -13,7 +13,10 @@ import (
 
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
+	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // SessionName is the tmux session name for Boot.
@@ -41,73 +44,81 @@ type Status struct {
 }
 
 // Boot manages the Boot watchdog lifecycle.
-// Like other managers, it takes an Agents dependency for testability.
 type Boot struct {
-	townRoot  string
-	bootDir   string // ~/gt/deacon/dogs/boot/
-	deaconDir string // ~/gt/deacon/
 	agents    agent.Agents
-	agentName string
-	degraded  bool
+	id        agent.AgentID
+	townRoot  string
+	workDir   string
+	aiRuntime string
 }
 
-// NewManager creates a new Boot manager for a town.
-// agents is the Agents implementation (real or test double) to use.
-// townRoot is the path to the town root directory.
-// agentName is the resolved agent to use (from config or command line).
-func NewManager(agents agent.Agents, townRoot, agentName string) *Boot {
+// New creates a Boot for the given town.
+// workDir is computed from townRoot using the standard boot location.
+// aiRuntime specifies which AI runtime to use (empty for default).
+func New(townRoot, aiRuntime string) (*Boot, error) {
+	workDir := filepath.Join(townRoot, "deacon", "dogs", constants.RoleBoot)
+
+	// Ensure runtime settings exist
+	runtimeConfig := config.LoadRuntimeConfig(townRoot)
+	if err := runtime.EnsureSettingsForRole(workDir, constants.RoleBoot, runtimeConfig); err != nil {
+		return nil, fmt.Errorf("ensuring runtime settings: %w", err)
+	}
+
+	// Build agents with boot env vars
+	t := tmux.NewTmux()
+	sess := session.NewTownSessions(t, townRoot)
+	envVars := config.AgentEnv(config.AgentEnvConfig{
+		Role:     constants.RoleBoot,
+		TownRoot: townRoot,
+	})
+
 	return &Boot{
+		agents:    agent.New(sess, agent.FromPreset(aiRuntime).WithEnvVars(envVars)),
+		id:        agent.AgentID(constants.RoleBoot),
 		townRoot:  townRoot,
-		bootDir:   filepath.Join(townRoot, "deacon", "dogs", "boot"),
-		deaconDir: filepath.Join(townRoot, "deacon"),
-		agents:    agents,
-		agentName: agentName,
-		degraded:  os.Getenv("GT_DEGRADED") == "true",
+		workDir:   workDir,
+		aiRuntime: aiRuntime,
+	}, nil
+}
+
+// NewWithAgents creates a Boot with an injected Agents (for testing).
+func NewWithAgents(agents agent.Agents, townRoot, workDir string) *Boot {
+	return &Boot{
+		agents:   agents,
+		id:       agent.AgentID(constants.RoleBoot),
+		townRoot: townRoot,
+		workDir:  workDir,
 	}
 }
 
-// New creates a new Boot manager using legacy instantiation.
-// Deprecated: Use factory.BootManager() instead for proper configuration.
-func New(townRoot string) *Boot {
-	return &Boot{
-		townRoot:  townRoot,
-		bootDir:   filepath.Join(townRoot, "deacon", "dogs", "boot"),
-		deaconDir: filepath.Join(townRoot, "deacon"),
-		agents:    agent.ForTown(townRoot),
-		agentName: "claude",
-		degraded:  os.Getenv("GT_DEGRADED") == "true",
-	}
+// WorkDir returns the working directory for Boot.
+func (b *Boot) WorkDir() string {
+	return b.workDir
 }
 
-// address returns the agent address for Boot.
-func (b *Boot) address() agent.AgentID {
-	return agent.BootAddress()
+// TownRoot returns the town root path.
+func (b *Boot) TownRoot() string {
+	return b.townRoot
+}
+
+// IsRunning checks if the Boot session is active.
+func (b *Boot) IsRunning() bool {
+	return b.agents.Exists(b.id)
 }
 
 // EnsureDir ensures the Boot directory exists.
 func (b *Boot) EnsureDir() error {
-	return os.MkdirAll(b.bootDir, 0755)
-}
-
-// markerPath returns the path to the marker file.
-func (b *Boot) markerPath() string {
-	return filepath.Join(b.bootDir, MarkerFileName)
+	return os.MkdirAll(b.workDir, 0755)
 }
 
 // statusPath returns the path to the status file.
-func (b *Boot) statusPath() string {
-	return filepath.Join(b.bootDir, StatusFileName)
+func statusPath(workDir string) string {
+	return filepath.Join(workDir, StatusFileName)
 }
 
-// IsRunning checks if Boot is currently running.
-func (b *Boot) IsRunning() bool {
-	return b.agents.Exists(b.address())
-}
-
-// IsSessionAlive checks if the Boot agent is running.
-// Alias for IsRunning for backwards compatibility.
-func (b *Boot) IsSessionAlive() bool {
-	return b.IsRunning()
+// markerPath returns the path to the marker file.
+func markerPath(workDir string) string {
+	return filepath.Join(workDir, MarkerFileName)
 }
 
 // AcquireLock creates the marker file to indicate Boot is starting.
@@ -122,7 +133,7 @@ func (b *Boot) AcquireLock() error {
 	}
 
 	// Create marker file
-	f, err := os.Create(b.markerPath())
+	f, err := os.Create(markerPath(b.workDir))
 	if err != nil {
 		return fmt.Errorf("creating marker: %w", err)
 	}
@@ -131,12 +142,12 @@ func (b *Boot) AcquireLock() error {
 
 // ReleaseLock removes the marker file.
 func (b *Boot) ReleaseLock() error {
-	return os.Remove(b.markerPath())
+	return os.Remove(markerPath(b.workDir))
 }
 
 // SaveStatus saves Boot's execution status.
-func (b *Boot) SaveStatus(status *Status) error {
-	if err := b.EnsureDir(); err != nil {
+func SaveStatus(workDir string, status *Status) error {
+	if err := os.MkdirAll(workDir, 0755); err != nil {
 		return err
 	}
 
@@ -145,12 +156,12 @@ func (b *Boot) SaveStatus(status *Status) error {
 		return err
 	}
 
-	return os.WriteFile(b.statusPath(), data, 0644) //nolint:gosec // G306: boot status is non-sensitive operational data
+	return os.WriteFile(statusPath(workDir), data, 0644) //nolint:gosec // G306: boot status is non-sensitive operational data
 }
 
 // LoadStatus loads Boot's last execution status.
-func (b *Boot) LoadStatus() (*Status, error) {
-	data, err := os.ReadFile(b.statusPath())
+func LoadStatus(workDir string) (*Status, error) {
+	data, err := os.ReadFile(statusPath(workDir))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &Status{}, nil
@@ -166,51 +177,40 @@ func (b *Boot) LoadStatus() (*Status, error) {
 	return &status, nil
 }
 
-// Spawn starts Boot in a fresh tmux session.
+// Start starts Boot in a fresh tmux session.
 // Boot runs the mol-boot-triage molecule and exits when done.
 // In degraded mode (no tmux), it runs in a subprocess.
-func (b *Boot) Spawn() error {
-	if b.IsRunning() {
-		return fmt.Errorf("boot is already running")
+func (b *Boot) Start() error {
+	// Check for degraded mode first
+	if os.Getenv("GT_DEGRADED") == "true" {
+		return b.startDegraded()
 	}
 
-	// Check for degraded mode
-	if b.degraded {
-		return b.spawnDegraded()
+	// Build startup command with boot-specific prompt
+	startupCmd := config.BuildAgentCommand(b.aiRuntime, "gt boot triage")
+
+	// Start using StartWithConfig
+	cfg := agent.StartConfig{
+		WorkDir: b.workDir,
+		Command: startupCmd,
+	}
+	if err := b.agents.StartWithConfig(b.id, cfg); err != nil {
+		return err
 	}
 
-	return b.spawnTmux()
-}
-
-// spawnTmux spawns Boot in a tmux session using the standard agent pattern.
-func (b *Boot) spawnTmux() error {
-	// Ensure boot directory exists (it should have CLAUDE.md with Boot context)
-	if err := b.EnsureDir(); err != nil {
-		return fmt.Errorf("ensuring boot dir: %w", err)
-	}
-
-	// Build the startup command with initial triage prompt (GUPP principle)
-	startCmd := config.BuildAgentStartupCommand(b.agentName, "", b.townRoot, "", "gt boot triage")
-
-	// Start the Boot agent - agents.Start() handles:
-	// - Zombie detection and cleanup
-	// - Session creation with command
-	// - Environment variable injection (configured via factory)
-	// - Readiness waiting in background
-	if err := b.agents.Start(b.address(), b.bootDir, startCmd); err != nil {
-		return fmt.Errorf("starting boot agent: %w", err)
-	}
+	// Wait for agent to be ready
+	_ = b.agents.WaitReady(b.id)
 
 	return nil
 }
 
-// spawnDegraded spawns Boot in degraded mode (no tmux).
+// startDegraded starts Boot in degraded mode (no tmux).
 // Boot runs to completion and exits without handoff.
-func (b *Boot) spawnDegraded() error {
+func (b *Boot) startDegraded() error {
 	// In degraded mode, we run gt boot triage directly
 	// This performs the triage logic without a full Claude session
 	cmd := exec.Command("gt", "boot", "triage", "--degraded")
-	cmd.Dir = b.deaconDir
+	cmd.Dir = b.workDir
 
 	// Use centralized AgentEnv for consistency with tmux mode
 	envVars := config.AgentEnv(config.AgentEnvConfig{
@@ -225,16 +225,6 @@ func (b *Boot) spawnDegraded() error {
 }
 
 // IsDegraded returns whether Boot is in degraded mode.
-func (b *Boot) IsDegraded() bool {
-	return b.degraded
-}
-
-// Dir returns Boot's working directory.
-func (b *Boot) Dir() string {
-	return b.bootDir
-}
-
-// DeaconDir returns the Deacon's directory.
-func (b *Boot) DeaconDir() string {
-	return b.deaconDir
+func IsDegraded() bool {
+	return os.Getenv("GT_DEGRADED") == "true"
 }

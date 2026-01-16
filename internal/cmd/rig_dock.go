@@ -7,8 +7,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -114,9 +112,7 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	witnessID := agent.WitnessAddress(rigName)
 	if agentsAPI.Exists(witnessID) {
 		fmt.Printf("  Stopping witness...\n")
-		agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
-		witMgr := factory.WitnessManager(r, townRoot, agentName)
-		if err := witMgr.Stop(); err != nil {
+		if err := agentsAPI.Stop(witnessID, true); err != nil {
 			fmt.Printf("  %s Failed to stop witness: %v\n", style.Warning.Render("!"), err)
 		} else {
 			stoppedAgents = append(stoppedAgents, "Witness stopped")
@@ -127,9 +123,7 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	refineryID := agent.RefineryAddress(rigName)
 	if agentsAPI.Exists(refineryID) {
 		fmt.Printf("  Stopping refinery...\n")
-		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
-		refMgr := factory.RefineryManager(r, townRoot, refineryAgentName)
-		if err := refMgr.Stop(); err != nil {
+		if err := agentsAPI.Stop(refineryID, true); err != nil {
 			fmt.Printf("  %s Failed to stop refinery: %v\n", style.Warning.Render("!"), err)
 		} else {
 			stoppedAgents = append(stoppedAgents, "Refinery stopped")

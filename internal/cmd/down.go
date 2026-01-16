@@ -17,11 +17,9 @@ import (
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -102,15 +100,6 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	rigs := discoverRigs(townRoot)
 
-	// Load rigs config for manager-based operations
-	rigsConfigPath := filepath.Join(townRoot, "mayor", "rigs.json")
-	rigsConfig, _ := config.LoadRigsConfig(rigsConfigPath)
-	if rigsConfig == nil {
-		rigsConfig = &config.RigsConfig{Rigs: make(map[string]config.RigEntry)}
-	}
-	g := git.NewGit(townRoot)
-	rigMgr := rig.NewManager(townRoot, rigsConfig, g)
-
 	// Phase 0.5: Stop polecats if --polecats
 	if downPolecats {
 		if downDryRun {
@@ -164,24 +153,18 @@ func runDown(cmd *cobra.Command, args []string) error {
 	}
 
 	// Phase 2a: Stop refineries
-	for _, rigName := range rigs {
-		r, err := rigMgr.GetRig(rigName)
-		if err != nil {
-			printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), false, err.Error())
-			allOK = false
-			continue
-		}
+	agents := factory.Agents(townRoot)
 
-		refMgr := factory.RefineryManager(r, townRoot, "")
+	for _, rigName := range rigs {
+		id := agent.RefineryAddress(rigName)
 		if downDryRun {
-			status, _ := refMgr.Status()
-			if status != nil && status.State == refinery.StateRunning {
+			if agents.Exists(id) {
 				printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), true, "would stop")
 			}
 			continue
 		}
-		err = refMgr.Stop()
-		if err == refinery.ErrNotRunning {
+		err := agents.Stop(id, true)
+		if err == agent.ErrNotRunning {
 			printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), true, "not running")
 		} else if err != nil {
 			printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), false, err.Error())
@@ -193,23 +176,15 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	// Phase 2b: Stop witnesses
 	for _, rigName := range rigs {
-		r, err := rigMgr.GetRig(rigName)
-		if err != nil {
-			printDownStatus(fmt.Sprintf("Witness (%s)", rigName), false, err.Error())
-			allOK = false
-			continue
-		}
-
-		witMgr := factory.WitnessManager(r, townRoot, "")
+		id := agent.WitnessAddress(rigName)
 		if downDryRun {
-			status, _ := witMgr.Status()
-			if status != nil && status.State == witness.StateRunning {
+			if agents.Exists(id) {
 				printDownStatus(fmt.Sprintf("Witness (%s)", rigName), true, "would stop")
 			}
 			continue
 		}
-		err = witMgr.Stop()
-		if err == witness.ErrNotRunning {
+		err := agents.Stop(id, true)
+		if err == agent.ErrNotRunning {
 			printDownStatus(fmt.Sprintf("Witness (%s)", rigName), true, "not running")
 		} else if err != nil {
 			printDownStatus(fmt.Sprintf("Witness (%s)", rigName), false, err.Error())
@@ -221,14 +196,14 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	// Phase 3: Stop town-level agents (Mayor, Boot, Deacon)
 	// Order matters: Boot (Deacon's watchdog) must stop before Deacon.
-	agents := agent.ForTown(townRoot)
+	// Reuse agents from rig-level operations (same underlying Agents interface)
 	townAgents := []struct {
 		name string
 		id   agent.AgentID
 	}{
-		{"Mayor", agent.MayorAddress()},
-		{"Boot", agent.BootAddress()},
-		{"Deacon", agent.DeaconAddress()},
+		{"Mayor", agent.MayorAddress},
+		{"Boot", agent.BootAddress},
+		{"Deacon", agent.DeaconAddress},
 	}
 	for _, ta := range townAgents {
 		if downDryRun {
@@ -367,7 +342,7 @@ func stopAllPolecats(townRoot string, rigNames []string, force bool, dryRun bool
 			continue
 		}
 
-		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+		polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 		infos, err := polecatMgr.List()
 		if err != nil {
 			continue

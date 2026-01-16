@@ -7,7 +7,6 @@ import (
 
 	"github.com/steveyegge/gastown/internal/boot"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/factory"
 )
 
 // BootHealthCheck verifies Boot watchdog health.
@@ -31,11 +30,19 @@ func NewBootHealthCheck() *BootHealthCheck {
 func (c *BootHealthCheck) Run(ctx *CheckContext) *CheckResult {
 	// Boot uses deacon's agent configuration since it's the deacon's watchdog
 	agentName, _ := config.ResolveRoleAgentName("deacon", ctx.TownRoot, "")
-	b := factory.BootManager(ctx.TownRoot, agentName)
+	b, err := boot.New(ctx.TownRoot, agentName)
+	if err != nil {
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusError,
+			Message: "Failed to create Boot manager",
+			Details: []string{err.Error()},
+		}
+	}
 	details := []string{}
 
 	// Check 1: Boot directory exists
-	bootDir := b.Dir()
+	bootDir := b.WorkDir()
 	if _, err := os.Stat(bootDir); os.IsNotExist(err) {
 		return &CheckResult{
 			Name:    c.Name(),
@@ -47,7 +54,7 @@ func (c *BootHealthCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	// Check 2: Session alive
-	sessionAlive := b.IsSessionAlive()
+	sessionAlive := b.IsRunning()
 	if sessionAlive {
 		details = append(details, fmt.Sprintf("Session: %s (alive)", boot.SessionName))
 	} else {
@@ -55,7 +62,7 @@ func (c *BootHealthCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	// Check 3: Last execution status
-	status, err := b.LoadStatus()
+	status, err := boot.LoadStatus(b.WorkDir())
 	if err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
@@ -95,7 +102,7 @@ func (c *BootHealthCheck) Run(ctx *CheckContext) *CheckResult {
 
 	// All checks passed
 	message := "Boot watchdog healthy"
-	if b.IsDegraded() {
+	if boot.IsDegraded() {
 		message = "Boot watchdog healthy (degraded mode)"
 		details = append(details, "Running in degraded mode (no tmux)")
 	}

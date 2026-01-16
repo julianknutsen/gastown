@@ -944,9 +944,9 @@ func buildAgentPath(role, rig, worker string) string {
 func buildAgentID(role, rig, worker string) agent.AgentID {
 	switch role {
 	case constants.RoleMayor:
-		return agent.MayorAddress()
+		return agent.MayorAddress
 	case constants.RoleDeacon:
-		return agent.DeaconAddress()
+		return agent.DeaconAddress
 	case constants.RoleWitness:
 		return agent.WitnessAddress(rig)
 	case constants.RoleRefinery:

@@ -6,8 +6,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/factory"
-	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -86,31 +86,16 @@ func init() {
 	rootCmd.AddCommand(mayorCmd)
 }
 
-// getMayorManager returns a mayor manager for the current workspace.
-// agentOverride is the command-line agent override (empty uses config default).
-func getMayorManager(agentOverride string) (*mayor.Manager, error) {
+func runMayorStart(cmd *cobra.Command, args []string) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return nil, fmt.Errorf("not in a Gas Town workspace: %w", err)
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-	agentName := config.ResolveAgentForRole("mayor", townRoot, "", agentOverride)
-	return factory.MayorManager(townRoot, agentName), nil
-}
-
-// getMayorSessionName returns the Mayor session name.
-func getMayorSessionName() string {
-	return mayor.SessionName()
-}
-
-func runMayorStart(cmd *cobra.Command, args []string) error {
-	mgr, err := getMayorManager(mayorAgentOverride)
-	if err != nil {
-		return err
-	}
+	agentName := config.ResolveAgentForRole("mayor", townRoot, "", mayorAgentOverride)
 
 	fmt.Println("Starting Mayor session...")
-	if err := mgr.Start(); err != nil {
-		if err == mayor.ErrAlreadyRunning {
+	if _, err := factory.Start(townRoot, agent.MayorAddress, agentName); err != nil {
+		if err == agent.ErrAlreadyRunning {
 			return fmt.Errorf("Mayor session already running. Attach with: gt mayor attach")
 		}
 		return err
@@ -124,16 +109,19 @@ func runMayorStart(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorStop(cmd *cobra.Command, args []string) error {
-	mgr, err := getMayorManager("")
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
+	agents := factory.Agents(townRoot)
+	id := agent.AgentID(constants.RoleMayor)
+
 	fmt.Println("Stopping Mayor session...")
-	if err := mgr.Stop(); err != nil {
-		if err == mayor.ErrNotRunning {
-			return fmt.Errorf("Mayor session is not running")
-		}
+	if !agents.Exists(id) {
+		return fmt.Errorf("Mayor session is not running")
+	}
+	if err := agents.Stop(id, true); err != nil {
 		return err
 	}
 
@@ -147,40 +135,32 @@ func runMayorAttach(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	mgr, err := getMayorManager(mayorAgentOverride)
-	if err != nil {
-		return err
-	}
+	agents := factory.Agents(townRoot)
+	id := agent.AgentID(constants.RoleMayor)
 
-	running, err := mgr.IsRunning()
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if !running {
+	if !agents.Exists(id) {
 		// Auto-start if not running
 		fmt.Println("Mayor session not running, starting...")
-		if err := mgr.Start(); err != nil {
+		agentName := config.ResolveAgentForRole("mayor", townRoot, "", mayorAgentOverride)
+		if _, err := factory.Start(townRoot, agent.MayorAddress, agentName); err != nil {
 			return err
 		}
 	}
 
 	// Smart attach: switches if inside tmux, attaches if outside
-	agents := agent.ForTown(townRoot)
-	return agents.Attach(agent.MayorAddress())
+	return agents.Attach(agent.MayorAddress)
 }
 
 func runMayorStatus(cmd *cobra.Command, args []string) error {
-	mgr, err := getMayorManager("")
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	status, err := mgr.Status()
-	if err != nil {
-		return fmt.Errorf("checking status: %w", err)
-	}
+	agents := factory.Agents(townRoot)
+	id := agent.AgentID(constants.RoleMayor)
 
-	if status.State == mayor.StateStopped {
+	if !agents.Exists(id) {
 		fmt.Printf("%s Mayor session is %s\n",
 			style.Dim.Render("○"),
 			"not running")
@@ -197,15 +177,15 @@ func runMayorStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorRestart(cmd *cobra.Command, args []string) error {
-	mgr, err := getMayorManager(mayorAgentOverride)
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	// Stop if running (ignore not-running error)
-	if err := mgr.Stop(); err != nil && err != mayor.ErrNotRunning {
-		return fmt.Errorf("stopping session: %w", err)
-	}
+	// Stop if running (ignore errors - we'll start fresh anyway)
+	agents := factory.Agents(townRoot)
+	id := agent.AgentID(constants.RoleMayor)
+	_ = agents.Stop(id, true)
 
 	// Start fresh
 	return runMayorStart(cmd, args)

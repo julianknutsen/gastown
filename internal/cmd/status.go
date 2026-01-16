@@ -350,7 +350,7 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 
 			// Count crew workers
 			agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
-			crewMgr := factory.CrewManager(r, townRoot, agentName)
+			crewMgr := factory.New(townRoot).CrewManager(r, agentName)
 			if workers, err := crewMgr.List(); err == nil {
 				for _, w := range workers {
 					rs.Crews = append(rs.Crews, w.Name)
@@ -912,21 +912,17 @@ func discoverRigHooks(r *rig.Rig, crews []string) []AgentHookInfo {
 // allAgentBeads is a preloaded map of agent beads for O(1) lookup.
 // allHookBeads is a preloaded map of hook beads for O(1) lookup.
 func discoverGlobalAgents(allSessions map[string]bool, allAgentBeads map[string]*beads.Issue, allHookBeads map[string]*beads.Issue, mailRouter *mail.Router, skipMail bool) []AgentRuntime {
-	// Get session names dynamically
-	mayorSession := getMayorSessionName()
-	deaconSession := getDeaconSessionName()
-
 	// Define agents to discover
 	// Note: Mayor and Deacon are town-level agents with hq- prefix bead IDs
+	// The allSessions map contains AgentIDs (e.g., "mayor"), not session names
 	agentDefs := []struct {
 		name    string
 		address string
-		session string
 		role    string
 		beadID  string
 	}{
-		{"mayor", "mayor/", mayorSession, "coordinator", beads.MayorBeadIDTown()},
-		{"deacon", "deacon/", deaconSession, "health-check", beads.DeaconBeadIDTown()},
+		{"mayor", "mayor/", "coordinator", beads.MayorBeadIDTown()},
+		{"deacon", "deacon/", "health-check", beads.DeaconBeadIDTown()},
 	}
 
 	agents := make([]AgentRuntime, len(agentDefs))
@@ -937,7 +933,6 @@ func discoverGlobalAgents(allSessions map[string]bool, allAgentBeads map[string]
 		go func(idx int, d struct {
 			name    string
 			address string
-			session string
 			role    string
 			beadID  string
 		}) {
@@ -946,12 +941,12 @@ func discoverGlobalAgents(allSessions map[string]bool, allAgentBeads map[string]
 			agent := AgentRuntime{
 				Name:    d.name,
 				Address: d.address,
-				Session: d.session,
 				Role:    d.role,
 			}
 
-			// Check tmux session from preloaded map (O(1))
-			agent.Running = allSessions[d.session]
+			// Check if agent is running from preloaded map (O(1))
+			// allSessions contains AgentIDs like "mayor", "deacon"
+			agent.Running = allSessions[d.name]
 
 			// Look up agent bead from preloaded map (O(1))
 			if issue, ok := allAgentBeads[d.beadID]; ok {

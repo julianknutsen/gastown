@@ -16,11 +16,9 @@ import (
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
-	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/wisp"
-	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -748,9 +746,10 @@ func runRigBoot(cmd *cobra.Command, args []string) error {
 
 	// 1. Start the witness
 	fmt.Printf("  Starting witness...\n")
-	witMgr := factory.WitnessManager(r, townRoot, "")
-	if err := witMgr.Start(); err != nil {
-		if err == witness.ErrAlreadyRunning {
+	witnessAgentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
+	witnessID := agent.WitnessAddress(rigName)
+	if _, err := factory.Start(townRoot, witnessID, witnessAgentName); err != nil {
+		if err == agent.ErrAlreadyRunning {
 			skipped = append(skipped, "witness (already running)")
 		} else {
 			return fmt.Errorf("starting witness: %w", err)
@@ -761,9 +760,10 @@ func runRigBoot(cmd *cobra.Command, args []string) error {
 
 	// 2. Start the refinery
 	fmt.Printf("  Starting refinery...\n")
-	refMgr := factory.RefineryManager(r, townRoot, "")
-	if err := refMgr.Start(); err != nil {
-		if err == refinery.ErrAlreadyRunning {
+	refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+	refineryID := agent.RefineryAddress(rigName)
+	if _, err := factory.Start(townRoot, refineryID, refineryAgentName); err != nil {
+		if err == agent.ErrAlreadyRunning {
 			skipped = append(skipped, "refinery (already running)")
 		} else {
 			return fmt.Errorf("starting refinery: %w", err)
@@ -819,9 +819,10 @@ func runRigStart(cmd *cobra.Command, args []string) error {
 
 		// 1. Start the witness
 		fmt.Printf("  Starting witness...\n")
-		witMgr := factory.WitnessManager(r, townRoot, "")
-		if err := witMgr.Start(); err != nil {
-			if err == witness.ErrAlreadyRunning {
+		witnessAgentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
+		witnessID := agent.WitnessAddress(rigName)
+		if _, err := factory.Start(townRoot, witnessID, witnessAgentName); err != nil {
+			if err == agent.ErrAlreadyRunning {
 				skipped = append(skipped, "witness")
 			} else {
 				fmt.Printf("  %s Failed to start witness: %v\n", style.Warning.Render("⚠"), err)
@@ -833,9 +834,10 @@ func runRigStart(cmd *cobra.Command, args []string) error {
 
 		// 2. Start the refinery
 		fmt.Printf("  Starting refinery...\n")
-		refMgr := factory.RefineryManager(r, townRoot, "")
-		if err := refMgr.Start(); err != nil {
-			if err == refinery.ErrAlreadyRunning {
+		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+		refineryID := agent.RefineryAddress(rigName)
+		if _, err := factory.Start(townRoot, refineryID, refineryAgentName); err != nil {
+			if err == agent.ErrAlreadyRunning {
 				skipped = append(skipped, "refinery")
 			} else {
 				fmt.Printf("  %s Failed to start refinery: %v\n", style.Warning.Render("⚠"), err)
@@ -934,7 +936,7 @@ func runRigShutdown(cmd *cobra.Command, args []string) error {
 	var errors []string
 
 	// 1. Stop all polecat sessions
-	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+	polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 	infos, err := polecatMgr.List()
 	if err == nil && len(infos) > 0 {
 		fmt.Printf("  Stopping %d polecat session(s)...\n", len(infos))
@@ -944,21 +946,20 @@ func runRigShutdown(cmd *cobra.Command, args []string) error {
 	}
 
 	// 2. Stop the refinery
-	refMgr := factory.RefineryManager(r, townRoot, "")
-	refStatus, err := refMgr.Status()
-	if err == nil && refStatus.State == refinery.StateRunning {
+	agents := factory.Agents(townRoot)
+	refineryID := agent.RefineryAddress(rigName)
+	if agents.Exists(refineryID) {
 		fmt.Printf("  Stopping refinery...\n")
-		if err := refMgr.Stop(); err != nil {
+		if err := agents.Stop(refineryID, true); err != nil {
 			errors = append(errors, fmt.Sprintf("refinery: %v", err))
 		}
 	}
 
 	// 3. Stop the witness
-	witMgr := factory.WitnessManager(r, townRoot, "")
-	witStatus, err := witMgr.Status()
-	if err == nil && witStatus.State == witness.StateRunning {
+	witnessID := agent.WitnessAddress(rigName)
+	if agents.Exists(witnessID) {
 		fmt.Printf("  Stopping witness...\n")
-		if err := witMgr.Stop(); err != nil {
+		if err := agents.Stop(witnessID, true); err != nil {
 			errors = append(errors, fmt.Sprintf("witness: %v", err))
 		}
 	}
@@ -1045,7 +1046,7 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s\n", style.Bold.Render("Witness"))
 	witnessID := agent.WitnessAddress(rigName)
 	witnessRunning := agents.Exists(witnessID)
-	witMgr := factory.WitnessManager(r, townRoot, "")
+	witMgr := factory.New(townRoot).WitnessManager(r, "")
 	witStatus, _ := witMgr.Status()
 	if witnessRunning {
 		fmt.Printf("  %s running", style.Success.Render("●"))
@@ -1062,7 +1063,7 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s\n", style.Bold.Render("Refinery"))
 	refineryID := agent.RefineryAddress(rigName)
 	refineryRunning := agents.Exists(refineryID)
-	refMgr := factory.RefineryManager(r, townRoot, "")
+	refMgr := factory.New(townRoot).RefineryManager(r, "")
 	refStatus, _ := refMgr.Status()
 	if refineryRunning {
 		fmt.Printf("  %s running", style.Success.Render("●"))
@@ -1109,7 +1110,7 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Crew
-	crewMgr := factory.CrewManager(r, townRoot, "")
+	crewMgr := factory.New(townRoot).CrewManager(r, "")
 	crewWorkers, err := crewMgr.List()
 	fmt.Printf("%s", style.Bold.Render("Crew"))
 	if err != nil || len(crewWorkers) == 0 {
@@ -1210,7 +1211,7 @@ func runRigStop(cmd *cobra.Command, args []string) error {
 		var errors []string
 
 		// 1. Stop all polecat sessions
-		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+		polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 		infos, err := polecatMgr.List()
 		if err == nil && len(infos) > 0 {
 			fmt.Printf("  Stopping %d polecat session(s)...\n", len(infos))
@@ -1220,21 +1221,20 @@ func runRigStop(cmd *cobra.Command, args []string) error {
 		}
 
 		// 2. Stop the refinery
-		refMgr := factory.RefineryManager(r, townRoot, "")
-		refStatus, err := refMgr.Status()
-		if err == nil && refStatus.State == refinery.StateRunning {
+		agents := factory.Agents(townRoot)
+		refineryID := agent.RefineryAddress(rigName)
+		if agents.Exists(refineryID) {
 			fmt.Printf("  Stopping refinery...\n")
-			if err := refMgr.Stop(); err != nil {
+			if err := agents.Stop(refineryID, true); err != nil {
 				errors = append(errors, fmt.Sprintf("refinery: %v", err))
 			}
 		}
 
 		// 3. Stop the witness
-		witMgr := factory.WitnessManager(r, townRoot, "")
-		witStatus, err := witMgr.Status()
-		if err == nil && witStatus.State == witness.StateRunning {
+		witnessID := agent.WitnessAddress(rigName)
+		if agents.Exists(witnessID) {
 			fmt.Printf("  Stopping witness...\n")
-			if err := witMgr.Stop(); err != nil {
+			if err := agents.Stop(witnessID, true); err != nil {
 				errors = append(errors, fmt.Sprintf("witness: %v", err))
 			}
 		}
@@ -1342,7 +1342,7 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Stopping...\n")
 
 		// 1. Stop all polecat sessions
-		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+		polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 		infos, err := polecatMgr.List()
 		if err == nil && len(infos) > 0 {
 			fmt.Printf("    Stopping %d polecat session(s)...\n", len(infos))
@@ -1352,21 +1352,20 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 		}
 
 		// 2. Stop the refinery
-		refMgr := factory.RefineryManager(r, townRoot, "")
-		refStatus, err := refMgr.Status()
-		if err == nil && refStatus.State == refinery.StateRunning {
+		agents := factory.Agents(townRoot)
+		refineryID := agent.RefineryAddress(rigName)
+		if agents.Exists(refineryID) {
 			fmt.Printf("    Stopping refinery...\n")
-			if err := refMgr.Stop(); err != nil {
+			if err := agents.Stop(refineryID, true); err != nil {
 				stopErrors = append(stopErrors, fmt.Sprintf("refinery: %v", err))
 			}
 		}
 
 		// 3. Stop the witness
-		witMgr := factory.WitnessManager(r, townRoot, "")
-		witStatus, err := witMgr.Status()
-		if err == nil && witStatus.State == witness.StateRunning {
+		witnessID := agent.WitnessAddress(rigName)
+		if agents.Exists(witnessID) {
 			fmt.Printf("    Stopping witness...\n")
-			if err := witMgr.Stop(); err != nil {
+			if err := agents.Stop(witnessID, true); err != nil {
 				stopErrors = append(stopErrors, fmt.Sprintf("witness: %v", err))
 			}
 		}
@@ -1388,8 +1387,9 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 
 		// 1. Start the witness
 		fmt.Printf("    Starting witness...\n")
-		if err := witMgr.Start(); err != nil {
-			if err == witness.ErrAlreadyRunning {
+		witnessAgentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
+		if _, err := factory.Start(townRoot, witnessID, witnessAgentName); err != nil {
+			if err == agent.ErrAlreadyRunning {
 				skipped = append(skipped, "witness")
 			} else {
 				fmt.Printf("    %s Failed to start witness: %v\n", style.Warning.Render("⚠"), err)
@@ -1401,8 +1401,9 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 
 		// 2. Start the refinery
 		fmt.Printf("    Starting refinery...\n")
-		if err := refMgr.Start(); err != nil {
-			if err == refinery.ErrAlreadyRunning {
+		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+		if _, err := factory.Start(townRoot, refineryID, refineryAgentName); err != nil {
+			if err == agent.ErrAlreadyRunning {
 				skipped = append(skipped, "refinery")
 			} else {
 				fmt.Printf("    %s Failed to start refinery: %v\n", style.Warning.Render("⚠"), err)

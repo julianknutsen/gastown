@@ -22,6 +22,11 @@ import (
 // see conformance_test.go.
 // =============================================================================
 
+// startCfg is a helper to create a StartConfig for tests.
+func startCfg(workDir, command string) agent.StartConfig {
+	return agent.StartConfig{WorkDir: workDir, Command: command}
+}
+
 // --- Zombie Detection Tests (Implementation-specific) ---
 
 func TestImplementation_Start_DetectsAndCleansUpZombie(t *testing.T) {
@@ -35,7 +40,7 @@ func TestImplementation_Start_DetectsAndCleansUpZombie(t *testing.T) {
 
 	// Start should clean up zombie and create new session
 	id := agent.PolecatAddress("testrig", "test-agent")
-	err := agents.Start(id, "/tmp", "new-command")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "new-command"))
 	require.NoError(t, err)
 	assert.True(t, agents.Exists(id))
 }
@@ -52,7 +57,7 @@ func TestImplementation_Start_AlreadyRunning_WithLiveProcess(t *testing.T) {
 	_, _ = procs.Start(string(sessionID), "/tmp", "running-command")
 	_ = procs.SetRunning(sessionID, true)
 
-	err := agents.Start(id, "/tmp", "echo hello")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	assert.ErrorIs(t, err, agent.ErrAlreadyRunning)
 }
 
@@ -70,7 +75,7 @@ func TestImplementation_Start_CallbackError_CleansUpSession(t *testing.T) {
 	agents := agent.New(procs, cfg)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	err := agents.Start(id, "/tmp", "echo hello")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "session setup")
@@ -93,7 +98,7 @@ func TestImplementation_Start_CallbackSuccess_SessionRemains(t *testing.T) {
 	agents := agent.New(procs, cfg)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	err := agents.Start(id, "/tmp", "echo hello")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	require.NoError(t, err)
 
 	assert.True(t, callbackCalled, "callback should be called")
@@ -113,7 +118,7 @@ func TestImplementation_Start_PrependsEnvVars(t *testing.T) {
 	agents := agent.New(procs, cfg)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	err := agents.Start(id, "/tmp", "echo hello")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	require.NoError(t, err)
 
 	cmd := procs.GetCommand(session.SessionID(id))
@@ -134,7 +139,7 @@ func TestImplementation_Start_EnvVarsSorted(t *testing.T) {
 	agents := agent.New(procs, cfg)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	err := agents.Start(id, "/tmp", "echo hello")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	require.NoError(t, err)
 
 	cmd := procs.GetCommand(session.SessionID(id))
@@ -150,7 +155,7 @@ func TestImplementation_Start_NoEnvVars_CommandUnchanged(t *testing.T) {
 	agents := agent.New(procs, nil)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	err := agents.Start(id, "/tmp", "echo hello")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	require.NoError(t, err)
 
 	cmd := procs.GetCommand(session.SessionID(id))
@@ -168,7 +173,7 @@ func TestImplementation_Timeout_UsesConfigValue(t *testing.T) {
 	agents := agent.New(procs, cfg)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	_ = agents.Start(id, "/tmp", "echo hello")
+	_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	procs.SetBuffer(session.SessionID(id), []string{"no match"})
 
 	start := time.Now()
@@ -189,7 +194,7 @@ func TestImplementation_Timeout_DefaultsTo30Seconds(t *testing.T) {
 	agents := agent.New(procs, cfg)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	_ = agents.Start(id, "/tmp", "echo hello")
+	_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	procs.SetBuffer(session.SessionID(id), []string{"no match"})
 
 	// We can't wait 30 seconds in a test, but we can verify it doesn't
@@ -222,14 +227,14 @@ func TestImplementation_Stop_Graceful_TakesLongerThanNonGraceful(t *testing.T) {
 
 	// Non-graceful stop
 	id1 := agent.PolecatAddress("testrig", "agent1")
-	_ = agents.Start(id1, "/tmp", "echo hello")
+	_ = agents.StartWithConfig(id1, startCfg("/tmp", "echo hello"))
 	start1 := time.Now()
 	_ = agents.Stop(id1, false) // graceful=false
 	elapsed1 := time.Since(start1)
 
 	// Graceful stop (includes 100ms sleep after Ctrl-C)
 	id2 := agent.PolecatAddress("testrig", "agent2")
-	_ = agents.Start(id2, "/tmp", "echo hello")
+	_ = agents.StartWithConfig(id2, startCfg("/tmp", "echo hello"))
 	start2 := time.Now()
 	_ = agents.Stop(id2, true) // graceful=true
 	elapsed2 := time.Since(start2)
@@ -244,7 +249,7 @@ func TestImplementation_Stop_NotGraceful_SkipsCtrlC(t *testing.T) {
 	agents := agent.New(procs, nil)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	_ = agents.Start(id, "/tmp", "echo hello")
+	_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	sessionID := session.SessionID(id)
 
 	err := agents.Stop(id, false) // graceful=false
@@ -262,7 +267,7 @@ func TestImplementation_Nudge_SendsMessageToSession(t *testing.T) {
 	agents := agent.New(procs, nil)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	_ = agents.Start(id, "/tmp", "echo hello")
+	_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	err := agents.Nudge(id, "HEALTH_CHECK: are you alive?")
 
 	assert.NoError(t, err)
@@ -287,7 +292,7 @@ func TestImplementation_Nudge_MultipleCalls_AllRecorded(t *testing.T) {
 	agents := agent.New(procs, nil)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	_ = agents.Start(id, "/tmp", "echo hello")
+	_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	_ = agents.Nudge(id, "message 1")
 	_ = agents.Nudge(id, "message 2")
 	_ = agents.Nudge(id, "message 3")
@@ -316,7 +321,7 @@ func TestImplementation_StartupHook_CalledOnStart(t *testing.T) {
 	agents := agent.New(procs, cfg)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	err := agents.Start(id, "/tmp", "echo hello")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	require.NoError(t, err)
 
 	// Give the goroutine time to execute
@@ -339,7 +344,7 @@ func TestImplementation_StartupHook_ErrorIsNonFatal(t *testing.T) {
 
 	// Start should still succeed even if startup hook fails
 	id := agent.PolecatAddress("testrig", "test-agent")
-	err := agents.Start(id, "/tmp", "echo hello")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	require.NoError(t, err)
 	assert.True(t, agents.Exists(id))
 }
@@ -355,7 +360,7 @@ func TestImplementation_WaitReady_WithStartupDelay(t *testing.T) {
 	agents := agent.New(procs, cfg)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	_ = agents.Start(id, "/tmp", "echo hello")
+	_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 
 	start := time.Now()
 	err := agents.WaitReady(id)
@@ -375,7 +380,7 @@ func TestImplementation_Start_WhenSessionStartFails_ReturnsError(t *testing.T) {
 	agents := agent.New(stub, nil)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	err := agents.Start(id, "/tmp", "echo hello")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "starting session")
@@ -396,7 +401,7 @@ func TestImplementation_Start_WhenZombieCleanupFails_ReturnsError(t *testing.T) 
 
 	agents := agent.New(stub, nil)
 
-	err := agents.Start(id, "/tmp", "new-command")
+	err := agents.StartWithConfig(id, startCfg("/tmp", "new-command"))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "killing zombie")
@@ -409,7 +414,7 @@ func TestImplementation_Stop_WhenSessionStopFails_ReturnsError(t *testing.T) {
 	agents := agent.New(stub, nil)
 
 	id := agent.PolecatAddress("testrig", "test-agent")
-	_ = agents.Start(id, "/tmp", "echo hello")
+	_ = agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 
 	// Now inject Stop error
 	stub.StopErr = errors.New("stop failed")
@@ -441,7 +446,7 @@ func TestSelf_Mayor(t *testing.T) {
 	id, err := agent.Self()
 
 	assert.NoError(t, err)
-	assert.Equal(t, agent.MayorAddress(), id)
+	assert.Equal(t, agent.MayorAddress, id)
 }
 
 func TestSelf_Deacon(t *testing.T) {
@@ -452,7 +457,7 @@ func TestSelf_Deacon(t *testing.T) {
 	id, err := agent.Self()
 
 	assert.NoError(t, err)
-	assert.Equal(t, agent.DeaconAddress(), id)
+	assert.Equal(t, agent.DeaconAddress, id)
 }
 
 func TestSelf_Witness(t *testing.T) {

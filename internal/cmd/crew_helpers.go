@@ -68,7 +68,7 @@ func getCrewManager(rigName string, agentOverride string) (*crew.Manager, *rig.R
 	if agentOverride != "" {
 		agentName = agentOverride
 	}
-	crewMgr := factory.CrewManager(r, townRoot, agentName)
+	crewMgr := factory.New(townRoot).CrewManager(r, agentName)
 
 	return crewMgr, r, nil
 }

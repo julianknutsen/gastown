@@ -40,8 +40,8 @@ func NewDouble() *Double {
 // Ensure Double implements Agents
 var _ Agents = (*Double)(nil)
 
-// Start creates a new agent.
-func (d *Double) Start(id AgentID, workDir, command string) error {
+// StartWithConfig creates a new agent with explicit configuration.
+func (d *Double) StartWithConfig(id AgentID, cfg StartConfig) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -49,10 +49,23 @@ func (d *Double) Start(id AgentID, workDir, command string) error {
 		return ErrAlreadyRunning
 	}
 
+	// Prepend env vars to command (same as real implementation)
+	command := cfg.Command
+	if len(cfg.EnvVars) > 0 {
+		command = prependEnvVars(cfg.EnvVars, command)
+	}
+
 	d.agents[id] = &doubleAgent{
 		name:    id.String(),
-		workDir: workDir,
+		workDir: cfg.WorkDir,
 		command: command,
+	}
+
+	// Run the callback if provided (for test verification)
+	if cfg.OnCreated != nil {
+		// Note: We pass nil for Sessions in tests - callbacks should handle this
+		// or tests should not use callbacks that need Sessions
+		_ = cfg.OnCreated(nil, "")
 	}
 
 	return nil

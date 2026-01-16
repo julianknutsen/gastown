@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -60,22 +61,16 @@ func (id AgentID) Worker() string {
 	return worker
 }
 
-// --- Address constructors for convenience ---
+// --- Address constants for singleton agents ---
 
-// MayorAddress returns the address for the mayor agent.
-func MayorAddress() AgentID {
-	return "mayor"
-}
-
-// DeaconAddress returns the address for the deacon agent.
-func DeaconAddress() AgentID {
-	return "deacon"
-}
-
-// BootAddress returns the address for the boot watchdog agent.
-func BootAddress() AgentID {
-	return "boot"
-}
+const (
+	// MayorAddress is the address for the mayor agent.
+	MayorAddress AgentID = "mayor"
+	// DeaconAddress is the address for the deacon agent.
+	DeaconAddress AgentID = "deacon"
+	// BootAddress is the address for the boot watchdog agent.
+	BootAddress AgentID = "boot"
+)
 
 // WitnessAddress returns the address for a rig's witness.
 func WitnessAddress(rig string) AgentID {
@@ -115,29 +110,29 @@ func Self() (AgentID, error) {
 	rig := os.Getenv("GT_RIG")
 
 	switch role {
-	case "mayor":
-		return MayorAddress(), nil
-	case "deacon":
-		return DeaconAddress(), nil
-	case "boot":
-		return BootAddress(), nil
-	case "witness":
+	case constants.RoleMayor:
+		return MayorAddress, nil
+	case constants.RoleDeacon:
+		return DeaconAddress, nil
+	case constants.RoleBoot:
+		return BootAddress, nil
+	case constants.RoleWitness:
 		if rig == "" {
 			return "", fmt.Errorf("%w: witness requires GT_RIG", ErrUnknownRole)
 		}
 		return WitnessAddress(rig), nil
-	case "refinery":
+	case constants.RoleRefinery:
 		if rig == "" {
 			return "", fmt.Errorf("%w: refinery requires GT_RIG", ErrUnknownRole)
 		}
 		return RefineryAddress(rig), nil
-	case "crew":
+	case constants.RoleCrew:
 		name := os.Getenv("GT_CREW")
 		if rig == "" || name == "" {
 			return "", fmt.Errorf("%w: crew requires GT_RIG and GT_CREW", ErrUnknownRole)
 		}
 		return CrewAddress(rig, name), nil
-	case "polecat":
+	case constants.RolePolecat:
 		name := os.Getenv("GT_POLECAT")
 		if rig == "" || name == "" {
 			return "", fmt.Errorf("%w: polecat requires GT_RIG and GT_POLECAT", ErrUnknownRole)
@@ -159,8 +154,10 @@ var ErrNotRunning = errors.New("agent not running")
 // Agents is the interface for managing agent processes.
 // Implementations handle lifecycle, readiness detection, and session management.
 type Agents interface {
-	// Start launches an agent process in a new session.
-	Start(id AgentID, workDir, command string) error
+	// StartWithConfig launches an agent process with explicit configuration.
+	// This is the preferred method - all configuration is explicit and testable.
+	// Per-start callbacks allow context capture via closures.
+	StartWithConfig(id AgentID, cfg StartConfig) error
 
 	// Stop terminates an agent process.
 	Stop(id AgentID, graceful bool) error
@@ -246,50 +243,6 @@ func prependEnvVars(envVars map[string]string, command string) string {
 	}
 
 	return strings.Join(parts, " ") + " " + command
-}
-
-// Start launches an agent process in a new session.
-// Handles zombie detection: if a session exists but the agent process is dead, it cleans up first.
-// If EnvVars are configured, they are prepended to the command.
-func (a *Implementation) Start(id AgentID, workDir, command string) error {
-	sessionID := session.SessionID(id)
-
-	// Check for existing session and handle zombie detection
-	exists, _ := a.sess.Exists(sessionID)
-	if exists {
-		// Session exists - check if agent is actually running (healthy vs zombie)
-		if a.sess.IsRunning(sessionID, a.config.ProcessNames...) {
-			return ErrAlreadyRunning
-		}
-		// Zombie - session alive but agent dead. Kill and recreate.
-		if err := a.sess.Stop(sessionID); err != nil {
-			return fmt.Errorf("killing zombie session: %w", err)
-		}
-	}
-
-	// Prepend env vars to command if configured
-	if len(a.config.EnvVars) > 0 {
-		command = prependEnvVars(a.config.EnvVars, command)
-	}
-
-	// Create the session
-	if _, err := a.sess.Start(string(id), workDir, command); err != nil {
-		return fmt.Errorf("starting session: %w", err)
-	}
-
-	// Run post-creation callback (theming, env vars, etc.)
-	if a.config.OnSessionCreated != nil {
-		if err := a.config.OnSessionCreated(a.sess, sessionID); err != nil {
-			// Cleanup session on callback failure
-			_ = a.sess.Stop(sessionID)
-			return fmt.Errorf("session setup: %w", err)
-		}
-	}
-
-	// Wait for agent to be ready (non-blocking)
-	go a.doWaitForReady(id)
-
-	return nil
 }
 
 // doWaitForReady implements the readiness wait logic.

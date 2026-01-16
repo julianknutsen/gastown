@@ -9,18 +9,13 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/daemon"
-	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/factory"
-	"github.com/steveyegge/gastown/internal/polecat"
-	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -82,29 +77,27 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 
 	// 2. Deacon (Claude agent)
-	deaconMgr := factory.DeaconManager(townRoot, "")
-	if err := deaconMgr.Start(); err != nil {
-		if err == deacon.ErrAlreadyRunning {
-			printStatus("Deacon", true, deaconMgr.SessionName())
+	if _, err := factory.Start(townRoot, agent.DeaconAddress, ""); err != nil {
+		if err == agent.ErrAlreadyRunning {
+			printStatus("Deacon", true, "running")
 		} else {
 			printStatus("Deacon", false, err.Error())
 			allOK = false
 		}
 	} else {
-		printStatus("Deacon", true, deaconMgr.SessionName())
+		printStatus("Deacon", true, "started")
 	}
 
 	// 3. Mayor (Claude agent)
-	mayorMgr := factory.MayorManager(townRoot, "")
-	if err := mayorMgr.Start(); err != nil {
-		if err == mayor.ErrAlreadyRunning {
-			printStatus("Mayor", true, mayorMgr.SessionName())
+	if _, err := factory.Start(townRoot, agent.MayorAddress, ""); err != nil {
+		if err == agent.ErrAlreadyRunning {
+			printStatus("Mayor", true, "running")
 		} else {
 			printStatus("Mayor", false, err.Error())
 			allOK = false
 		}
 	} else {
-		printStatus("Mayor", true, mayorMgr.SessionName())
+		printStatus("Mayor", true, "started")
 	}
 
 	// 4. Witnesses (one per rig)
@@ -117,16 +110,18 @@ func runUp(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		mgr := factory.WitnessManager(r, townRoot, "")
-		if err := mgr.Start(); err != nil {
-			if err == witness.ErrAlreadyRunning {
-				printStatus(fmt.Sprintf("Witness (%s)", rigName), true, mgr.SessionName())
+		witnessID := agent.WitnessAddress(rigName)
+		witnessAgentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
+		sessionName := fmt.Sprintf("gt-%s-witness", rigName)
+		if _, err := factory.Start(townRoot, witnessID, witnessAgentName); err != nil {
+			if err == agent.ErrAlreadyRunning {
+				printStatus(fmt.Sprintf("Witness (%s)", rigName), true, sessionName)
 			} else {
 				printStatus(fmt.Sprintf("Witness (%s)", rigName), false, err.Error())
 				allOK = false
 			}
 		} else {
-			printStatus(fmt.Sprintf("Witness (%s)", rigName), true, mgr.SessionName())
+			printStatus(fmt.Sprintf("Witness (%s)", rigName), true, sessionName)
 		}
 	}
 
@@ -139,16 +134,18 @@ func runUp(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		mgr := factory.RefineryManager(r, townRoot, "")
-		if err := mgr.Start(); err != nil {
-			if err == refinery.ErrAlreadyRunning {
-				printStatus(fmt.Sprintf("Refinery (%s)", rigName), true, mgr.SessionName())
+		refineryID := agent.RefineryAddress(rigName)
+		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+		sessionName := fmt.Sprintf("gt-%s-refinery", rigName)
+		if _, err := factory.Start(townRoot, refineryID, refineryAgentName); err != nil {
+			if err == agent.ErrAlreadyRunning {
+				printStatus(fmt.Sprintf("Refinery (%s)", rigName), true, sessionName)
 			} else {
 				printStatus(fmt.Sprintf("Refinery (%s)", rigName), false, err.Error())
 				allOK = false
 			}
 		} else {
-			printStatus(fmt.Sprintf("Refinery (%s)", rigName), true, mgr.SessionName())
+			printStatus(fmt.Sprintf("Refinery (%s)", rigName), true, sessionName)
 		}
 	}
 
@@ -344,10 +341,14 @@ func startCrewFromSettings(townRoot, rigName string) ([]string, map[string]error
 	// Parse startup preference and determine which crew to start
 	toStart := parseCrewStartupPreference(settings.Crew.Startup, crewNames)
 
-	// Start each crew member using Manager
+	// Resolve agent name for crew
+	crewAgentName, _ := config.ResolveRoleAgentName("crew", townRoot, rigPath)
+
+	// Start each crew member using factory.Start
 	for _, crewName := range toStart {
-		if err := crewMgr.Start(crewName, crew.StartOptions{}); err != nil {
-			if err == crew.ErrSessionRunning {
+		crewID := agent.CrewAddress(rigName, crewName)
+		if _, err := factory.Start(townRoot, crewID, crewAgentName); err != nil {
+			if err == agent.ErrAlreadyRunning {
 				started = append(started, crewName)
 			} else {
 				errors[crewName] = err
@@ -439,12 +440,12 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 		return started, errors
 	}
 
-	// Get polecat session manager
+	// Get rig for agent name resolution
 	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return started, errors
 	}
-	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+	polecatAgentName, _ := config.ResolveRoleAgentName("polecat", townRoot, r.Path)
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -458,11 +459,11 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 		polecatPath := filepath.Join(polecatsDir, polecatName)
 
 		// Check if this polecat has a pinned bead (work attached)
-		agentID := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
+		beadAgentID := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
 		b := beads.New(polecatPath)
 		pinnedBeads, err := b.List(beads.ListOptions{
 			Status:   beads.StatusPinned,
-			Assignee: agentID,
+			Assignee: beadAgentID,
 			Priority: -1,
 		})
 		if err != nil || len(pinnedBeads) == 0 {
@@ -470,9 +471,10 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 			continue
 		}
 
-		// This polecat has work - start it using SessionManager
-		if err := polecatMgr.Start(polecatName); err != nil {
-			if err == polecat.ErrSessionRunning {
+		// This polecat has work - start it using factory.Start()
+		polecatID := agent.PolecatAddress(rigName, polecatName)
+		if _, err := factory.Start(townRoot, polecatID, polecatAgentName); err != nil {
+			if err == agent.ErrAlreadyRunning {
 				started = append(started, polecatName)
 			} else {
 				errors[polecatName] = err

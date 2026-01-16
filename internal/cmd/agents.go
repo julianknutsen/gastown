@@ -39,9 +39,9 @@ func getTownName(townRoot string) string {
 func agentSessionToAgentID(as *AgentSession) agent.AgentID {
 	switch as.Type {
 	case AgentMayor:
-		return agent.MayorAddress()
+		return agent.MayorAddress
 	case AgentDeacon:
-		return agent.DeaconAddress()
+		return agent.DeaconAddress
 	case AgentWitness:
 		return agent.WitnessAddress(as.Rig)
 	case AgentRefinery:
@@ -115,9 +115,9 @@ func sessionNameToAgentID(sessionName string) (agent.AgentID, error) {
 
 	switch identity.Role {
 	case session.RoleMayor:
-		return agent.MayorAddress(), nil
+		return agent.MayorAddress, nil
 	case session.RoleDeacon:
-		return agent.DeaconAddress(), nil
+		return agent.DeaconAddress, nil
 	case session.RoleWitness:
 		return agent.WitnessAddress(identity.Rig), nil
 	case session.RoleRefinery:

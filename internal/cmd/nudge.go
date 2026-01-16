@@ -125,9 +125,9 @@ func runNudge(cmd *cobra.Command, args []string) error {
 	var agentID agent.AgentID
 	switch target {
 	case "mayor":
-		agentID = agent.MayorAddress()
+		agentID = agent.MayorAddress
 	case "deacon":
-		agentID = agent.DeaconAddress()
+		agentID = agent.DeaconAddress
 	case "witness", "refinery":
 		// These need the current rig
 		roleInfo, err := GetRole()

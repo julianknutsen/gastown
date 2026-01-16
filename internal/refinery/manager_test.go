@@ -3,7 +3,6 @@ package refinery
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,12 +39,12 @@ func TestManager_GetMR(t *testing.T) {
 
 	// Create a test MR in the pending queue
 	mr := &MergeRequest{
-		ID:       "gt-mr-abc123",
-		Branch:   "polecat/Toast/gt-xyz",
-		Worker:   "Toast",
-		IssueID:  "gt-xyz",
-		Status:   MROpen,
-		Error:    "test failure",
+		ID:      "gt-mr-abc123",
+		Branch:  "polecat/Toast/gt-xyz",
+		Worker:  "Toast",
+		IssueID: "gt-xyz",
+		Status:  MROpen,
+		Error:   "test failure",
 	}
 
 	if err := mgr.RegisterMR(mr); err != nil {
@@ -79,11 +78,11 @@ func TestManager_Retry(t *testing.T) {
 
 		// Create a failed MR
 		mr := &MergeRequest{
-			ID:       "gt-mr-failed",
-			Branch:   "polecat/Toast/gt-xyz",
-			Worker:   "Toast",
-			Status:   MROpen,
-			Error:    "merge conflict",
+			ID:     "gt-mr-failed",
+			Branch: "polecat/Toast/gt-xyz",
+			Worker: "Toast",
+			Status: MROpen,
+			Error:  "merge conflict",
 		}
 
 		if err := mgr.RegisterMR(mr); err != nil {
@@ -179,11 +178,14 @@ func TestManager_RegisterMR(t *testing.T) {
 }
 
 // =============================================================================
-// Lifecycle Tests (Start, Stop, Status)
+// Status Tests
 // Using agent.Double for testable abstraction
+//
+// Note: Start/Stop operations are handled by factory.Start()/factory.Agents().Stop()
+// The Manager only handles status queries and state persistence.
 // =============================================================================
 
-func setupTestManagerForLifecycle(t *testing.T) (*Manager, *agent.Double, string) {
+func setupTestManagerForStatus(t *testing.T) (*Manager, *agent.Double, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	rigPath := filepath.Join(tmpDir, "testrig")
@@ -206,291 +208,162 @@ func setupTestManagerForLifecycle(t *testing.T) (*Manager, *agent.Double, string
 	return NewManager(agents, r, "claude"), agents, rigPath
 }
 
-// --- Start() Tests ---
-
-func TestManager_Start_CreatesSession(t *testing.T) {
-	mgr, agents, _ := setupTestManagerForLifecycle(t)
-
-	err := mgr.Start()
-	require.NoError(t, err)
-
-	// Verify agent exists with correct name
-	agentID := mgr.ID()
-	assert.True(t, agents.Exists(agentID), "agent should exist after Start")
-}
-
-func TestManager_Start_WhenAlreadyRunning_ReturnsError(t *testing.T) {
-	mgr, agents, _ := setupTestManagerForLifecycle(t)
-
-	// Pre-create agent
-	agentID := mgr.ID()
-	agents.CreateAgent(agentID)
-
-	err := mgr.Start()
-
-	assert.ErrorIs(t, err, agent.ErrAlreadyRunning)
-}
-
-func TestManager_Start_UpdatesStateToRunning(t *testing.T) {
-	mgr, _, rigPath := setupTestManagerForLifecycle(t)
-
-	err := mgr.Start()
-	require.NoError(t, err)
-
-	// Verify state file
-	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
-	data, err := os.ReadFile(stateFile)
-	require.NoError(t, err, "state file should exist")
-
-	var state Refinery
-	require.NoError(t, json.Unmarshal(data, &state))
-	assert.Equal(t, StateRunning, state.State)
-	assert.NotNil(t, state.StartedAt)
-}
-
-func TestManager_Start_UsesCorrectWorkDir(t *testing.T) {
-	mgr, agents, rigPath := setupTestManagerForLifecycle(t)
-
-	err := mgr.Start()
-	require.NoError(t, err)
-
-	agentID := mgr.ID()
-	workDir := agents.GetWorkDir(agentID)
-
-	// Should use refinery/rig as the working directory
-	expectedWorkDir := filepath.Join(rigPath, "refinery", "rig")
-	assert.Equal(t, expectedWorkDir, workDir, "should start in refinery/rig directory")
-}
-
-func TestManager_Start_UsesCorrectCommand(t *testing.T) {
-	mgr, agents, _ := setupTestManagerForLifecycle(t)
-
-	err := mgr.Start()
-	require.NoError(t, err)
-
-	agentID := mgr.ID()
-	command := agents.GetCommand(agentID)
-
-	// Command should contain the agent name (claude)
-	assert.Contains(t, command, "claude", "command should include agent name")
-}
-
-// --- Stop() Tests ---
-
-func TestManager_Stop_TerminatesSession(t *testing.T) {
-	mgr, agents, _ := setupTestManagerForLifecycle(t)
-
-	_ = mgr.Start()
-	err := mgr.Stop()
-	require.NoError(t, err)
-
-	agentID := mgr.ID()
-	assert.False(t, agents.Exists(agentID), "agent should be gone after Stop")
-}
-
-func TestManager_Stop_WhenNotRunning_ReturnsError(t *testing.T) {
-	mgr, _, _ := setupTestManagerForLifecycle(t)
-
-	err := mgr.Stop()
-	assert.ErrorIs(t, err, ErrNotRunning)
-}
-
-func TestManager_Stop_UpdatesStateToStopped(t *testing.T) {
-	mgr, _, rigPath := setupTestManagerForLifecycle(t)
-
-	_ = mgr.Start()
-	err := mgr.Stop()
-	require.NoError(t, err)
-
-	// Verify state file
-	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
-	data, err := os.ReadFile(stateFile)
-	require.NoError(t, err)
-
-	var state Refinery
-	require.NoError(t, json.Unmarshal(data, &state))
-	assert.Equal(t, StateStopped, state.State)
-}
-
-func TestManager_Stop_StateRunningButNoSession_Succeeds(t *testing.T) {
-	mgr, _, rigPath := setupTestManagerForLifecycle(t)
-
-	// Write stale state (says running but no session)
-	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
-	staleState := Refinery{
-		RigName: "testrig",
-		State:   StateRunning,
-	}
-	data, _ := json.Marshal(staleState)
-	require.NoError(t, os.WriteFile(stateFile, data, 0644))
-
-	// Stop should succeed and update state
-	err := mgr.Stop()
-	require.NoError(t, err)
-
-	// Verify state updated
-	data, _ = os.ReadFile(stateFile)
-	var state Refinery
-	_ = json.Unmarshal(data, &state)
-	assert.Equal(t, StateStopped, state.State)
-}
-
-func TestManager_Stop_StateStoppedButSessionExists_Succeeds(t *testing.T) {
-	mgr, agents, rigPath := setupTestManagerForLifecycle(t)
-
-	// Create agent manually (simulating stale session)
-	agentID := mgr.ID()
-	agents.CreateAgent(agentID)
-
-	// Write state that says stopped
-	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
-	staleState := Refinery{
-		RigName: "testrig",
-		State:   StateStopped,
-	}
-	data, _ := json.Marshal(staleState)
-	require.NoError(t, os.WriteFile(stateFile, data, 0644))
-
-	// Stop should succeed and kill the session
-	err := mgr.Stop()
-	require.NoError(t, err)
-
-	// Agent should be gone
-	assert.False(t, agents.Exists(agentID))
-}
-
 // --- Status() Tests ---
 
-func TestManager_Status_ReturnsState(t *testing.T) {
-	mgr, _, _ := setupTestManagerForLifecycle(t)
+func TestManager_Status_WhenAgentRunning_ReportsRunning(t *testing.T) {
+	mgr, agents, rigPath := setupTestManagerForStatus(t)
 
-	_ = mgr.Start()
+	// Simulate running agent
+	agentID := mgr.Address()
+	agents.CreateAgent(agentID)
 
-	status, err := mgr.Status()
-	require.NoError(t, err)
-	assert.Equal(t, StateRunning, status.State)
-}
-
-func TestManager_Status_AfterStop_ReturnsStateStopped(t *testing.T) {
-	mgr, _, _ := setupTestManagerForLifecycle(t)
-
-	_ = mgr.Start()
-	_ = mgr.Stop()
+	// Write state file that says running
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	state := Refinery{RigName: "testrig", State: agent.StateRunning}
+	data, _ := json.Marshal(state)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
 
 	status, err := mgr.Status()
 	require.NoError(t, err)
-	assert.Equal(t, StateStopped, status.State)
+	assert.Equal(t, agent.StateRunning, status.State)
 }
 
 func TestManager_Status_WhenAgentCrashed_DetectsMismatch(t *testing.T) {
-	// Scenario: Agent starts successfully, then crashes (killed externally).
-	// Status() should detect that state=running but agent doesn't exist.
-	mgr, agents, _ := setupTestManagerForLifecycle(t)
+	// Scenario: State says running but agent doesn't exist (crashed).
+	// Status() should detect mismatch and report stopped.
+	mgr, agents, rigPath := setupTestManagerForStatus(t)
 
-	// Start the refinery
-	require.NoError(t, mgr.Start())
+	// Write state that says running (but don't create agent)
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	staleState := Refinery{RigName: "testrig", State: agent.StateRunning}
+	data, _ := json.Marshal(staleState)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
 
-	// Simulate crash: kill agent directly without going through manager.Stop()
-	agentID := mgr.ID()
-	_ = agents.Stop(agentID, false) // Direct kill, bypasses manager state update
-
-	// Agent is dead
-	assert.False(t, agents.Exists(agentID), "agent should be dead after crash")
+	// Agent doesn't exist
+	agentID := mgr.Address()
+	assert.False(t, agents.Exists(agentID), "agent should not exist")
 
 	// Status() detects the mismatch and reports stopped
 	status, err := mgr.Status()
 	require.NoError(t, err)
-	assert.Equal(t, StateStopped, status.State, "should detect crashed agent")
+	assert.Equal(t, agent.StateStopped, status.State, "should detect crashed agent")
 }
 
-// --- Lifecycle Integration ---
+func TestManager_Status_WhenStateStopped_ReportsStopped(t *testing.T) {
+	mgr, _, rigPath := setupTestManagerForStatus(t)
 
-func TestManager_FullLifecycle(t *testing.T) {
-	mgr, _, _ := setupTestManagerForLifecycle(t)
+	// Write state that says stopped
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	state := Refinery{RigName: "testrig", State: agent.StateStopped}
+	data, _ := json.Marshal(state)
+	require.NoError(t, os.WriteFile(stateFile, data, 0644))
 
-	// Start
-	require.NoError(t, mgr.Start())
+	status, err := mgr.Status()
+	require.NoError(t, err)
+	assert.Equal(t, agent.StateStopped, status.State)
+}
 
-	// Status shows running
-	status, _ := mgr.Status()
-	assert.Equal(t, StateRunning, status.State)
+// --- IsRunning() Tests ---
 
-	// Stop
-	require.NoError(t, mgr.Stop())
+func TestManager_IsRunning_WhenAgentExists_ReturnsTrue(t *testing.T) {
+	mgr, agents, _ := setupTestManagerForStatus(t)
 
-	// Status shows stopped
-	status, _ = mgr.Status()
-	assert.Equal(t, StateStopped, status.State)
+	agentID := mgr.Address()
+	agents.CreateAgent(agentID)
 
-	// Can start again
-	require.NoError(t, mgr.Start())
+	assert.True(t, mgr.IsRunning())
+}
+
+func TestManager_IsRunning_WhenAgentNotExists_ReturnsFalse(t *testing.T) {
+	mgr, _, _ := setupTestManagerForStatus(t)
+
+	assert.False(t, mgr.IsRunning())
 }
 
 // --- SessionName() Tests ---
 
 func TestManager_SessionName_Format(t *testing.T) {
-	mgr, _, _ := setupTestManagerForLifecycle(t)
+	mgr, _, _ := setupTestManagerForStatus(t)
 	assert.Equal(t, "gt-testrig-refinery", mgr.SessionName())
 }
 
-func TestManager_stateFile(t *testing.T) {
-	mgr, _, rigPath := setupTestManagerForLifecycle(t)
-	expected := filepath.Join(rigPath, ".runtime", "refinery.json")
-	assert.Equal(t, expected, mgr.stateFile())
+// --- Address() Tests ---
+
+func TestManager_Address_ReturnsCorrectAgentID(t *testing.T) {
+	mgr, _, _ := setupTestManagerForStatus(t)
+	expected := agent.RefineryAddress("testrig")
+	assert.Equal(t, expected, mgr.Address())
 }
 
-// =============================================================================
-// Error Path Tests (using agent.AgentsStub for error injection)
-// =============================================================================
+// --- LoadState/SaveState Tests ---
 
-func TestManager_Start_WhenAgentStartFails_ReturnsError(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
-	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, "refinery", "rig", ".claude"), 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.local.json"), []byte(`{}`), 0644))
+func TestManager_LoadState_ReturnsPersistedState(t *testing.T) {
+	mgr, _, rigPath := setupTestManagerForStatus(t)
 
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-
-	// Use stub with injected error
-	stub := agent.NewAgentsStub(agent.NewDouble())
-	stub.StartErr = errors.New("agent start failed")
-
-	mgr := NewManager(stub, r, "claude")
-
-	err := mgr.Start()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "agent start failed")
-}
-
-func TestManager_Stop_WhenAgentStopFails_ReturnsError(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
-
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-
-	// Create stub with stop error
-	double := agent.NewDouble()
-	stub := agent.NewAgentsStub(double)
-
-	mgr := NewManager(stub, r, "claude")
-
-	// Pre-create agent session using mgr.ID()
-	double.CreateAgent(mgr.ID())
-
-	// Write running state
+	// Write a state file
 	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
-	state := Refinery{RigName: "testrig", State: StateRunning}
-	data, _ := json.Marshal(state)
+	state := Refinery{RigName: "testrig", State: agent.StateRunning}
+	data, _ := json.MarshalIndent(state, "", "  ")
 	require.NoError(t, os.WriteFile(stateFile, data, 0644))
 
-	// Inject stop error
-	stub.StopErr = errors.New("agent stop failed")
+	loaded, err := mgr.LoadState()
+	require.NoError(t, err)
+	assert.Equal(t, "testrig", loaded.RigName)
+	assert.Equal(t, agent.StateRunning, loaded.State)
+}
 
-	err := mgr.Stop()
+func TestManager_SaveState_PersistsState(t *testing.T) {
+	mgr, _, rigPath := setupTestManagerForStatus(t)
+
+	state := &Refinery{RigName: "testrig", State: agent.StateRunning}
+	err := mgr.SaveState(state)
+	require.NoError(t, err)
+
+	// Verify file was written
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	data, err := os.ReadFile(stateFile)
+	require.NoError(t, err)
+
+	var loaded Refinery
+	require.NoError(t, json.Unmarshal(data, &loaded))
+	assert.Equal(t, "testrig", loaded.RigName)
+	assert.Equal(t, agent.StateRunning, loaded.State)
+}
+
+func TestManager_LoadState_WhenNoFile_ReturnsDefaultState(t *testing.T) {
+	mgr, _, _ := setupTestManagerForStatus(t)
+
+	// Don't create state file - should return default
+	state, err := mgr.LoadState()
+	require.NoError(t, err)
+	assert.Equal(t, "testrig", state.RigName)
+	assert.Equal(t, agent.StateStopped, state.State)
+}
+
+func TestManager_StateFile(t *testing.T) {
+	mgr, _, rigPath := setupTestManagerForStatus(t)
+	expected := filepath.Join(rigPath, ".runtime", "refinery.json")
+	assert.Equal(t, expected, mgr.stateManager.StateFile())
+}
+
+// =============================================================================
+// Error Path Tests
+// =============================================================================
+
+func TestManager_Status_WhenLoadStateFails_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+
+	// Write invalid JSON
+	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
+	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
+
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(agent.NewDouble(), r, "claude")
+
+	_, err := mgr.Status()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "agent stop failed")
 }
 
 // =============================================================================
@@ -657,138 +530,6 @@ func TestManager_Retry_WithProcessNow_PrintsDeprecationNotice(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "deprecated")
-}
-
-// =============================================================================
-// Start/Stop Error Path Tests
-// =============================================================================
-
-func TestManager_Start_WhenLoadStateFails_ReturnsError(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
-
-	// Write invalid JSON to state file
-	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
-	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
-
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
-
-	err := mgr.Start()
-	assert.Error(t, err)
-}
-
-func TestManager_Start_WhenEnsureSettingsFails_ReturnsError(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
-
-	// Create refinery/rig directory but make it read-only so EnsureSettingsForRole fails
-	refineryRigDir := filepath.Join(rigPath, "refinery", "rig")
-	require.NoError(t, os.MkdirAll(refineryRigDir, 0755))
-
-	// Make the directory read-only to cause EnsureSettingsForRole to fail
-	require.NoError(t, os.Chmod(refineryRigDir, 0555))
-	defer os.Chmod(refineryRigDir, 0755)
-
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
-
-	err := mgr.Start()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "ensuring runtime settings")
-}
-
-func TestManager_Start_UsesLegacyMayorDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
-
-	// Create mayor/rig instead of refinery/rig (legacy layout)
-	mayorRigDir := filepath.Join(rigPath, "mayor", "rig", ".claude")
-	require.NoError(t, os.MkdirAll(mayorRigDir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(mayorRigDir, "settings.local.json"), []byte(`{}`), 0644))
-
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	agents := agent.NewDouble()
-	mgr := NewManager(agents, r, "claude")
-
-	err := mgr.Start()
-	require.NoError(t, err)
-
-	// Verify it used mayor/rig as the work directory
-	agentID := mgr.ID()
-	workDir := agents.GetWorkDir(agentID)
-	assert.Equal(t, filepath.Join(rigPath, "mayor", "rig"), workDir)
-}
-
-func TestManager_Start_WhenSaveStateFails_CleansUpAndReturnsError(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	runtimeDir := filepath.Join(rigPath, ".runtime")
-	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
-	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, "refinery", "rig", ".claude"), 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.local.json"), []byte(`{}`), 0644))
-
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	agents := agent.NewDouble()
-	mgr := NewManager(agents, r, "claude")
-
-	// Make the runtime directory read-only to cause saveState to fail
-	require.NoError(t, os.Chmod(runtimeDir, 0555))
-	defer os.Chmod(runtimeDir, 0755) // Cleanup
-
-	err := mgr.Start()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "saving state")
-
-	// Verify agent was cleaned up after saveState failure
-	agentID := mgr.ID()
-	assert.False(t, agents.Exists(agentID), "agent should be cleaned up after saveState failure")
-}
-
-func TestManager_Stop_WhenLoadStateFails_ReturnsError(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
-
-	// Write invalid JSON to state file
-	stateFile := filepath.Join(rigPath, ".runtime", "refinery.json")
-	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
-
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
-
-	err := mgr.Stop()
-	assert.Error(t, err)
-}
-
-func TestManager_Stop_WhenSaveStateFails_ReturnsError(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	runtimeDir := filepath.Join(rigPath, ".runtime")
-	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
-
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	agents := agent.NewDouble()
-	mgr := NewManager(agents, r, "claude")
-
-	// Start first (need running state)
-	agents.CreateAgent(mgr.ID())
-
-	// Write running state
-	stateFile := filepath.Join(runtimeDir, "refinery.json")
-	state := Refinery{RigName: "testrig", State: StateRunning}
-	data, _ := json.Marshal(state)
-	require.NoError(t, os.WriteFile(stateFile, data, 0644))
-
-	// Make the runtime directory read-only to cause saveState to fail
-	require.NoError(t, os.Chmod(runtimeDir, 0555))
-	defer os.Chmod(runtimeDir, 0755) // Cleanup
-
-	err := mgr.Stop()
-	assert.Error(t, err)
 }
 
 // =============================================================================

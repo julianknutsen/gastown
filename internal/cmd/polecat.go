@@ -370,7 +370,7 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 	for _, r := range rigs {
 		polecatGit := git.NewGit(r.Path)
 		mgr := polecat.NewManager(agents, r, polecatGit)
-		polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+		polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 
 		polecats, err := mgr.List()
 		if err != nil {
@@ -481,7 +481,7 @@ func runPolecatRemove(cmd *cobra.Command, args []string) error {
 	for _, p := range targets {
 		// Check if session is running
 		if !polecatForce {
-			polecatMgr := factory.PolecatSessionManager(p.r, p.townRoot, "")
+			polecatMgr := factory.New(p.townRoot).PolecatSessionManager(p.r, "")
 			running, _ := polecatMgr.IsRunning(p.polecatName)
 			if running {
 				removeErrors = append(removeErrors, fmt.Sprintf("%s/%s: session is running (stop first or use --force)", p.rigName, p.polecatName))
@@ -642,7 +642,7 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get session info
-	polecatMgr := factory.PolecatSessionManager(r, townRoot, "")
+	polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 	sessInfo, err := polecatMgr.Status(polecatName)
 	if err != nil {
 		// Non-fatal - continue without session info
@@ -1174,7 +1174,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		}
 
 		// Step 1: Kill session (force mode - no graceful shutdown)
-		polecatMgr := factory.PolecatSessionManager(p.r, p.townRoot, "")
+		polecatMgr := factory.New(p.townRoot).PolecatSessionManager(p.r, "")
 		running, _ := polecatMgr.IsRunning(p.polecatName)
 		if running {
 			if err := polecatMgr.Stop(p.polecatName, true); err != nil {
