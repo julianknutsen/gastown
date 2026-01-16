@@ -26,6 +26,7 @@ import (
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/feed"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/util"
 	"github.com/steveyegge/gastown/internal/wisp"
 )
 
@@ -227,6 +228,11 @@ func (d *Daemon) heartbeat(state *State) {
 	// 11. Check polecat session health (proactive crash detection)
 	// This validates tmux sessions are still alive for polecats with work-on-hook
 	d.checkPolecatSessionHealth()
+
+	// 12. Clean up orphaned claude subagent processes (memory leak prevention)
+	// These are Task tool subagents that didn't clean up after completion.
+	// This is a safety net - Deacon patrol also does this more frequently.
+	d.cleanupOrphanedProcesses()
 
 	// Update state
 	state.LastHeartbeat = time.Now()
@@ -841,5 +847,28 @@ Manual intervention may be required.`,
 	cmd.Dir = d.config.TownRoot
 	if err := cmd.Run(); err != nil {
 		d.logger.Printf("Warning: failed to notify witness of crashed polecat: %v", err)
+	}
+}
+
+// cleanupOrphanedProcesses kills orphaned claude subagent processes.
+// These are Task tool subagents that didn't clean up after completion.
+// Detection uses TTY column: processes with TTY "?" have no controlling terminal.
+// This is a safety net fallback - Deacon patrol also runs this more frequently.
+func (d *Daemon) cleanupOrphanedProcesses() {
+	results, err := util.CleanupOrphanedClaudeProcesses()
+	if err != nil {
+		d.logger.Printf("Warning: orphan process cleanup failed: %v", err)
+		return
+	}
+
+	if len(results) > 0 {
+		d.logger.Printf("Orphan cleanup: processed %d process(es)", len(results))
+		for _, r := range results {
+			if r.Signal == "UNKILLABLE" {
+				d.logger.Printf("  WARNING: PID %d (%s) survived SIGKILL", r.Process.PID, r.Process.Cmd)
+			} else {
+				d.logger.Printf("  Sent %s to PID %d (%s)", r.Signal, r.Process.PID, r.Process.Cmd)
+			}
+		}
 	}
 }
