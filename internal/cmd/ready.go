@@ -72,6 +72,13 @@ type ReadySummary struct {
 	P4Count  int            `json:"p4_count"`
 }
 
+// isFormulaScaffold returns true if the issue ID looks like a formula scaffold.
+// Formula scaffolds are templates created when formulas are installed, not actual work.
+// Pattern: "mol-<name>" or "mol-<name>.<step-id>"
+func isFormulaScaffold(id string) bool {
+	return strings.HasPrefix(id, "mol-")
+}
+
 func runReady(cmd *cobra.Command, args []string) error {
 	// Find town root
 	townRoot, err := workspace.FindFromCwdOrError()
@@ -129,7 +136,14 @@ func runReady(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				src.Error = err.Error()
 			} else {
-				src.Issues = issues
+				// Filter out formula scaffolds
+				var filtered []*beads.Issue
+				for _, issue := range issues {
+					if !isFormulaScaffold(issue.ID) {
+						filtered = append(filtered, issue)
+					}
+				}
+				src.Issues = filtered
 			}
 			sources = append(sources, src)
 		}()
@@ -151,7 +165,14 @@ func runReady(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				src.Error = err.Error()
 			} else {
-				src.Issues = issues
+				// Filter out formula scaffolds
+				var filtered []*beads.Issue
+				for _, issue := range issues {
+					if !isFormulaScaffold(issue.ID) {
+						filtered = append(filtered, issue)
+					}
+				}
+				src.Issues = filtered
 			}
 			sources = append(sources, src)
 		}(r)
