@@ -1,11 +1,9 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -205,29 +203,15 @@ func modifyAgentState(agentBead, beadsDir string, hasIncr bool) error {
 		finalLabels = append(finalLabels, key+":"+value)
 	}
 
-	// Build update command with --set-labels to replace all
-	args := []string{"update", agentBead}
-	for _, label := range finalLabels {
-		args = append(args, "--set-labels="+label)
-	}
-
-	// If no labels, clear all
+	// Use BeadsOps interface for update
+	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	opts := beads.UpdateOptions{SetLabels: finalLabels}
+	// If no labels, set to empty to clear all
 	if len(finalLabels) == 0 {
-		args = append(args, "--set-labels=")
+		opts.SetLabels = []string{""}
 	}
 
-	// Execute bd update
-	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return fmt.Errorf("%s", errMsg)
-		}
+	if err := b.Update(agentBead, opts); err != nil {
 		return fmt.Errorf("updating agent state: %w", err)
 	}
 
@@ -259,38 +243,14 @@ func getAgentLabels(agentBead, beadsDir string) (map[string]string, error) {
 
 // getAllAgentLabels retrieves all labels (including non-state) from an agent bead.
 func getAllAgentLabels(agentBead, beadsDir string) ([]string, error) {
-	args := []string{"show", agentBead, "--json"}
-
-	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if strings.Contains(errMsg, "not found") {
+	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+	issue, err := b.Show(agentBead)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
 			return nil, fmt.Errorf("agent bead not found: %s", agentBead)
-		}
-		if errMsg != "" {
-			return nil, fmt.Errorf("%s", errMsg)
 		}
 		return nil, fmt.Errorf("querying agent bead: %w", err)
 	}
 
-	// Parse JSON output - bd show --json returns an array
-	var issues []struct {
-		Labels []string `json:"labels"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
-		return nil, fmt.Errorf("parsing agent bead: %w", err)
-	}
-
-	if len(issues) == 0 {
-		return nil, fmt.Errorf("agent bead not found: %s", agentBead)
-	}
-
-	return issues[0].Labels, nil
+	return issue.Labels, nil
 }
