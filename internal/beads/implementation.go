@@ -1027,14 +1027,14 @@ func (b *Implementation) SwarmValidate(epicID string) error {
 
 // === Formula Operations ===
 
-// FormulaShow returns formula definition.
-func (b *Implementation) FormulaShow(name string) (*Formula, error) {
-	out, err := b.run("formula", "show", name)
+// FormulaShow returns detailed formula definition.
+func (b *Implementation) FormulaShow(name string) (*FormulaDetails, error) {
+	out, err := b.run("formula", "show", name, "--json")
 	if err != nil {
 		return nil, err
 	}
 
-	var formula Formula
+	var formula FormulaDetails
 	if err := json.Unmarshal(out, &formula); err != nil {
 		return nil, fmt.Errorf("parsing bd formula show output: %w", err)
 	}
@@ -1043,21 +1043,21 @@ func (b *Implementation) FormulaShow(name string) (*Formula, error) {
 }
 
 // FormulaList returns all available formulas.
-func (b *Implementation) FormulaList() ([]*Formula, error) {
+func (b *Implementation) FormulaList() ([]*FormulaListEntry, error) {
 	out, err := b.run("formula", "list", "--json")
 	if err != nil {
 		// formula list may not be implemented, return empty list
-		return []*Formula{}, nil
+		return []*FormulaListEntry{}, nil
 	}
 
-	var formulas []*Formula
+	var formulas []*FormulaListEntry
 	if err := json.Unmarshal(out, &formulas); err != nil {
 		// If parsing fails, return empty list
-		return []*Formula{}, nil
+		return []*FormulaListEntry{}, nil
 	}
 
 	if formulas == nil {
-		return []*Formula{}, nil
+		return []*FormulaListEntry{}, nil
 	}
 	return formulas, nil
 }

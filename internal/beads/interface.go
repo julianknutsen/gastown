@@ -170,11 +170,11 @@ type BeadsOps interface {
 
 	// === Formula Operations ===
 
-	// FormulaShow returns formula definition.
-	FormulaShow(name string) (*Formula, error)
+	// FormulaShow returns detailed formula definition.
+	FormulaShow(name string) (*FormulaDetails, error)
 
 	// FormulaList returns all available formulas.
-	FormulaList() ([]*Formula, error)
+	FormulaList() ([]*FormulaListEntry, error)
 
 	// Cook executes a formula.
 	Cook(formulaName string) (*Issue, error)

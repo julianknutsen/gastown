@@ -459,7 +459,7 @@ func (s *BeadsStub) SwarmValidate(epicID string) error {
 }
 
 // FormulaShow delegates to the wrapped implementation unless FormulaShowErr is set.
-func (s *BeadsStub) FormulaShow(name string) (*Formula, error) {
+func (s *BeadsStub) FormulaShow(name string) (*FormulaDetails, error) {
 	if s.FormulaShowErr != nil {
 		return nil, s.FormulaShowErr
 	}
@@ -467,7 +467,7 @@ func (s *BeadsStub) FormulaShow(name string) (*Formula, error) {
 }
 
 // FormulaList delegates to the wrapped implementation unless FormulaListErr is set.
-func (s *BeadsStub) FormulaList() ([]*Formula, error) {
+func (s *BeadsStub) FormulaList() ([]*FormulaListEntry, error) {
 	if s.FormulaListErr != nil {
 		return nil, s.FormulaListErr
 	}

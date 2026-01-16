@@ -518,17 +518,60 @@ func runSwarmStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("swarm '%s' not found in any rig", swarmID)
 	}
 
-	// Use bd swarm status to get swarm info from beads
-	bdArgs := []string{"swarm", "status", swarmID}
-	if swarmStatusJSON {
-		bdArgs = append(bdArgs, "--json")
-	}
-
-	output, err := b.Run(bdArgs...)
+	status, err := b.SwarmStatus(swarmID)
 	if err != nil {
 		return err
 	}
-	fmt.Print(string(output))
+
+	if swarmStatusJSON {
+		output, err := json.MarshalIndent(status, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(output))
+		return nil
+	}
+
+	// Text format
+	fmt.Printf("🐝 Swarm: %s\n", status.ID)
+	fmt.Printf("Status: %s\n", status.Status)
+	fmt.Printf("Progress: %d/%d tasks complete\n\n", status.Completed, status.TotalTasks)
+
+	if len(status.ActiveTasks) > 0 {
+		fmt.Printf("🔄 Active (%d):\n", len(status.ActiveTasks))
+		for _, task := range status.ActiveTasks {
+			assignee := ""
+			if task.Assignee != "" {
+				assignee = fmt.Sprintf(" [%s]", task.Assignee)
+			}
+			fmt.Printf("  • %s: %s%s\n", task.ID, task.Title, assignee)
+		}
+		fmt.Println()
+	}
+
+	if len(status.ReadyTasks) > 0 {
+		fmt.Printf("✅ Ready (%d):\n", len(status.ReadyTasks))
+		for _, task := range status.ReadyTasks {
+			fmt.Printf("  • %s: %s\n", task.ID, task.Title)
+		}
+		fmt.Println()
+	}
+
+	if len(status.BlockedTasks) > 0 {
+		fmt.Printf("⏳ Blocked (%d):\n", len(status.BlockedTasks))
+		for _, task := range status.BlockedTasks {
+			fmt.Printf("  • %s: %s\n", task.ID, task.Title)
+		}
+		fmt.Println()
+	}
+
+	if len(status.CompletedTasks) > 0 {
+		fmt.Printf("✓ Completed (%d):\n", len(status.CompletedTasks))
+		for _, task := range status.CompletedTasks {
+			fmt.Printf("  • %s: %s\n", task.ID, task.Title)
+		}
+	}
+
 	return nil
 }
 
@@ -558,13 +601,7 @@ func runSwarmList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Use bd list --mol-type=swarm to find swarm molecules
-	bdArgs := []string{"list", "--mol-type=swarm", "--type=epic"}
-	if swarmListJSON {
-		bdArgs = append(bdArgs, "--json")
-	}
-
-	// Collect swarms from all rigs
+	// Collect swarms from all rigs using typed List method
 	type swarmListEntry struct {
 		ID     string `json:"id"`
 		Title  string `json:"title"`
@@ -573,47 +610,28 @@ func runSwarmList(cmd *cobra.Command, args []string) error {
 	}
 	var allSwarms []swarmListEntry
 
-	// BeadsOps Migration: cmd.Dir=r.BeadsPath() (REQUIRED - rig beads), BEADS_DIR N/A
 	for _, r := range rigs {
 		b := beads.New(r.BeadsPath())
-		stdout, err := b.Run(bdArgs...)
+		issues, err := b.List(beads.ListOptions{
+			Type:     "epic",
+			MolType:  "swarm",
+			Priority: -1,
+		})
 		if err != nil {
 			continue
 		}
 
-		if swarmListJSON {
-			// Parse JSON output
-			var issues []struct {
-				ID     string `json:"id"`
-				Title  string `json:"title"`
-				Status string `json:"status"`
+		for _, issue := range issues {
+			// Filter by status if specified
+			if swarmListStatus != "" && !strings.EqualFold(issue.Status, swarmListStatus) {
+				continue
 			}
-			if err := json.Unmarshal(stdout, &issues); err == nil {
-				for _, issue := range issues {
-					allSwarms = append(allSwarms, swarmListEntry{
-						ID:     issue.ID,
-						Title:  issue.Title,
-						Status: issue.Status,
-						Rig:    r.Name,
-					})
-				}
-			}
-		} else {
-			// Parse line output - each line is an issue
-			lines := strings.Split(strings.TrimSpace(string(stdout)), "\n")
-			for _, line := range lines {
-				if line == "" {
-					continue
-				}
-				// Filter by status if specified
-				if swarmListStatus != "" && !strings.Contains(strings.ToLower(line), swarmListStatus) {
-					continue
-				}
-				allSwarms = append(allSwarms, swarmListEntry{
-					ID:  line,
-					Rig: r.Name,
-				})
-			}
+			allSwarms = append(allSwarms, swarmListEntry{
+				ID:     issue.ID,
+				Title:  issue.Title,
+				Status: issue.Status,
+				Rig:    r.Name,
+			})
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/base32"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -170,40 +171,120 @@ func init() {
 
 // runFormulaList delegates to bd formula list
 func runFormulaList(cmd *cobra.Command, args []string) error {
-	// BeadsOps Migration: cmd.Dir N/A, BEADS_DIR N/A (runs from cwd)
 	cwd, _ := os.Getwd()
 	b := beads.New(cwd)
 
-	bdArgs := []string{"formula", "list"}
-	if formulaListJSON {
-		bdArgs = append(bdArgs, "--json")
-	}
-
-	output, err := b.Run(bdArgs...)
+	formulas, err := b.FormulaList()
 	if err != nil {
 		return err
 	}
-	fmt.Print(string(output))
+
+	if formulaListJSON {
+		output, err := json.MarshalIndent(formulas, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(output))
+		return nil
+	}
+
+	// Text format - group by type
+	workflows := []*beads.FormulaListEntry{}
+	convoys := []*beads.FormulaListEntry{}
+	for _, f := range formulas {
+		switch f.Type {
+		case "convoy":
+			convoys = append(convoys, f)
+		default:
+			workflows = append(workflows, f)
+		}
+	}
+
+	fmt.Printf("📜 Formulas (%d found)\n\n", len(formulas))
+
+	if len(workflows) > 0 {
+		fmt.Println("📋 Workflow:")
+		for _, f := range workflows {
+			desc := truncateDesc(f.Description, 50)
+			if f.VarCount > 0 {
+				fmt.Printf("  %-25s %s (%d vars)\n", f.Name, desc, f.VarCount)
+			} else {
+				fmt.Printf("  %-25s %s\n", f.Name, desc)
+			}
+		}
+		fmt.Println()
+	}
+
+	if len(convoys) > 0 {
+		fmt.Println("🚗 Convoy:")
+		for _, f := range convoys {
+			desc := truncateDesc(f.Description, 50)
+			if f.VarCount > 0 {
+				fmt.Printf("  %-25s %s (%d vars)\n", f.Name, desc, f.VarCount)
+			} else {
+				fmt.Printf("  %-25s %s\n", f.Name, desc)
+			}
+		}
+		fmt.Println()
+	}
+
 	return nil
+}
+
+// truncateDesc truncates description for display.
+func truncateDesc(s string, maxLen int) string {
+	// Get first line only
+	if idx := strings.Index(s, "\n"); idx > 0 {
+		s = s[:idx]
+	}
+	if len(s) > maxLen {
+		return s[:maxLen-3] + "..."
+	}
+	return s
 }
 
 // runFormulaShow delegates to bd formula show
 func runFormulaShow(cmd *cobra.Command, args []string) error {
-	// BeadsOps Migration: cmd.Dir N/A, BEADS_DIR N/A (runs from cwd)
 	cwd, _ := os.Getwd()
 	b := beads.New(cwd)
 
 	formulaName := args[0]
-	bdArgs := []string{"formula", "show", formulaName}
-	if formulaShowJSON {
-		bdArgs = append(bdArgs, "--json")
-	}
-
-	output, err := b.Run(bdArgs...)
+	formula, err := b.FormulaShow(formulaName)
 	if err != nil {
 		return err
 	}
-	fmt.Print(string(output))
+
+	if formulaShowJSON {
+		output, err := json.MarshalIndent(formula, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(output))
+		return nil
+	}
+
+	// Text format
+	fmt.Printf("\n📋 %s\n", formula.Name)
+	fmt.Printf("   Type: %s\n", formula.Type)
+	fmt.Printf("   Description: %s\n", truncateDesc(formula.Description, 60))
+	fmt.Println()
+
+	// Show full description
+	fmt.Println(formula.Description)
+	fmt.Println()
+
+	// Show steps if present
+	if len(formula.Steps) > 0 {
+		fmt.Printf("Steps (%d):\n", len(formula.Steps))
+		for i, step := range formula.Steps {
+			needs := ""
+			if len(step.Needs) > 0 {
+				needs = fmt.Sprintf(" (needs: %s)", strings.Join(step.Needs, ", "))
+			}
+			fmt.Printf("  %d. [%s] %s%s\n", i+1, step.ID, step.Title, needs)
+		}
+	}
+
 	return nil
 }
 

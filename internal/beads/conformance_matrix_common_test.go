@@ -773,8 +773,8 @@ func (r *TrueRawBdOps) SwarmStatus(swarmID string) (*beads.SwarmStatus, error)  
 func (r *TrueRawBdOps) SwarmCreate(epicID string) (*beads.Issue, error)                       { return nil, nil }
 func (r *TrueRawBdOps) SwarmList() ([]*beads.Issue, error)                                    { return []*beads.Issue{}, nil }
 func (r *TrueRawBdOps) SwarmValidate(epicID string) error                                     { return nil }
-func (r *TrueRawBdOps) FormulaShow(name string) (*beads.Formula, error)                       { return nil, nil }
-func (r *TrueRawBdOps) FormulaList() ([]*beads.Formula, error)                                { return []*beads.Formula{}, nil }
+func (r *TrueRawBdOps) FormulaShow(name string) (*beads.FormulaDetails, error)                { return nil, nil }
+func (r *TrueRawBdOps) FormulaList() ([]*beads.FormulaListEntry, error)                       { return []*beads.FormulaListEntry{}, nil }
 func (r *TrueRawBdOps) Cook(formulaName string) (*beads.Issue, error)                         { return nil, nil }
 func (r *TrueRawBdOps) LegAdd(formulaID, stepName string) error                               { return nil }
 func (r *TrueRawBdOps) SlotShow(id string) (*beads.Slot, error)                               { return nil, nil }

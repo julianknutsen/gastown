@@ -1465,8 +1465,8 @@ func (d *Double) SwarmValidate(epicID string) error {
 
 // === Formula Operations ===
 
-// FormulaShow returns formula definition.
-func (d *Double) FormulaShow(name string) (*Formula, error) {
+// FormulaShow returns detailed formula definition.
+func (d *Double) FormulaShow(name string) (*FormulaDetails, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -1483,11 +1483,17 @@ func (d *Double) FormulaShow(name string) (*Formula, error) {
 		}
 	}
 
-	return formula, nil
+	// Convert FormulaListEntry to FormulaDetails for test double
+	return &FormulaDetails{
+		Name:        formula.Name,
+		Description: formula.Description,
+		Type:        formula.Type,
+		Steps:       []*FormulaStep{}, // Test double doesn't track detailed steps
+	}, nil
 }
 
 // FormulaList returns all available formulas.
-func (d *Double) FormulaList() ([]*Formula, error) {
+func (d *Double) FormulaList() ([]*FormulaListEntry, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -1495,7 +1501,7 @@ func (d *Double) FormulaList() ([]*Formula, error) {
 		return nil, fmt.Errorf("not a beads repository")
 	}
 
-	result := []*Formula{}
+	result := []*FormulaListEntry{}
 	for _, formula := range d.db.formulas {
 		result = append(result, formula)
 	}

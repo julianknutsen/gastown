@@ -247,13 +247,35 @@ type SwarmWorker struct {
 	Status string `json:"status"`
 }
 
-// Formula represents a workflow formula definition.
-type Formula struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Steps       []string `json:"steps"`
-	Tracked     []string `json:"tracked"`
+// FormulaListEntry represents a formula in the bd formula list output.
+type FormulaListEntry struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+	StepCount   int    `json:"steps"`
+	VarCount    int    `json:"vars"`
 }
+
+// FormulaDetails represents the detailed output of bd formula show --json.
+type FormulaDetails struct {
+	Name        string         `json:"formula"` // Note: bd uses "formula" not "name"
+	Description string         `json:"description"`
+	Version     int            `json:"version"`
+	Type        string         `json:"type"`
+	Steps       []*FormulaStep `json:"steps"`
+}
+
+// FormulaStep represents a step within a formula.
+type FormulaStep struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Needs       []string `json:"needs,omitempty"`
+}
+
+// Formula is an alias for FormulaListEntry for backward compatibility.
+type Formula = FormulaListEntry
 
 // DoctorReport represents the output of bd doctor.
 type DoctorReport struct {

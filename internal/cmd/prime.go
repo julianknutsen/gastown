@@ -342,17 +342,14 @@ func detectRole(cwd, townRoot string) RoleInfo {
 // runBdPrime runs `bd prime` and outputs the result.
 // This provides beads workflow context to the agent.
 func runBdPrime(workDir string) {
-	// Use BeadsOps interface
-	// cmd.Dir = workDir - REQUIRED for operating on specific workDir
-	// BEADS_DIR was N/A - not set
 	b := beads.New(workDir)
-	output, err := b.Run("prime")
+	output, err := b.Prime()
 	if err != nil {
 		// Skip if bd prime fails (beads might not be available)
 		return
 	}
 
-	outputStr := strings.TrimSpace(string(output))
+	outputStr := strings.TrimSpace(output)
 	if outputStr != "" {
 		fmt.Println()
 		fmt.Println(outputStr)
@@ -469,24 +466,25 @@ func checkSlungWork(ctx RoleContext) bool {
 	}
 	fmt.Println()
 
-	// Show bead preview using bd show
-	// Use BeadsOps interface
-	// cmd.Dir was N/A - ran from cwd (ctx.WorkDir)
-	// BEADS_DIR was N/A - not set
+	// Show bead details (formatted from Issue struct)
 	fmt.Println("**Bead details:**")
-	showOutput, err := b.Run("show", hookedBead.ID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  bd show %s: %v\n", hookedBead.ID, err)
-	} else {
-		lines := strings.Split(string(showOutput), "\n")
-		maxLines := 15
-		if len(lines) > maxLines {
-			lines = lines[:maxLines]
-			lines = append(lines, "...")
-		}
-		for _, line := range lines {
-			fmt.Printf("  %s\n", line)
-		}
+	fmt.Printf("  Status: %s\n", hookedBead.Status)
+	fmt.Printf("  Type: %s\n", hookedBead.Type)
+	fmt.Printf("  Priority: %d\n", hookedBead.Priority)
+	if hookedBead.Assignee != "" {
+		fmt.Printf("  Assignee: %s\n", hookedBead.Assignee)
+	}
+	if hookedBead.Parent != "" {
+		fmt.Printf("  Parent: %s\n", hookedBead.Parent)
+	}
+	if len(hookedBead.DependsOn) > 0 {
+		fmt.Printf("  Depends on: %s\n", strings.Join(hookedBead.DependsOn, ", "))
+	}
+	if len(hookedBead.Blocks) > 0 {
+		fmt.Printf("  Blocks: %s\n", strings.Join(hookedBead.Blocks, ", "))
+	}
+	if len(hookedBead.Labels) > 0 {
+		fmt.Printf("  Labels: %s\n", strings.Join(hookedBead.Labels, ", "))
 	}
 	fmt.Println()
 
