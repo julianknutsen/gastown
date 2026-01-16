@@ -361,13 +361,13 @@ func initTownBeads(townPath string) error {
 	b := beads.New(townPath)
 
 	// Run: bd init --prefix hq
-	output, err := b.Run("init", "--prefix", "hq")
+	err := b.Init(beads.InitOptions{Prefix: "hq"})
 	if err != nil {
 		// Check if beads is already initialized
-		if strings.Contains(string(output), "already initialized") {
+		if strings.Contains(err.Error(), "already initialized") {
 			// Already initialized - still need to ensure fingerprint exists
 		} else {
-			return fmt.Errorf("bd init failed: %s", strings.TrimSpace(string(output)))
+			return fmt.Errorf("bd init failed: %w", err)
 		}
 	}
 
@@ -421,9 +421,8 @@ func ensureRepoFingerprint(beadsPath string) error {
 	// cmd.Dir = beadsPath - REQUIRED for operating on specific beadsPath
 	// BEADS_DIR was N/A - not set
 	b := beads.New(beadsPath)
-	output, err := b.Run("migrate", "--update-repo-id")
-	if err != nil {
-		return fmt.Errorf("bd migrate --update-repo-id: %s", strings.TrimSpace(string(output)))
+	if err := b.Migrate(beads.MigrateOptions{UpdateRepoID: true}); err != nil {
+		return fmt.Errorf("bd migrate --update-repo-id: %w", err)
 	}
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/activity"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -33,26 +34,26 @@ func NewLiveConvoyFetcher() (*LiveConvoyFetcher, error) {
 
 // FetchConvoys fetches all open convoys with their activity data.
 func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
-	// List all open convoy-type issues
-	listArgs := []string{"list", "--type=convoy", "--status=open", "--json"}
-	listCmd := exec.Command("bd", listArgs...)
-	listCmd.Dir = f.townBeads
-
-	var stdout bytes.Buffer
-	listCmd.Stdout = &stdout
-
-	if err := listCmd.Run(); err != nil {
+	// BeadsOps Migration: cmd.Dir=f.townBeads (REQUIRED - town beads location), BEADS_DIR N/A
+	// townBeads is .beads directory, New() expects parent, so we use filepath.Dir
+	b := beads.New(filepath.Dir(f.townBeads))
+	convoyIssues, err := b.List(beads.ListOptions{Type: "convoy", Status: "open"})
+	if err != nil {
 		return nil, fmt.Errorf("listing convoys: %w", err)
 	}
 
-	var convoys []struct {
+	// Convert to local struct format for compatibility with rest of function
+	convoys := make([]struct {
 		ID        string `json:"id"`
 		Title     string `json:"title"`
 		Status    string `json:"status"`
 		CreatedAt string `json:"created_at"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &convoys); err != nil {
-		return nil, fmt.Errorf("parsing convoy list: %w", err)
+	}, len(convoyIssues))
+	for i, issue := range convoyIssues {
+		convoys[i].ID = issue.ID
+		convoys[i].Title = issue.Title
+		convoys[i].Status = issue.Status
+		convoys[i].CreatedAt = issue.CreatedAt
 	}
 
 	// Build convoy rows with activity data
@@ -234,30 +235,14 @@ func (f *LiveConvoyFetcher) getIssueDetailsBatch(issueIDs []string) map[string]*
 		return result
 	}
 
-	args := append([]string{"show"}, issueIDs...)
-	args = append(args, "--json")
-
-	// #nosec G204 -- bd is a trusted internal tool, args are issue IDs
-	showCmd := exec.Command("bd", args...)
-	var stdout bytes.Buffer
-	showCmd.Stdout = &stdout
-
-	if err := showCmd.Run(); err != nil {
+	// BeadsOps Migration: cmd.Dir was not set, running from townBeads parent
+	b := beads.New(filepath.Dir(f.townBeads))
+	issues, err := b.ShowMultiple(issueIDs)
+	if err != nil {
 		return result
 	}
 
-	var issues []struct {
-		ID        string `json:"id"`
-		Title     string `json:"title"`
-		Status    string `json:"status"`
-		Assignee  string `json:"assignee"`
-		UpdatedAt string `json:"updated_at"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
-		return result
-	}
-
-	for _, issue := range issues {
+	for id, issue := range issues {
 		detail := &issueDetail{
 			ID:       issue.ID,
 			Title:    issue.Title,
@@ -270,7 +255,7 @@ func (f *LiveConvoyFetcher) getIssueDetailsBatch(issueIDs []string) map[string]*
 				detail.UpdatedAt = t
 			}
 		}
-		result[issue.ID] = detail
+		result[id] = detail
 	}
 
 	return result

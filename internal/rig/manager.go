@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -371,15 +370,13 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		// beads.db is gitignored so it won't exist after clone - we need to create it.
 		// bd init --prefix will create the database and auto-import from issues.jsonl.
 		if _, err := os.Stat(sourceBeadsDB); os.IsNotExist(err) {
-			cmd := exec.Command("bd", "init", "--prefix", opts.BeadsPrefix) // opts.BeadsPrefix validated earlier
-			cmd.Dir = mayorRigPath
-			if output, err := cmd.CombinedOutput(); err != nil {
-				fmt.Printf("  Warning: Could not init bd database: %v (%s)\n", err, strings.TrimSpace(string(output)))
+			// BeadsOps Migration: cmd.Dir=mayorRigPath (REQUIRED - mayor's beads), BEADS_DIR N/A
+			bMayor := beads.New(mayorRigPath)
+			if _, err := bMayor.Run("init", "--prefix", opts.BeadsPrefix); err != nil {
+				fmt.Printf("  Warning: Could not init bd database: %v\n", err)
 			}
 			// Configure custom types for Gas Town (beads v0.46.0+)
-			configCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-			configCmd.Dir = mayorRigPath
-			_, _ = configCmd.CombinedOutput() // Ignore errors - older beads don't need this
+			_, _ = bMayor.Run("config", "set", "types.custom", constants.BeadsCustomTypes) // Ignore errors - older beads don't need this
 		}
 	}
 
@@ -592,22 +589,12 @@ func (m *Manager) initBeads(rigPath, prefix string) error {
 		return err
 	}
 
-	// Build environment with explicit BEADS_DIR to prevent bd from
-	// finding a parent directory's .beads/ database
-	env := os.Environ()
-	filteredEnv := make([]string, 0, len(env)+1)
-	for _, e := range env {
-		if !strings.HasPrefix(e, "BEADS_DIR=") {
-			filteredEnv = append(filteredEnv, e)
-		}
-	}
-	filteredEnv = append(filteredEnv, "BEADS_DIR="+beadsDir)
+	// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED), BEADS_DIR=beadsDir (REQUIRED - prevent finding parent .beads)
+	// Use NewWithBeadsDir to explicitly set BEADS_DIR and prevent bd from finding parent directory's database
+	bRig := beads.NewWithBeadsDir(rigPath, beadsDir)
 
 	// Run bd init if available
-	cmd := exec.Command("bd", "init", "--prefix", prefix)
-	cmd.Dir = rigPath
-	cmd.Env = filteredEnv
-	_, err := cmd.CombinedOutput()
+	_, err := bRig.Run("init", "--prefix", prefix)
 	if err != nil {
 		// bd might not be installed or failed, create minimal structure
 		// Note: beads currently expects YAML format for config
@@ -620,20 +607,14 @@ func (m *Manager) initBeads(rigPath, prefix string) error {
 
 	// Configure custom types for Gas Town (agent, role, rig, convoy).
 	// These were extracted from beads core in v0.46.0 and now require explicit config.
-	configCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-	configCmd.Dir = rigPath
-	configCmd.Env = filteredEnv
 	// Ignore errors - older beads versions don't need this
-	_, _ = configCmd.CombinedOutput()
+	_, _ = bRig.Run("config", "set", "types.custom", constants.BeadsCustomTypes)
 
 	// Ensure database has repository fingerprint (GH #25).
 	// This is idempotent - safe on both new and legacy (pre-0.17.5) databases.
 	// Without fingerprint, the bd daemon fails to start silently.
-	migrateCmd := exec.Command("bd", "migrate", "--update-repo-id")
-	migrateCmd.Dir = rigPath
-	migrateCmd.Env = filteredEnv
 	// Ignore errors - fingerprint is optional for functionality
-	_, _ = migrateCmd.CombinedOutput()
+	_, _ = bRig.Run("migrate", "--update-repo-id")
 
 	// Ensure issues.jsonl exists to prevent bd auto-export from corrupting other files.
 	// bd init creates beads.db but not issues.jsonl in SQLite mode.
@@ -1045,10 +1026,9 @@ func (m *Manager) createPatrolHooks(workspacePath string, runtimeConfig *config.
 // seedPatrolMolecules creates patrol molecule prototypes in the rig's beads database.
 // These molecules define the work loops for Deacon, Witness, and Refinery roles.
 func (m *Manager) seedPatrolMolecules(rigPath string) error {
-	// Use bd command to seed molecules (more reliable than internal API)
-	cmd := exec.Command("bd", "mol", "seed", "--patrol")
-	cmd.Dir = rigPath
-	if err := cmd.Run(); err != nil {
+	// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig's beads), BEADS_DIR N/A
+	bRig := beads.New(rigPath)
+	if _, err := bRig.Run("mol", "seed", "--patrol"); err != nil {
 		// Fallback: bd mol seed might not support --patrol yet
 		// Try creating them individually via bd create
 		return m.seedPatrolMoleculesManually(rigPath)
@@ -1058,6 +1038,9 @@ func (m *Manager) seedPatrolMolecules(rigPath string) error {
 
 // seedPatrolMoleculesManually creates patrol molecules using bd create commands.
 func (m *Manager) seedPatrolMoleculesManually(rigPath string) error {
+	// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig's beads), BEADS_DIR N/A
+	bRig := beads.New(rigPath)
+
 	// Patrol molecule definitions for seeding
 	patrolMols := []struct {
 		title string
@@ -1079,22 +1062,18 @@ func (m *Manager) seedPatrolMoleculesManually(rigPath string) error {
 
 	for _, mol := range patrolMols {
 		// Check if already exists by title
-		checkCmd := exec.Command("bd", "list", "--type=molecule", "--format=json")
-		checkCmd.Dir = rigPath
-		output, _ := checkCmd.Output()
+		output, _ := bRig.Run("list", "--type=molecule", "--format=json")
 		if strings.Contains(string(output), mol.title) {
 			continue // Already exists
 		}
 
 		// Create the molecule
-		cmd := exec.Command("bd", "create", //nolint:gosec // G204: bd is a trusted internal tool
+		if _, err := bRig.Run("create",
 			"--type=molecule",
 			"--title="+mol.title,
 			"--description="+mol.desc,
 			"--priority=2",
-		)
-		cmd.Dir = rigPath
-		if err := cmd.Run(); err != nil {
+		); err != nil {
 			// Non-fatal, continue with others
 			continue
 		}

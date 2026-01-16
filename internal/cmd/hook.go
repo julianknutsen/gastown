@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -173,14 +172,12 @@ func runHook(_ *cobra.Command, args []string) error {
 			fmt.Printf("%s Replacing completed bead %s...\n", style.Dim.Render("ℹ"), existing.ID)
 			if !hookDryRun {
 				if hasAttachment {
-					// Close completed molecule bead (use bd close --force for pinned)
-					// NOTE: Using Run because CloseOptions lacks Force field
-					closeArgs := []string{"close", existing.ID, "--force",
-						"--reason=Auto-replaced by gt hook (molecule complete)"}
-					if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
-						closeArgs = append(closeArgs, "--session="+sessionID)
-					}
-					if _, err := b.Run(closeArgs...); err != nil {
+					// Close completed molecule bead (use --force for pinned)
+					err := b.CloseWithOptions(beads.CloseOptions{
+						Force:  true,
+						Reason: "Auto-replaced by gt hook (molecule complete)",
+					}, existing.ID)
+					if err != nil {
 						return fmt.Errorf("closing completed bead %s: %w", existing.ID, err)
 					}
 				} else {

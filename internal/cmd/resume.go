@@ -94,12 +94,8 @@ func runResume(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check gate status
-	// Use BeadsOps interface
-	// cmd.Dir was N/A - ran from cwd
-	// BEADS_DIR was N/A - not set
-	// NOTE: Using Run because Gate struct lacks CloseReason field
 	b := beads.New(cloneRoot)
-	gateOutput, err := b.Run("gate", "show", parked.GateID, "--json")
+	gateInfo, err := b.GateShow(parked.GateID)
 	gateNotFound := false
 	if err != nil {
 		// Gate might have been deleted (wisp cleanup) or is inaccessible
@@ -108,15 +104,8 @@ func runResume(cmd *cobra.Command, args []string) error {
 		status.GateClosed = true // Treat as closed so user can clear it
 		status.CloseReason = "Gate no longer exists (may have been cleaned up)"
 	} else {
-		var gateInfo struct {
-			ID          string `json:"id"`
-			Status      string `json:"status"`
-			CloseReason string `json:"close_reason"`
-		}
-		if err := json.Unmarshal([]byte(gateOutput), &gateInfo); err == nil {
-			status.GateClosed = gateInfo.Status == "closed"
-			status.CloseReason = gateInfo.CloseReason
-		}
+		status.GateClosed = gateInfo.Status == "closed"
+		status.CloseReason = gateInfo.CloseReason
 	}
 
 	status.CanResume = status.GateClosed

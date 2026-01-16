@@ -73,30 +73,21 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 	convoyTitle := fmt.Sprintf("Work: %s", beadTitle)
 	description := fmt.Sprintf("Auto-created convoy tracking %s", beadID)
 
-	// Use BeadsOps interface
-	// cmd.Dir = townBeads - REQUIRED for operating on town beads directory
-	// BEADS_DIR was N/A - not set
-	// NOTE: Using Run because --no-daemon flag bypasses daemon routing
 	b := beads.New(townBeads)
 
-	createArgs := []string{
-		"--no-daemon",
-		"create",
-		"--type=convoy",
-		"--id=" + convoyID,
-		"--title=" + convoyTitle,
-		"--description=" + description,
-	}
-
-	if _, err := b.Run(createArgs...); err != nil {
+	// Create convoy with custom ID
+	_, err = b.CreateWithID(convoyID, beads.CreateOptions{
+		Title:       convoyTitle,
+		Type:        "convoy",
+		Description: description,
+	})
+	if err != nil {
 		return "", fmt.Errorf("creating convoy: %w", err)
 	}
 
 	// Add tracking relation: convoy tracks the issue
 	trackBeadID := formatTrackBeadID(beadID)
-	depArgs := []string{"--no-daemon", "dep", "add", convoyID, trackBeadID, "--type=tracks"}
-
-	if _, err := b.Run(depArgs...); err != nil {
+	if err := b.AddDependencyWithType(convoyID, trackBeadID, "tracks"); err != nil {
 		// Convoy was created but tracking failed - log warning but continue
 		fmt.Printf("%s Could not add tracking relation: %v\n", style.Dim.Render("Warning:"), err)
 	}

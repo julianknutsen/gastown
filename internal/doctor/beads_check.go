@@ -1,7 +1,6 @@
 package doctor
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -128,12 +127,9 @@ func (c *BeadsDatabaseCheck) Fix(ctx *CheckContext) error {
 			return err
 		}
 
-		// Run bd sync to rebuild from JSONL
-		cmd := exec.Command("bd", "sync", "--from-main")
-		cmd.Dir = ctx.TownRoot
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
+		b := beads.New(ctx.TownRoot)
+		if err := b.SyncFromMain(); err != nil {
 			return err
 		}
 	}
@@ -152,11 +148,9 @@ func (c *BeadsDatabaseCheck) Fix(ctx *CheckContext) error {
 				return err
 			}
 
-			cmd := exec.Command("bd", "sync", "--from-main")
-			cmd.Dir = ctx.RigPath()
-			var stderr bytes.Buffer
-			cmd.Stderr = &stderr
-			if err := cmd.Run(); err != nil {
+			// BeadsOps Migration: cmd.Dir=ctx.RigPath() (REQUIRED - rig beads), BEADS_DIR N/A
+			bRig := beads.New(ctx.RigPath())
+			if err := bRig.SyncFromMain(); err != nil {
 				return err
 			}
 		}
@@ -453,10 +447,10 @@ type labelAdder interface {
 type realLabelAdder struct{}
 
 func (r *realLabelAdder) AddLabel(townRoot, id, label string) error {
-	cmd := exec.Command("bd", "label", "add", id, label)
-	cmd.Dir = townRoot
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("adding %s label to %s: %s", label, id, strings.TrimSpace(string(output)))
+	// BeadsOps Migration: cmd.Dir=townRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(townRoot)
+	if err := b.LabelAdd(id, label); err != nil {
+		return fmt.Errorf("adding %s label to %s: %v", label, id, err)
 	}
 	return nil
 }

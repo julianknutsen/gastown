@@ -1,8 +1,6 @@
 package doctor
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,20 +10,6 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/daemon"
 )
-
-// bdDoctorResult represents the JSON output from bd doctor --json.
-type bdDoctorResult struct {
-	Checks []bdDoctorCheck `json:"checks"`
-}
-
-// bdDoctorCheck represents a single check result from bd doctor.
-type bdDoctorCheck struct {
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Message string `json:"message"`
-	Detail  string `json:"detail,omitempty"`
-	Fix     string `json:"fix,omitempty"`
-}
 
 // RepoFingerprintCheck verifies that beads databases have valid repository fingerprints.
 // A missing or mismatched fingerprint can cause daemon startup failures and sync issues.
@@ -83,19 +67,12 @@ func (c *RepoFingerprintCheck) Run(ctx *CheckContext) *CheckResult {
 
 // checkBeadsDir checks a single beads directory for repo fingerprint using bd doctor.
 func (c *RepoFingerprintCheck) checkBeadsDir(workDir, location string) *CheckResult {
-	// Run bd doctor --json to get fingerprint status
-	cmd := exec.Command("bd", "doctor", "--json")
-	cmd.Dir = workDir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// BeadsOps Migration: cmd.Dir=workDir (REQUIRED - beads location), BEADS_DIR N/A
+	b := beads.New(workDir)
 
-	// bd doctor exits with non-zero if there are warnings, so ignore exit code
-	_ = cmd.Run()
-
-	// Parse JSON output
-	var result bdDoctorResult
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+	// Run bd doctor to get fingerprint status
+	report, err := b.Doctor()
+	if err != nil || report == nil {
 		// If we can't parse bd doctor output, skip this check
 		return &CheckResult{
 			Name:    c.Name(),
@@ -105,7 +82,7 @@ func (c *RepoFingerprintCheck) checkBeadsDir(workDir, location string) *CheckRes
 	}
 
 	// Find the Repo Fingerprint check
-	for _, check := range result.Checks {
+	for _, check := range report.Checks {
 		if check.Name == "Repo Fingerprint" {
 			switch check.Status {
 			case "ok":
@@ -122,8 +99,8 @@ func (c *RepoFingerprintCheck) checkBeadsDir(workDir, location string) *CheckRes
 					Status:  StatusWarning,
 					Message: fmt.Sprintf("Fingerprint issue in %s: %s", location, check.Message),
 					Details: func() []string {
-						if check.Detail != "" {
-							return []string{check.Detail}
+						if check.Message != "" {
+							return []string{check.Message}
 						}
 						return nil
 					}(),
@@ -137,8 +114,8 @@ func (c *RepoFingerprintCheck) checkBeadsDir(workDir, location string) *CheckRes
 					Status:  StatusError,
 					Message: fmt.Sprintf("Fingerprint error in %s: %s", location, check.Message),
 					Details: func() []string {
-						if check.Detail != "" {
-							return []string{check.Detail}
+						if check.Message != "" {
+							return []string{check.Message}
 						}
 						return nil
 					}(),
@@ -162,13 +139,13 @@ func (c *RepoFingerprintCheck) Fix(ctx *CheckContext) error {
 		return nil
 	}
 
+	// BeadsOps Migration: cmd.Dir=parent of .beads (REQUIRED - beads location), BEADS_DIR N/A
+	workDir := filepath.Dir(c.beadsDir) // Parent of .beads directory
+	b := beads.New(workDir)
+
 	// Run bd migrate --update-repo-id
-	cmd := exec.Command("bd", "migrate", "--update-repo-id")
-	cmd.Dir = filepath.Dir(c.beadsDir) // Parent of .beads directory
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("bd migrate --update-repo-id failed: %v: %s", err, stderr.String())
+	if err := b.Migrate(beads.MigrateOptions{UpdateRepoID: true}); err != nil {
+		return fmt.Errorf("bd migrate --update-repo-id failed: %v", err)
 	}
 
 	// Restart daemon if running

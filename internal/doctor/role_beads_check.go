@@ -2,8 +2,6 @@ package doctor
 
 import (
 	"fmt"
-	"os/exec"
-	"strings"
 
 	"github.com/steveyegge/gastown/internal/beads"
 )
@@ -92,6 +90,9 @@ func (c *RoleBeadsCheck) Fix(ctx *CheckContext) error {
 		roleDefMap[role.ID] = role
 	}
 
+	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(ctx.TownRoot)
+
 	// Create missing role beads
 	for _, id := range c.missing {
 		role, ok := roleDefMap[id]
@@ -99,16 +100,13 @@ func (c *RoleBeadsCheck) Fix(ctx *CheckContext) error {
 			continue // Shouldn't happen
 		}
 
-		// Create role bead using bd create --type=role
-		cmd := exec.Command("bd", "create",
-			"--type=role",
-			"--id="+role.ID,
-			"--title="+role.Title,
-			"--description="+role.Desc,
-		)
-		cmd.Dir = ctx.TownRoot
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("creating %s: %s", role.ID, strings.TrimSpace(string(output)))
+		// Create role bead using CreateWithID for specific ID
+		if _, err := b.CreateWithID(role.ID, beads.CreateOptions{
+			Type:        "role",
+			Title:       role.Title,
+			Description: role.Desc,
+		}); err != nil {
+			return fmt.Errorf("creating %s: %v", role.ID, err)
 		}
 	}
 

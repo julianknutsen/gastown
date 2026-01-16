@@ -1,9 +1,9 @@
 package doctor
 
 import (
-	"bytes"
-	"os/exec"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 // BdDaemonCheck verifies that the bd (beads) daemon is running and healthy.
@@ -28,27 +28,15 @@ func NewBdDaemonCheck() *BdDaemonCheck {
 
 // Run checks if the bd daemon is running and healthy.
 func (c *BdDaemonCheck) Run(ctx *CheckContext) *CheckResult {
+	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(ctx.TownRoot)
+
 	// Check daemon status
-	cmd := exec.Command("bd", "daemon", "--status")
-	cmd.Dir = ctx.TownRoot
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	output := strings.TrimSpace(stdout.String() + stderr.String())
-
-	// Check if daemon is running
-	if err == nil && strings.Contains(output, "Daemon is running") {
+	status, err := b.DaemonStatus()
+	if err == nil && status != nil && status.Running {
 		// Daemon is running, now check health
-		healthCmd := exec.Command("bd", "daemon", "--health")
-		healthCmd.Dir = ctx.TownRoot
-		var healthOut bytes.Buffer
-		healthCmd.Stdout = &healthOut
-		_ = healthCmd.Run() // Ignore error, health check is optional
-
-		healthOutput := healthOut.String()
-		if strings.Contains(healthOutput, "HEALTHY") {
+		health, _ := b.DaemonHealth() // Ignore error, health check is optional
+		if health != nil && health.Status == "HEALTHY" {
 			return &CheckResult{
 				Name:    c.Name(),
 				Status:  StatusOK,
@@ -57,11 +45,15 @@ func (c *BdDaemonCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 
 		// Daemon running but unhealthy
+		var details []string
+		if health != nil && health.Status != "" {
+			details = []string{health.Status}
+		}
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusWarning,
 			Message: "bd daemon is running but may be unhealthy",
-			Details: []string{strings.TrimSpace(healthOutput)},
+			Details: details,
 		}
 	}
 
@@ -82,17 +74,12 @@ func (c *BdDaemonCheck) Run(ctx *CheckContext) *CheckResult {
 
 // tryStartDaemon attempts to start the bd daemon and returns any error output.
 func (c *BdDaemonCheck) tryStartDaemon(ctx *CheckContext) *startError {
-	cmd := exec.Command("bd", "daemon", "--start")
-	cmd.Dir = ctx.TownRoot
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
+	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(ctx.TownRoot)
+	if err := b.DaemonStart(); err != nil {
 		return &startError{
-			output:   strings.TrimSpace(stdout.String() + stderr.String()),
-			exitCode: cmd.ProcessState.ExitCode(),
+			output:   err.Error(),
+			exitCode: 1, // BeadsOps doesn't expose exit code, assume 1 for error
 		}
 	}
 	return nil
@@ -184,6 +171,9 @@ func (c *BdDaemonCheck) parseStartError(err *startError) *CheckResult {
 
 // Fix attempts to start the bd daemon.
 func (c *BdDaemonCheck) Fix(ctx *CheckContext) error {
+	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(ctx.TownRoot)
+
 	// First check if it's a legacy database issue
 	startErr := c.tryStartDaemon(ctx)
 	if startErr == nil {
@@ -194,20 +184,14 @@ func (c *BdDaemonCheck) Fix(ctx *CheckContext) error {
 	if strings.Contains(startErr.output, "LEGACY DATABASE") ||
 		strings.Contains(startErr.output, "DATABASE MISMATCH") {
 
-		migrateCmd := exec.Command("bd", "migrate", "--update-repo-id", "--yes")
-		migrateCmd.Dir = ctx.TownRoot
-		if err := migrateCmd.Run(); err != nil {
+		if err := b.Migrate(beads.MigrateOptions{UpdateRepoID: true}); err != nil {
 			return err
 		}
 
 		// Try starting again
-		startCmd := exec.Command("bd", "daemon", "--start")
-		startCmd.Dir = ctx.TownRoot
-		return startCmd.Run()
+		return b.DaemonStart()
 	}
 
 	// For other errors, just try to start
-	startCmd := exec.Command("bd", "daemon", "--start")
-	startCmd.Dir = ctx.TownRoot
-	return startCmd.Run()
+	return b.DaemonStart()
 }

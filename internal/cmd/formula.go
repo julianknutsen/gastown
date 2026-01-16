@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -169,29 +170,41 @@ func init() {
 
 // runFormulaList delegates to bd formula list
 func runFormulaList(cmd *cobra.Command, args []string) error {
+	// BeadsOps Migration: cmd.Dir N/A, BEADS_DIR N/A (runs from cwd)
+	cwd, _ := os.Getwd()
+	b := beads.New(cwd)
+
 	bdArgs := []string{"formula", "list"}
 	if formulaListJSON {
 		bdArgs = append(bdArgs, "--json")
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
-	bdCmd.Stdout = os.Stdout
-	bdCmd.Stderr = os.Stderr
-	return bdCmd.Run()
+	output, err := b.Run(bdArgs...)
+	if err != nil {
+		return err
+	}
+	fmt.Print(string(output))
+	return nil
 }
 
 // runFormulaShow delegates to bd formula show
 func runFormulaShow(cmd *cobra.Command, args []string) error {
+	// BeadsOps Migration: cmd.Dir N/A, BEADS_DIR N/A (runs from cwd)
+	cwd, _ := os.Getwd()
+	b := beads.New(cwd)
+
 	formulaName := args[0]
 	bdArgs := []string{"formula", "show", formulaName}
 	if formulaShowJSON {
 		bdArgs = append(bdArgs, "--json")
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
-	bdCmd.Stdout = os.Stdout
-	bdCmd.Stderr = os.Stderr
-	return bdCmd.Run()
+	output, err := b.Run(bdArgs...)
+	if err != nil {
+		return err
+	}
+	fmt.Print(string(output))
+	return nil
 }
 
 // runFormulaRun executes a formula by spawning a convoy of polecats.
@@ -314,6 +327,9 @@ func executeConvoyFormula(f *formulaData, formulaName, targetRig string) error {
 	}
 	townBeads := filepath.Join(townRoot, ".beads")
 
+	// BeadsOps Migration: cmd.Dir=townBeads (REQUIRED - town-level beads), BEADS_DIR N/A
+	b := beads.New(townBeads)
+
 	// Step 1: Create convoy bead
 	convoyID := fmt.Sprintf("hq-cv-%s", generateFormulaShortID())
 	convoyTitle := fmt.Sprintf("%s: %s", formulaName, f.Description)
@@ -336,10 +352,7 @@ func executeConvoyFormula(f *formulaData, formulaName, targetRig string) error {
 		"--description=" + description,
 	}
 
-	createCmd := exec.Command("bd", createArgs...)
-	createCmd.Dir = townBeads
-	createCmd.Stderr = os.Stderr
-	if err := createCmd.Run(); err != nil {
+	if _, err := b.Run(createArgs...); err != nil {
 		return fmt.Errorf("creating convoy bead: %w", err)
 	}
 
@@ -366,20 +379,14 @@ func executeConvoyFormula(f *formulaData, formulaName, targetRig string) error {
 			"--description=" + legDesc,
 		}
 
-		legCmd := exec.Command("bd", legArgs...)
-		legCmd.Dir = townBeads
-		legCmd.Stderr = os.Stderr
-		if err := legCmd.Run(); err != nil {
+		if _, err := b.Run(legArgs...); err != nil {
 			fmt.Printf("%s Failed to create leg bead for %s: %v\n",
 				style.Dim.Render("Warning:"), leg.ID, err)
 			continue
 		}
 
 		// Track the leg with the convoy
-		trackArgs := []string{"dep", "add", convoyID, legBeadID, "--type=tracks"}
-		trackCmd := exec.Command("bd", trackArgs...)
-		trackCmd.Dir = townBeads
-		if err := trackCmd.Run(); err != nil {
+		if err := b.AddDependencyWithType(convoyID, legBeadID, "tracks"); err != nil {
 			fmt.Printf("%s Failed to track leg %s: %v\n",
 				style.Dim.Render("Warning:"), leg.ID, err)
 		}
@@ -406,25 +413,16 @@ func executeConvoyFormula(f *formulaData, formulaName, targetRig string) error {
 			"--description=" + synDesc,
 		}
 
-		synCmd := exec.Command("bd", synArgs...)
-		synCmd.Dir = townBeads
-		synCmd.Stderr = os.Stderr
-		if err := synCmd.Run(); err != nil {
+		if _, err := b.Run(synArgs...); err != nil {
 			fmt.Printf("%s Failed to create synthesis bead: %v\n",
 				style.Dim.Render("Warning:"), err)
 		} else {
 			// Track synthesis with convoy
-			trackArgs := []string{"dep", "add", convoyID, synthesisBeadID, "--type=tracks"}
-			trackCmd := exec.Command("bd", trackArgs...)
-			trackCmd.Dir = townBeads
-			_ = trackCmd.Run()
+			_ = b.AddDependencyWithType(convoyID, synthesisBeadID, "tracks")
 
 			// Add dependencies: synthesis depends on all legs
 			for _, legBeadID := range legBeads {
-				depArgs := []string{"dep", "add", synthesisBeadID, legBeadID}
-				depCmd := exec.Command("bd", depArgs...)
-				depCmd.Dir = townBeads
-				_ = depCmd.Run()
+				_ = b.AddDependency(synthesisBeadID, legBeadID)
 			}
 
 			fmt.Printf("  %s Created synthesis: %s\n", style.Dim.Render("★"), synthesisBeadID)
@@ -459,10 +457,7 @@ func executeConvoyFormula(f *formulaData, formulaName, targetRig string) error {
 			fmt.Printf("%s Failed to sling leg %s: %v\n",
 				style.Dim.Render("Warning:"), leg.ID, err)
 			// Add comment to bead about failure
-			commentArgs := []string{"comment", legBeadID, fmt.Sprintf("Failed to sling: %v", err)}
-			commentCmd := exec.Command("bd", commentArgs...)
-			commentCmd.Dir = townBeads
-			_ = commentCmd.Run()
+			_ = b.Comment(legBeadID, fmt.Sprintf("Failed to sling: %v", err))
 			continue
 		}
 

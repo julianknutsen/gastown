@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
@@ -583,51 +584,33 @@ func sendHandoffMail(subject, message string) (string, error) {
 		return "", fmt.Errorf("cannot detect town root")
 	}
 
-	// Build labels for mail metadata (matches mail router format)
-	labels := fmt.Sprintf("from:%s", agentID)
-
-	// Create mail bead directly using bd create with --silent to get the ID
+	// Create mail bead using BeadsOps interface
 	// Mail goes to town-level beads (hq- prefix)
-	args := []string{
-		"create", subject,
-		"--type", "message",
-		"--assignee", agentID,
-		"-d", message,
-		"--priority", "2",
-		"--labels", labels,
-		"--actor", agentID,
-		"--ephemeral", // Handoff mail is ephemeral
-		"--silent",    // Output only the bead ID
-	}
-
-	cmd := exec.Command("bd", args...)
-	cmd.Dir = townRoot // Run from town root for town-level beads
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+filepath.Join(townRoot, ".beads"))
-
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return "", fmt.Errorf("creating handoff mail: %s", errMsg)
-		}
+	// BeadsOps Migration: cmd.Dir=townRoot (REQUIRED - town-level mail), BEADS_DIR (SUPERFLUOUS)
+	b := beads.New(townRoot)
+	issue, err := b.Create(beads.CreateOptions{
+		Title:       subject,
+		Type:        "message",
+		Description: message,
+		Priority:    2,
+		Labels:      []string{fmt.Sprintf("from:%s", agentID)},
+		Actor:       agentID,
+		Ephemeral:   true,
+	})
+	if err != nil {
 		return "", fmt.Errorf("creating handoff mail: %w", err)
 	}
 
-	beadID := strings.TrimSpace(stdout.String())
+	beadID := issue.ID
 	if beadID == "" {
 		return "", fmt.Errorf("bd create did not return bead ID")
 	}
 
 	// Auto-hook the created mail bead
-	hookCmd := exec.Command("bd", "update", beadID, "--status=hooked", "--assignee="+agentID)
-	hookCmd.Dir = townRoot
-	hookCmd.Env = append(os.Environ(), "BEADS_DIR="+filepath.Join(townRoot, ".beads"))
-	hookCmd.Stderr = os.Stderr
-
-	if err := hookCmd.Run(); err != nil {
+	// BeadsOps Migration: cmd.Dir=townRoot (REQUIRED), BEADS_DIR (SUPERFLUOUS)
+	// Same beads instance (b) already created above for townRoot
+	hookedStatus := beads.StatusHooked
+	if err := b.Update(beadID, beads.UpdateOptions{Status: &hookedStatus, Assignee: &agentID}); err != nil {
 		// Non-fatal: mail was created, just couldn't hook
 		style.PrintWarning("created mail %s but failed to auto-hook: %v", beadID, err)
 		return beadID, nil
@@ -672,9 +655,12 @@ func looksLikeBeadID(s string) bool {
 
 // hookBeadForHandoff attaches a bead to the current agent's hook.
 func hookBeadForHandoff(beadID string) error {
+	// BeadsOps Migration: cmd.Dir N/A, BEADS_DIR N/A (runs from cwd)
+	cwd, _ := os.Getwd()
+	b := beads.New(cwd)
+
 	// Verify the bead exists first
-	verifyCmd := exec.Command("bd", "show", beadID, "--json")
-	if err := verifyCmd.Run(); err != nil {
+	if _, err := b.Show(beadID); err != nil {
 		return fmt.Errorf("bead '%s' not found", beadID)
 	}
 
@@ -692,9 +678,8 @@ func hookBeadForHandoff(beadID string) error {
 	}
 
 	// Pin the bead using bd update (discovery-based approach)
-	pinCmd := exec.Command("bd", "update", beadID, "--status=pinned", "--assignee="+agentID)
-	pinCmd.Stderr = os.Stderr
-	if err := pinCmd.Run(); err != nil {
+	pinnedStatus := beads.StatusPinned
+	if err := b.Update(beadID, beads.UpdateOptions{Status: &pinnedStatus, Assignee: &agentID}); err != nil {
 		return fmt.Errorf("pinning bead: %w", err)
 	}
 
@@ -730,8 +715,13 @@ func collectHandoffState() string {
 		}
 	}
 
+	// BeadsOps Migration: cmd.Dir N/A, BEADS_DIR N/A (runs from cwd)
+	// Using Run for human-readable text output format
+	cwd, _ := os.Getwd()
+	b := beads.New(cwd)
+
 	// Get ready beads
-	readyOutput, err := exec.Command("bd", "ready").Output()
+	readyOutput, err := b.Run("ready")
 	if err == nil {
 		readyStr := strings.TrimSpace(string(readyOutput))
 		if readyStr != "" && !strings.Contains(readyStr, "No issues ready") {
@@ -745,7 +735,7 @@ func collectHandoffState() string {
 	}
 
 	// Get in-progress beads
-	inProgressOutput, err := exec.Command("bd", "list", "--status=in_progress").Output()
+	inProgressOutput, err := b.Run("list", "--status=in_progress")
 	if err == nil {
 		ipStr := strings.TrimSpace(string(inProgressOutput))
 		if ipStr != "" && !strings.Contains(ipStr, "No issues") {

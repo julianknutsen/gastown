@@ -164,8 +164,12 @@ func (b *Implementation) List(opts ListOptions) ([]*Issue, error) {
 	if opts.Label != "" {
 		args = append(args, "--label="+opts.Label)
 	} else if opts.Type != "" {
-		// Deprecated: convert type to label for backward compatibility
-		args = append(args, "--label=gt:"+opts.Type)
+		// Use --type for backward compatibility
+		args = append(args, "--type="+opts.Type)
+	}
+	// Multiple labels (all must match)
+	for _, label := range opts.Labels {
+		args = append(args, "-l", label)
 	}
 	if opts.Priority >= 0 {
 		args = append(args, fmt.Sprintf("--priority=%d", opts.Priority))
@@ -184,6 +188,12 @@ func (b *Implementation) List(opts ListOptions) ([]*Issue, error) {
 	}
 	if opts.Tag != "" {
 		args = append(args, "--tag="+opts.Tag)
+	}
+	if opts.CreatedAfter != "" {
+		args = append(args, "--created-after="+opts.CreatedAfter)
+	}
+	if opts.All {
+		args = append(args, "--all")
 	}
 
 	out, err := b.run(args...)
@@ -427,6 +437,9 @@ func (b *Implementation) CloseWithOptions(opts CloseOptions, ids ...string) erro
 	args := append([]string{"close"}, ids...)
 	if opts.Reason != "" {
 		args = append(args, "--reason="+opts.Reason)
+	}
+	if opts.Force {
+		args = append(args, "--force")
 	}
 
 	// Use explicit session if provided, otherwise fall back to environment

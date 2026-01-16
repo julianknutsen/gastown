@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,24 +25,14 @@ type beadInfo struct {
 // verifyBeadExists checks that the bead exists using bd show.
 // Uses bd's native prefix-based routing via routes.jsonl - do NOT set BEADS_DIR
 // as that overrides routing and breaks resolution of rig-level beads.
-//
-// Uses --no-daemon with --allow-stale to avoid daemon socket timing issues
-// while still finding beads when database is out of sync with JSONL.
-// For existence checks, stale data is acceptable - we just need to know it exists.
 func verifyBeadExists(beadID string) error {
-	cmd := exec.Command("bd", "--no-daemon", "show", beadID, "--json", "--allow-stale")
-	// Run from town root so bd can find routes.jsonl for prefix-based routing.
-	// Do NOT set BEADS_DIR - that overrides routing and breaks rig bead resolution.
-	if townRoot, err := workspace.FindFromCwd(); err == nil {
-		cmd.Dir = townRoot
-	}
-	// Use Output() instead of Run() to detect bd --no-daemon exit 0 bug:
-	// when issue not found, --no-daemon exits 0 but produces empty stdout.
-	out, err := cmd.Output()
+	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
-		return fmt.Errorf("bead '%s' not found (bd show failed)", beadID)
+		townRoot, _ = os.Getwd()
 	}
-	if len(out) == 0 {
+	b := beads.New(townRoot)
+	_, err = b.Show(beadID)
+	if err != nil {
 		return fmt.Errorf("bead '%s' not found", beadID)
 	}
 	return nil
@@ -51,56 +40,34 @@ func verifyBeadExists(beadID string) error {
 
 // getBeadInfo returns status and assignee for a bead.
 // Uses bd's native prefix-based routing via routes.jsonl.
-// Uses --no-daemon with --allow-stale for consistency with verifyBeadExists.
 func getBeadInfo(beadID string) (*beadInfo, error) {
-	cmd := exec.Command("bd", "--no-daemon", "show", beadID, "--json", "--allow-stale")
-	// Run from town root so bd can find routes.jsonl for prefix-based routing.
-	if townRoot, err := workspace.FindFromCwd(); err == nil {
-		cmd.Dir = townRoot
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		townRoot, _ = os.Getwd()
 	}
-	out, err := cmd.Output()
+	b := beads.New(townRoot)
+	issue, err := b.Show(beadID)
 	if err != nil {
 		return nil, fmt.Errorf("bead '%s' not found", beadID)
 	}
-	// Handle bd --no-daemon exit 0 bug: when issue not found,
-	// --no-daemon exits 0 but produces empty stdout (error goes to stderr).
-	if len(out) == 0 {
-		return nil, fmt.Errorf("bead '%s' not found", beadID)
-	}
-	// bd show --json returns an array (issue + dependents), take first element
-	var infos []beadInfo
-	if err := json.Unmarshal(out, &infos); err != nil {
-		return nil, fmt.Errorf("parsing bead info: %w", err)
-	}
-	if len(infos) == 0 {
-		return nil, fmt.Errorf("bead '%s' not found", beadID)
-	}
-	return &infos[0], nil
+	return &beadInfo{
+		Title:    issue.Title,
+		Status:   issue.Status,
+		Assignee: issue.Assignee,
+	}, nil
 }
 
 // storeArgsInBead stores args in the bead's description using attached_args field.
 // This enables no-tmux mode where agents discover args via gt prime / bd show.
 func storeArgsInBead(beadID, args string) error {
+	cwd, _ := os.Getwd()
+	b := beads.New(cwd)
+
 	// Get the bead to preserve existing description content
-	showCmd := exec.Command("bd", "--no-daemon", "show", beadID, "--json", "--allow-stale")
-	out, err := showCmd.Output()
+	issue, err := b.Show(beadID)
 	if err != nil {
 		return fmt.Errorf("fetching bead: %w", err)
 	}
-	// Handle bd --no-daemon exit 0 bug: empty stdout means not found
-	if len(out) == 0 {
-		return fmt.Errorf("bead not found")
-	}
-
-	// Parse the bead
-	var issues []beads.Issue
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return fmt.Errorf("parsing bead: %w", err)
-	}
-	if len(issues) == 0 {
-		return fmt.Errorf("bead not found")
-	}
-	issue := &issues[0]
 
 	// Get or create attachment fields
 	fields := beads.ParseAttachmentFields(issue)
@@ -115,9 +82,7 @@ func storeArgsInBead(beadID, args string) error {
 	newDesc := beads.SetAttachmentFields(issue, fields)
 
 	// Update the bead
-	updateCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--description="+newDesc)
-	updateCmd.Stderr = os.Stderr
-	if err := updateCmd.Run(); err != nil {
+	if err := b.Update(beadID, beads.UpdateOptions{Description: &newDesc}); err != nil {
 		return fmt.Errorf("updating bead description: %w", err)
 	}
 
@@ -131,22 +96,14 @@ func storeDispatcherInBead(beadID, dispatcher string) error {
 		return nil
 	}
 
+	cwd, _ := os.Getwd()
+	b := beads.New(cwd)
+
 	// Get the bead to preserve existing description content
-	showCmd := exec.Command("bd", "show", beadID, "--json")
-	out, err := showCmd.Output()
+	issue, err := b.Show(beadID)
 	if err != nil {
 		return fmt.Errorf("fetching bead: %w", err)
 	}
-
-	// Parse the bead
-	var issues []beads.Issue
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return fmt.Errorf("parsing bead: %w", err)
-	}
-	if len(issues) == 0 {
-		return fmt.Errorf("bead not found")
-	}
-	issue := &issues[0]
 
 	// Get or create attachment fields
 	fields := beads.ParseAttachmentFields(issue)
@@ -161,9 +118,7 @@ func storeDispatcherInBead(beadID, dispatcher string) error {
 	newDesc := beads.SetAttachmentFields(issue, fields)
 
 	// Update the bead
-	updateCmd := exec.Command("bd", "update", beadID, "--description="+newDesc)
-	updateCmd.Stderr = os.Stderr
-	if err := updateCmd.Run(); err != nil {
+	if err := b.Update(beadID, beads.UpdateOptions{Description: &newDesc}); err != nil {
 		return fmt.Errorf("updating bead description: %w", err)
 	}
 
@@ -421,10 +376,7 @@ func attachPolecatWorkMolecule(targetAgent, hookWorkDir, townRoot string) error 
 
 	// Cook the mol-polecat-work formula to ensure the proto exists
 	// This is safe to run multiple times - cooking is idempotent
-	cookCmd := exec.Command("bd", "--no-daemon", "cook", "mol-polecat-work")
-	cookCmd.Dir = rigDir
-	cookCmd.Stderr = os.Stderr
-	if err := cookCmd.Run(); err != nil {
+	if _, err := b.Cook("mol-polecat-work"); err != nil {
 		return fmt.Errorf("cooking mol-polecat-work formula: %w", err)
 	}
 

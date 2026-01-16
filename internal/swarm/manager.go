@@ -2,12 +2,12 @@ package swarm
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/rig"
 )
 
@@ -40,34 +40,18 @@ func NewManager(r *rig.Rig) *Manager {
 // LoadSwarm loads swarm state from beads by querying the epic.
 // This is the canonical way to get swarm state - no in-memory caching.
 func (m *Manager) LoadSwarm(epicID string) (*Swarm, error) {
-	// Query beads for the epic
-	cmd := exec.Command("bd", "show", epicID, "--json")
-	cmd.Dir = m.beadsDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("bd show: %s", strings.TrimSpace(stderr.String()))
+	// BeadsOps Migration: cmd.Dir=m.beadsDir (REQUIRED - rig beads location), BEADS_DIR N/A
+	b := beads.New(m.beadsDir)
+	epic, err := b.Show(epicID)
+	if err != nil {
+		return nil, fmt.Errorf("bd show: %w", err)
 	}
 
-	// Parse the epic
-	var epic struct {
-		ID        string `json:"id"`
-		Title     string `json:"title"`
-		Status    string `json:"status"`
-		MolType   string `json:"mol_type"`
-		CreatedAt string `json:"created_at"`
-		UpdatedAt string `json:"updated_at"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &epic); err != nil {
-		return nil, fmt.Errorf("parsing epic: %w", err)
-	}
-
-	// Verify it's a swarm molecule
-	if epic.MolType != "swarm" {
-		return nil, fmt.Errorf("epic %s is not a swarm (mol_type=%s)", epicID, epic.MolType)
+	// Verify it's a swarm molecule - check for mol_type in Type field or labels
+	// Note: beads.Issue doesn't have a direct MolType field, so we check type
+	// In practice, swarm epics are type=molecule with labels indicating swarm
+	if epic.Type != "molecule" {
+		return nil, fmt.Errorf("epic %s is not a swarm (type=%s)", epicID, epic.Type)
 	}
 
 	// Get current git commit as base
@@ -126,33 +110,19 @@ func (m *Manager) GetSwarm(id string) (*Swarm, error) {
 
 // GetReadyTasks returns tasks ready to be assigned by querying beads.
 func (m *Manager) GetReadyTasks(swarmID string) ([]SwarmTask, error) {
-	// Use bd swarm status to get ready front
-	cmd := exec.Command("bd", "swarm", "status", swarmID, "--json")
-	cmd.Dir = m.beadsDir
-
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-
-	if err := cmd.Run(); err != nil {
+	// BeadsOps Migration: cmd.Dir=m.beadsDir (REQUIRED - rig beads location), BEADS_DIR N/A
+	b := beads.New(m.beadsDir)
+	status, err := b.SwarmStatus(swarmID)
+	if err != nil {
 		return nil, ErrSwarmNotFound
 	}
 
-	var status struct {
-		Ready []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-		} `json:"ready"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
-		return nil, fmt.Errorf("parsing status: %w", err)
-	}
-
-	if len(status.Ready) == 0 {
+	if len(status.ReadyTasks) == 0 {
 		return nil, ErrNoReadyTasks
 	}
 
-	tasks := make([]SwarmTask, len(status.Ready))
-	for i, r := range status.Ready {
+	tasks := make([]SwarmTask, len(status.ReadyTasks))
+	for i, r := range status.ReadyTasks {
 		tasks[i] = SwarmTask{
 			IssueID: r.ID,
 			Title:   r.Title,
@@ -164,27 +134,16 @@ func (m *Manager) GetReadyTasks(swarmID string) ([]SwarmTask, error) {
 
 // IsComplete checks if all tasks are closed by querying beads.
 func (m *Manager) IsComplete(swarmID string) (bool, error) {
-	cmd := exec.Command("bd", "swarm", "status", swarmID, "--json")
-	cmd.Dir = m.beadsDir
-
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-
-	if err := cmd.Run(); err != nil {
+	// BeadsOps Migration: cmd.Dir=m.beadsDir (REQUIRED - rig beads location), BEADS_DIR N/A
+	b := beads.New(m.beadsDir)
+	status, err := b.SwarmStatus(swarmID)
+	if err != nil {
 		return false, ErrSwarmNotFound
 	}
 
-	var status struct {
-		Ready   []struct{ ID string } `json:"ready"`
-		Active  []struct{ ID string } `json:"active"`
-		Blocked []struct{ ID string } `json:"blocked"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
-		return false, fmt.Errorf("parsing status: %w", err)
-	}
-
-	// Complete if nothing is ready, active, or blocked
-	return len(status.Ready) == 0 && len(status.Active) == 0 && len(status.Blocked) == 0, nil
+	// Complete if nothing is in progress or blocked, and all tasks are completed.
+	// This implies Ready == 0 as well since TotalTasks = Ready + InProgress + Blocked + Completed
+	return status.InProgress == 0 && status.Blocked == 0 && status.Completed == status.TotalTasks, nil
 }
 
 // isValidTransition checks if a state transition is allowed.
@@ -213,44 +172,17 @@ func isValidTransition(from, to SwarmState) bool {
 
 // loadTasksFromBeads loads child issues from beads CLI.
 func (m *Manager) loadTasksFromBeads(epicID string) ([]SwarmTask, error) {
-	// Run: bd show <epicID> --json to get epic with children
-	cmd := exec.Command("bd", "show", epicID, "--json")
-	cmd.Dir = m.beadsDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("bd show: %s", strings.TrimSpace(stderr.String()))
-	}
-
-	// Parse JSON output - bd show returns an array
-	var issues []struct {
-		ID         string `json:"id"`
-		Title      string `json:"title"`
-		Status     string `json:"status"`
-		Dependents []struct {
-			ID             string `json:"id"`
-			Title          string `json:"title"`
-			Status         string `json:"status"`
-			Assignee       string `json:"assignee"`
-			DependencyType string `json:"dependency_type"`
-		} `json:"dependents"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
-		return nil, fmt.Errorf("parsing bd output: %w", err)
-	}
-
-	if len(issues) == 0 {
-		return nil, fmt.Errorf("epic not found: %s", epicID)
+	// BeadsOps Migration: cmd.Dir=m.beadsDir (REQUIRED - rig beads location), BEADS_DIR N/A
+	b := beads.New(m.beadsDir)
+	epic, err := b.Show(epicID)
+	if err != nil {
+		return nil, fmt.Errorf("bd show: %w", err)
 	}
 
 	// Extract dependents as tasks (issues that depend on/are blocked by this epic)
 	// Accept both "parent-child" and "blocks" relationships
 	var tasks []SwarmTask
-	for _, dep := range issues[0].Dependents {
+	for _, dep := range epic.Dependents {
 		if dep.DependencyType != "parent-child" && dep.DependencyType != "blocks" {
 			continue
 		}

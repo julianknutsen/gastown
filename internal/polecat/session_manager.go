@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -278,9 +278,9 @@ func (m *SessionManager) Stop(polecat string, force bool) error {
 
 // syncBeads runs bd sync in the given directory.
 func (m *SessionManager) syncBeads(workDir string) error {
-	cmd := exec.Command("bd", "sync")
-	cmd.Dir = workDir
-	return cmd.Run()
+	// BeadsOps Migration: cmd.Dir=workDir (REQUIRED - polecat beads location), BEADS_DIR N/A
+	b := beads.New(workDir)
+	return b.Sync()
 }
 
 // IsRunning checks if a polecat session is active.
@@ -451,10 +451,13 @@ func (m *SessionManager) StopAll(force bool) error {
 
 // hookIssue pins an issue to a polecat's hook using bd update.
 func (m *SessionManager) hookIssue(issueID, agentID, workDir string) error {
-	cmd := exec.Command("bd", "update", issueID, "--status=hooked", "--assignee="+agentID) //nolint:gosec
-	cmd.Dir = workDir
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	// BeadsOps Migration: cmd.Dir=workDir (REQUIRED - polecat beads location), BEADS_DIR N/A
+	b := beads.New(workDir)
+	status := "hooked"
+	if err := b.Update(issueID, beads.UpdateOptions{
+		Status:   &status,
+		Assignee: &agentID,
+	}); err != nil {
 		return fmt.Errorf("bd update failed: %w", err)
 	}
 	fmt.Printf("✓ Hooked issue %s to %s\n", issueID, agentID)

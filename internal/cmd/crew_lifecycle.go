@@ -165,15 +165,16 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 			}
 		} else {
 			// Default: CLOSE the agent bead (preserves CV history)
-			closeArgs := []string{"close", agentBeadID, "--reason=Crew workspace removed"}
-			if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
-				closeArgs = append(closeArgs, "--session="+sessionID)
+			closeOpts := beads.CloseOptions{
+				Reason:  "Crew workspace removed",
+				Session: runtime.SessionIDFromEnv(),
 			}
-			output, err := b.Run(closeArgs...)
+			err := b.CloseWithOptions(closeOpts, agentBeadID)
 			if err != nil {
 				// Non-fatal: bead might not exist or already be closed
-				if !strings.Contains(string(output), "no issue found") &&
-					!strings.Contains(string(output), "already closed") {
+				errStr := err.Error()
+				if !strings.Contains(errStr, "no issue found") &&
+					!strings.Contains(errStr, "already closed") {
 					style.PrintWarning("could not close agent bead %s: %v", agentBeadID, err)
 				}
 			} else {

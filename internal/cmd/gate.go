@@ -92,20 +92,9 @@ func runGateWake(cmd *cobra.Command, args []string) error {
 	b := beads.New(cwd)
 
 	// Get gate info
-	// NOTE: Using Run because Gate type lacks CloseReason field
-	gateOutput, err := b.Run("gate", "show", gateID, "--json")
+	gateInfo, err := b.GateShow(gateID)
 	if err != nil {
 		return fmt.Errorf("gate '%s' not found or not accessible", gateID)
-	}
-
-	var gateInfo struct {
-		ID          string   `json:"id"`
-		Status      string   `json:"status"`
-		CloseReason string   `json:"close_reason"`
-		Waiters     []string `json:"waiters"`
-	}
-	if err := json.Unmarshal(gateOutput, &gateInfo); err != nil {
-		return fmt.Errorf("parsing gate info: %w", err)
 	}
 
 	if gateInfo.Status != "closed" {

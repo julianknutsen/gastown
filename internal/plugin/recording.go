@@ -1,11 +1,8 @@
 package plugin
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -63,43 +60,22 @@ func (r *Recorder) RecordRun(record PluginRunRecord) (string, error) {
 		labels = append(labels, fmt.Sprintf("rig:%s", record.RigName))
 	}
 
-	// Build bd create command
-	args := []string{
-		"create",
-		"--ephemeral",
-		"--json",
-		"--title=" + title,
-	}
-	for _, label := range labels {
-		args = append(args, "-l", label)
-	}
-	if record.Body != "" {
-		args = append(args, "--description="+record.Body)
+	// BeadsOps Migration: cmd.Dir=r.townRoot, BEADS_DIR was set explicitly to prevent
+	// prefix mismatches when redirects are in play
+	beadsDir := beads.ResolveBeadsDir(r.townRoot)
+	b := beads.NewWithBeadsDir(r.townRoot, beadsDir)
+
+	issue, err := b.Create(beads.CreateOptions{
+		Title:       title,
+		Description: record.Body,
+		Ephemeral:   true,
+		Labels:      labels,
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating plugin run bead: %w", err)
 	}
 
-	cmd := exec.Command("bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Dir = r.townRoot
-	// Set BEADS_DIR explicitly to prevent inherited env vars from causing
-	// prefix mismatches when redirects are in play.
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beads.ResolveBeadsDir(r.townRoot))
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("creating plugin run bead: %s: %w", stderr.String(), err)
-	}
-
-	// Parse created bead ID from JSON output
-	var result struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		return "", fmt.Errorf("parsing bd create output: %w", err)
-	}
-
-	return result.ID, nil
+	return issue.ID, nil
 }
 
 // GetLastRun returns the most recent run for a plugin.
@@ -123,75 +99,47 @@ func (r *Recorder) GetRunsSince(pluginName string, since string) ([]*PluginRunBe
 
 // queryRuns queries plugin run beads from the ledger.
 func (r *Recorder) queryRuns(pluginName string, limit int, since string) ([]*PluginRunBead, error) {
-	args := []string{
-		"list",
-		"--json",
-		"--all", // Include closed beads too
-		"-l", "type:plugin-run",
-		"-l", fmt.Sprintf("plugin:%s", pluginName),
-	}
-	if limit > 0 {
-		args = append(args, fmt.Sprintf("--limit=%d", limit))
-	}
+	beadsDir := beads.ResolveBeadsDir(r.townRoot)
+	b := beads.NewWithBeadsDir(r.townRoot, beadsDir)
+
+	// Convert duration like "1h" to created-after format
+	// bd supports relative dates with - prefix (e.g., -1h, -24h)
+	createdAfter := ""
 	if since != "" {
-		// Convert duration like "1h" to created-after format
-		// bd supports relative dates with - prefix (e.g., -1h, -24h)
-		sinceArg := since
 		if !strings.HasPrefix(since, "-") {
-			sinceArg = "-" + since
+			createdAfter = "-" + since
+		} else {
+			createdAfter = since
 		}
-		args = append(args, "--created-after="+sinceArg)
 	}
 
-	cmd := exec.Command("bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Dir = r.townRoot
-	// Set BEADS_DIR explicitly to prevent inherited env vars from causing
-	// prefix mismatches when redirects are in play.
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beads.ResolveBeadsDir(r.townRoot))
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	issues, err := b.List(beads.ListOptions{
+		Labels:       []string{"type:plugin-run", fmt.Sprintf("plugin:%s", pluginName)},
+		Limit:        limit,
+		CreatedAfter: createdAfter,
+		All:          true, // Include closed beads too
+	})
+	if err != nil {
 		// Empty result is OK (no runs found)
-		if stderr.Len() == 0 || stdout.String() == "[]\n" {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("querying plugin runs: %s: %w", stderr.String(), err)
-	}
-
-	// Parse JSON output
-	var beads []struct {
-		ID        string   `json:"id"`
-		Title     string   `json:"title"`
-		CreatedAt string   `json:"created_at"`
-		Labels    []string `json:"labels"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &beads); err != nil {
-		// Empty array is valid
-		if stdout.String() == "[]\n" || stdout.Len() == 0 {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("parsing bd list output: %w", err)
+		return nil, nil
 	}
 
 	// Convert to PluginRunBead with parsed result
-	runs := make([]*PluginRunBead, 0, len(beads))
-	for _, b := range beads {
+	runs := make([]*PluginRunBead, 0, len(issues))
+	for _, issue := range issues {
 		run := &PluginRunBead{
-			ID:     b.ID,
-			Title:  b.Title,
-			Labels: b.Labels,
+			ID:     issue.ID,
+			Title:  issue.Title,
+			Labels: issue.Labels,
 		}
 
 		// Parse created_at
-		if t, err := time.Parse(time.RFC3339, b.CreatedAt); err == nil {
+		if t, err := time.Parse(time.RFC3339, issue.CreatedAt); err == nil {
 			run.CreatedAt = t
 		}
 
 		// Extract result from labels
-		for _, label := range b.Labels {
+		for _, label := range issue.Labels {
 			if len(label) > 7 && label[:7] == "result:" {
 				run.Result = RunResult(label[7:])
 				break
@@ -202,6 +150,14 @@ func (r *Recorder) queryRuns(pluginName string, limit int, since string) ([]*Plu
 	}
 
 	return runs, nil
+}
+
+// parseJSON is a helper to unmarshal JSON.
+func parseJSON(data []byte, v interface{}) error {
+	if len(data) == 0 || string(data) == "[]\n" {
+		return nil
+	}
+	return json.Unmarshal(data, v)
 }
 
 // CountRunsSince returns the count of runs for a plugin since the given duration.

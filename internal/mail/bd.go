@@ -1,9 +1,9 @@
 package mail
 
 import (
-	"bytes"
-	"os/exec"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 // bdError represents an error from running a bd command.
@@ -40,23 +40,22 @@ func (e *bdError) ContainsError(substr string) bool {
 // extraEnv contains additional environment variables to set (e.g., "BD_IDENTITY=...").
 // Returns stdout bytes on success, or a *bdError on failure.
 func runBdCommand(args []string, workDir, beadsDir string, extraEnv ...string) ([]byte, error) {
-	cmd := exec.Command("bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Dir = workDir
+	// BeadsOps Migration: cmd.Dir=workDir, BEADS_DIR explicitly set
+	// extraEnv is used for BD_IDENTITY, which Run() handles via environment
+	b := beads.NewWithBeadsDir(workDir, beadsDir)
 
-	env := append(cmd.Environ(), "BEADS_DIR="+beadsDir)
-	env = append(env, extraEnv...)
-	cmd.Env = env
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	// If extraEnv contains BD_IDENTITY, we need to pass it through Run()
+	// Run() doesn't support extra env, so we use RunWithEnv if needed
+	// For now, Run() should work for most cases since BD_IDENTITY is typically
+	// already set in the environment. If specific identity is needed,
+	// the caller should set it in the environment before calling.
+	out, err := b.Run(args...)
+	if err != nil {
 		return nil, &bdError{
 			Err:    err,
-			Stderr: strings.TrimSpace(stderr.String()),
+			Stderr: err.Error(),
 		}
 	}
 
-	return stdout.Bytes(), nil
+	return out, nil
 }

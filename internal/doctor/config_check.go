@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
 )
 
@@ -580,11 +581,11 @@ func (c *CustomTypesCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
+	// BeadsOps Migration: cmd.Dir=ctx.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(ctx.TownRoot)
+
 	// Get current custom types configuration
-	// Use Output() not CombinedOutput() to avoid capturing bd's stderr messages
-	cmd := exec.Command("bd", "config", "get", "types.custom")
-	cmd.Dir = ctx.TownRoot
-	output, err := cmd.Output()
+	configValue, err := b.ConfigGet("types.custom")
 	if err != nil {
 		// If config key doesn't exist, types are not configured
 		c.townRoot = ctx.TownRoot
@@ -600,6 +601,7 @@ func (c *CustomTypesCheck) Run(ctx *CheckContext) *CheckResult {
 			FixHint: "Run 'gt doctor --fix' or 'bd config set types.custom \"" + constants.BeadsCustomTypes + "\"'",
 		}
 	}
+	output := []byte(configValue)
 
 	// Parse configured types, filtering out bd "Note:" messages that may appear in stdout
 	configuredTypes := parseConfigOutput(output)
@@ -655,11 +657,10 @@ func parseConfigOutput(output []byte) string {
 
 // Fix registers the missing custom types.
 func (c *CustomTypesCheck) Fix(ctx *CheckContext) error {
-	cmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-	cmd.Dir = c.townRoot
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("bd config set types.custom: %s", strings.TrimSpace(string(output)))
+	// BeadsOps Migration: cmd.Dir=c.townRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(c.townRoot)
+	if err := b.ConfigSet("types.custom", constants.BeadsCustomTypes); err != nil {
+		return fmt.Errorf("bd config set types.custom: %v", err)
 	}
 	return nil
 }

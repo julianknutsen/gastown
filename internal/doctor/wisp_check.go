@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -135,11 +134,9 @@ func (c *WispGCCheck) Fix(ctx *CheckContext) error {
 	for rigName := range c.abandonedRigs {
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
 
-		// Run bd --no-daemon mol wisp gc
-		cmd := exec.Command("bd", "--no-daemon", "mol", "wisp", "gc")
-		cmd.Dir = rigPath
-		if output, err := cmd.CombinedOutput(); err != nil {
-			lastErr = fmt.Errorf("%s: %v (%s)", rigName, err, string(output))
+		b := beads.New(rigPath)
+		if err := b.WispGC(); err != nil {
+			lastErr = fmt.Errorf("%s: %v", rigName, err)
 		}
 	}
 

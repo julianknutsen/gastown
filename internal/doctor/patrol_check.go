@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -92,18 +90,24 @@ func (c *PatrolMoleculesExistCheck) Run(ctx *CheckContext) *CheckResult {
 
 // checkPatrolMolecules returns missing patrol molecule titles for a rig.
 func (c *PatrolMoleculesExistCheck) checkPatrolMolecules(rigPath string) []string {
+	// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig beads), BEADS_DIR N/A
+	b := beads.New(rigPath)
+
 	// List molecules using bd
-	cmd := exec.Command("bd", "list", "--type=molecule")
-	cmd.Dir = rigPath
-	output, err := cmd.Output()
+	issues, err := b.List(beads.ListOptions{Type: "molecule"})
 	if err != nil {
 		return patrolMolecules // Can't check, assume all missing
 	}
 
-	outputStr := string(output)
+	// Build title set from found molecules
+	foundTitles := make(map[string]bool)
+	for _, issue := range issues {
+		foundTitles[issue.Title] = true
+	}
+
 	var missing []string
 	for _, mol := range patrolMolecules {
-		if !strings.Contains(outputStr, mol) {
+		if !foundTitles[mol] {
 			missing = append(missing, mol)
 		}
 	}
@@ -114,16 +118,16 @@ func (c *PatrolMoleculesExistCheck) checkPatrolMolecules(rigPath string) []strin
 func (c *PatrolMoleculesExistCheck) Fix(ctx *CheckContext) error {
 	for rigName, missing := range c.missingMols {
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
+		// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig beads), BEADS_DIR N/A
+		b := beads.New(rigPath)
 		for _, mol := range missing {
 			desc := getPatrolMoleculeDesc(mol)
-			cmd := exec.Command("bd", "create", //nolint:gosec // G204: args are constructed internally
-				"--type=molecule",
-				"--title="+mol,
-				"--description="+desc,
-				"--priority=2",
-			)
-			cmd.Dir = rigPath
-			if err := cmd.Run(); err != nil {
+			if _, err := b.Create(beads.CreateOptions{
+				Type:        "molecule",
+				Title:       mol,
+				Description: desc,
+				Priority:    2,
+			}); err != nil {
 				return fmt.Errorf("creating %s in %s: %w", mol, rigName, err)
 			}
 		}

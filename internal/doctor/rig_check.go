@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 )
@@ -831,10 +832,11 @@ func (c *BeadsConfigValidCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
+	// BeadsOps Migration: cmd.Dir=c.rigPath (REQUIRED - rig beads), BEADS_DIR N/A
+	b := beads.New(c.rigPath)
+
 	// Check if bd command works
-	cmd := exec.Command("bd", "stats", "--json")
-	cmd.Dir = c.rigPath
-	if err := cmd.Run(); err != nil {
+	if _, err := b.StatsJSON(); err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusError,
@@ -845,22 +847,24 @@ func (c *BeadsConfigValidCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	// Check sync status
-	cmd = exec.Command("bd", "sync", "--status")
-	cmd.Dir = c.rigPath
-	output, err := cmd.CombinedOutput()
 	c.needsSync = false
-	if err != nil {
-		// sync --status may exit non-zero if out of sync
-		outputStr := string(output)
-		if strings.Contains(outputStr, "out of sync") || strings.Contains(outputStr, "behind") {
-			c.needsSync = true
-			return &CheckResult{
-				Name:    c.Name(),
-				Status:  StatusWarning,
-				Message: "Beads out of sync",
-				Details: []string{strings.TrimSpace(outputStr)},
-				FixHint: "Run 'gt doctor --fix' or 'bd sync' to synchronize",
-			}
+	syncStatus, err := b.GetSyncStatus()
+	isOutOfSync := syncStatus != nil && (syncStatus.Ahead > 0 || syncStatus.Behind > 0 || len(syncStatus.Conflicts) > 0)
+	if err != nil || isOutOfSync {
+		// May be out of sync
+		c.needsSync = true
+		var details []string
+		if syncStatus != nil {
+			details = []string{fmt.Sprintf("ahead: %d, behind: %d, conflicts: %d", syncStatus.Ahead, syncStatus.Behind, len(syncStatus.Conflicts))}
+		} else if err != nil {
+			details = []string{err.Error()}
+		}
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusWarning,
+			Message: "Beads out of sync",
+			Details: details,
+			FixHint: "Run 'gt doctor --fix' or 'bd sync' to synchronize",
 		}
 	}
 
@@ -877,11 +881,10 @@ func (c *BeadsConfigValidCheck) Fix(ctx *CheckContext) error {
 		return nil
 	}
 
-	cmd := exec.Command("bd", "sync")
-	cmd.Dir = c.rigPath
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("bd sync failed: %s", string(output))
+	// BeadsOps Migration: cmd.Dir=c.rigPath (REQUIRED - rig beads), BEADS_DIR N/A
+	b := beads.New(c.rigPath)
+	if err := b.Sync(); err != nil {
+		return fmt.Errorf("bd sync failed: %v", err)
 	}
 
 	return nil
@@ -1042,10 +1045,11 @@ func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
 			return fmt.Errorf("creating .beads directory: %w", err)
 		}
 
+		// BeadsOps Migration: cmd.Dir=rigPath (REQUIRED - rig beads), BEADS_DIR N/A
+		b := beads.New(rigPath)
+
 		// Run bd init with the configured prefix
-		cmd := exec.Command("bd", "init", "--prefix", prefix)
-		cmd.Dir = rigPath
-		if output, err := cmd.CombinedOutput(); err != nil {
+		if err := b.Init(beads.InitOptions{Prefix: prefix}); err != nil {
 			// bd might not be installed - create minimal config.yaml
 			configPath := filepath.Join(rigBeadsDir, "config.yaml")
 			configContent := fmt.Sprintf("prefix: %s\n", prefix)
@@ -1054,11 +1058,8 @@ func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
 			}
 			// Continue - minimal config created
 		} else {
-			_ = output // bd init succeeded
-			// Configure custom types for Gas Town (beads v0.46.0+)
-			configCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-			configCmd.Dir = rigPath
-			_, _ = configCmd.CombinedOutput() // Ignore errors - older beads don't need this
+			// bd init succeeded - configure custom types for Gas Town (beads v0.46.0+)
+			_ = b.ConfigSet("types.custom", constants.BeadsCustomTypes) // Ignore errors - older beads don't need this
 		}
 		return nil
 	}

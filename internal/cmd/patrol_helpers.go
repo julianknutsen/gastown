@@ -1,12 +1,11 @@
 package cmd
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -27,69 +26,50 @@ type PatrolConfig struct {
 // findActivePatrol finds an active patrol molecule for the role.
 // Returns the patrol ID, display line, and whether one was found.
 func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool) {
+	b := beads.New(cfg.BeadsDir)
+
 	// Check for in-progress patrol first (if configured)
 	if cfg.CheckInProgress {
-		cmdList := exec.Command("bd", "--no-daemon", "list", "--status=in_progress", "--type=epic")
-		cmdList.Dir = cfg.BeadsDir
-		var stdoutList, stderrList bytes.Buffer
-		cmdList.Stdout = &stdoutList
-		cmdList.Stderr = &stderrList
-
-		if err := cmdList.Run(); err != nil {
-			if errMsg := strings.TrimSpace(stderrList.String()); errMsg != "" {
-				fmt.Fprintf(os.Stderr, "bd list: %s\n", errMsg)
-			}
+		issues, err := b.List(beads.ListOptions{Status: "in_progress", Type: "epic"})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bd list: %v\n", err)
 		} else {
-			lines := strings.Split(stdoutList.String(), "\n")
-			for _, line := range lines {
-				if strings.Contains(line, cfg.PatrolMolName) && !strings.Contains(line, "[template]") {
-					parts := strings.Fields(line)
-					if len(parts) > 0 {
-						return parts[0], line, true
-					}
+			for _, issue := range issues {
+				if strings.Contains(issue.Title, cfg.PatrolMolName) && !strings.Contains(issue.Title, "[template]") {
+					displayLine := fmt.Sprintf("%s %s [%s]", issue.ID, issue.Title, issue.Status)
+					return issue.ID, displayLine, true
 				}
 			}
 		}
 	}
 
 	// Check for open patrols with open children (active wisp)
-	cmdOpen := exec.Command("bd", "--no-daemon", "list", "--status=open", "--type=epic")
-	cmdOpen.Dir = cfg.BeadsDir
-	var stdoutOpen, stderrOpen bytes.Buffer
-	cmdOpen.Stdout = &stdoutOpen
-	cmdOpen.Stderr = &stderrOpen
-
-	if err := cmdOpen.Run(); err != nil {
-		if errMsg := strings.TrimSpace(stderrOpen.String()); errMsg != "" {
-			fmt.Fprintf(os.Stderr, "bd list: %s\n", errMsg)
-		}
+	issues, err := b.List(beads.ListOptions{Status: "open", Type: "epic"})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bd list: %v\n", err)
 	} else {
-		lines := strings.Split(stdoutOpen.String(), "\n")
-		for _, line := range lines {
-			if strings.Contains(line, cfg.PatrolMolName) && !strings.Contains(line, "[template]") {
-				parts := strings.Fields(line)
-				if len(parts) > 0 {
-					molID := parts[0]
-					// Check if this molecule has open children
-					cmdShow := exec.Command("bd", "--no-daemon", "show", molID)
-					cmdShow.Dir = cfg.BeadsDir
-					var stdoutShow, stderrShow bytes.Buffer
-					cmdShow.Stdout = &stdoutShow
-					cmdShow.Stderr = &stderrShow
-					if err := cmdShow.Run(); err != nil {
-						if errMsg := strings.TrimSpace(stderrShow.String()); errMsg != "" {
-							fmt.Fprintf(os.Stderr, "bd show: %s\n", errMsg)
+		for _, issue := range issues {
+			if strings.Contains(issue.Title, cfg.PatrolMolName) && !strings.Contains(issue.Title, "[template]") {
+				// Check if this molecule has open children
+				fullIssue, err := b.Show(issue.ID)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "bd show: %v\n", err)
+				} else {
+					// Check dependents for open/in_progress status
+					hasOpenChildren := false
+					for _, dep := range fullIssue.Dependents {
+						if dep.Status == "open" {
+							hasOpenChildren = true
+							break
 						}
-					} else {
-						showOutput := stdoutShow.String()
-						// Deacon only checks "- open]", witness/refinery also check "- in_progress]"
-						hasOpenChildren := strings.Contains(showOutput, "- open]")
-						if cfg.CheckInProgress {
-							hasOpenChildren = hasOpenChildren || strings.Contains(showOutput, "- in_progress]")
+						if cfg.CheckInProgress && dep.Status == "in_progress" {
+							hasOpenChildren = true
+							break
 						}
-						if hasOpenChildren {
-							return molID, line, true
-						}
+					}
+					if hasOpenChildren {
+						displayLine := fmt.Sprintf("%s %s [%s]", issue.ID, issue.Title, issue.Status)
+						return issue.ID, displayLine, true
 					}
 				}
 			}
@@ -102,32 +82,20 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 // autoSpawnPatrol creates and pins a new patrol wisp.
 // Returns the patrol ID or an error.
 func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
-	// Find the proto ID for the patrol molecule
-	cmdCatalog := exec.Command("bd", "--no-daemon", "mol", "catalog")
-	cmdCatalog.Dir = cfg.BeadsDir
-	var stdoutCatalog, stderrCatalog bytes.Buffer
-	cmdCatalog.Stdout = &stdoutCatalog
-	cmdCatalog.Stderr = &stderrCatalog
+	b := beads.New(cfg.BeadsDir)
 
-	if err := cmdCatalog.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderrCatalog.String())
-		if errMsg != "" {
-			return "", fmt.Errorf("failed to list molecule catalog: %s", errMsg)
-		}
+	// Find the proto ID for the patrol molecule
+	protos, err := b.MolCatalog()
+	if err != nil {
 		return "", fmt.Errorf("failed to list molecule catalog: %w", err)
 	}
 
 	// Find patrol molecule in catalog
 	var protoID string
-	catalogLines := strings.Split(stdoutCatalog.String(), "\n")
-	for _, line := range catalogLines {
-		if strings.Contains(line, cfg.PatrolMolName) {
-			parts := strings.Fields(line)
-			if len(parts) > 0 {
-				// Strip trailing colon from ID (catalog format: "gt-xxx: title")
-				protoID = strings.TrimSuffix(parts[0], ":")
-				break
-			}
+	for _, proto := range protos {
+		if strings.Contains(proto.Name, cfg.PatrolMolName) || strings.Contains(proto.ID, cfg.PatrolMolName) {
+			protoID = proto.ID
+			break
 		}
 	}
 
@@ -136,39 +104,16 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 	}
 
 	// Create the patrol wisp
-	cmdSpawn := exec.Command("bd", "--no-daemon", "mol", "wisp", "create", protoID, "--actor", cfg.RoleName)
-	cmdSpawn.Dir = cfg.BeadsDir
-	var stdoutSpawn, stderrSpawn bytes.Buffer
-	cmdSpawn.Stdout = &stdoutSpawn
-	cmdSpawn.Stderr = &stderrSpawn
-
-	if err := cmdSpawn.Run(); err != nil {
-		return "", fmt.Errorf("failed to create patrol wisp: %s", stderrSpawn.String())
+	wisp, err := b.WispCreate(protoID, cfg.RoleName)
+	if err != nil {
+		return "", fmt.Errorf("failed to create patrol wisp: %w", err)
 	}
 
-	// Parse the created molecule ID from output
-	var patrolID string
-	spawnOutput := stdoutSpawn.String()
-	for _, line := range strings.Split(spawnOutput, "\n") {
-		if strings.Contains(line, "Root issue:") || strings.Contains(line, "Created") {
-			parts := strings.Fields(line)
-			for _, p := range parts {
-				if strings.HasPrefix(p, "wisp-") || strings.HasPrefix(p, "gt-") {
-					patrolID = p
-					break
-				}
-			}
-		}
-	}
-
-	if patrolID == "" {
-		return "", fmt.Errorf("created wisp but could not parse ID from output")
-	}
+	patrolID := wisp.ID
 
 	// Hook the wisp to the agent so gt mol status sees it
-	cmdPin := exec.Command("bd", "--no-daemon", "update", patrolID, "--status=hooked", "--assignee="+cfg.Assignee)
-	cmdPin.Dir = cfg.BeadsDir
-	if err := cmdPin.Run(); err != nil {
+	status := beads.StatusHooked
+	if err := b.Update(patrolID, beads.UpdateOptions{Status: &status, Assignee: &cfg.Assignee}); err != nil {
 		return patrolID, fmt.Errorf("created wisp %s but failed to hook", patrolID)
 	}
 

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -326,11 +325,11 @@ func runSynthesisClose(cmd *cobra.Command, args []string) error {
 	// cmd.Dir = townBeads - REQUIRED for town beads operations
 	// BEADS_DIR was N/A - not set
 	b := beads.New(townBeads)
-	closeArgs := []string{"close", convoyID, "--reason=synthesis complete"}
-	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
-		closeArgs = append(closeArgs, "--session="+sessionID)
+	closeOpts := beads.CloseOptions{
+		Reason:  "synthesis complete",
+		Session: runtime.SessionIDFromEnv(),
 	}
-	if _, err := b.Run(closeArgs...); err != nil {
+	if err := b.CloseWithOptions(closeOpts, convoyID); err != nil {
 		return fmt.Errorf("closing convoy: %w", err)
 	}
 
@@ -353,27 +352,14 @@ func getConvoyMeta(convoyID string) (*ConvoyMeta, error) {
 	// cmd.Dir = townBeads - REQUIRED for town beads operations
 	// BEADS_DIR was N/A - not set
 	b := beads.New(townBeads)
-	output, err := b.Run("show", convoyID, "--json")
+	convoy, err := b.Show(convoyID)
 	if err != nil {
 		return nil, fmt.Errorf("convoy '%s' not found", convoyID)
 	}
 
-	var convoys []struct {
-		ID          string `json:"id"`
-		Title       string `json:"title"`
-		Status      string `json:"status"`
-		Description string `json:"description"`
-		Type        string `json:"issue_type"`
-	}
-	if err := json.Unmarshal(output, &convoys); err != nil {
-		return nil, fmt.Errorf("parsing convoy data: %w", err)
-	}
-
-	if len(convoys) == 0 || convoys[0].Type != "convoy" {
+	if convoy.Type != "convoy" {
 		return nil, fmt.Errorf("'%s' is not a convoy", convoyID)
 	}
-
-	convoy := convoys[0]
 
 	// Parse formula and review ID from description
 	meta := &ConvoyMeta{
@@ -526,14 +512,6 @@ func createSynthesisBead(convoyID string, meta *ConvoyMeta, f *formula.Formula,
 	}
 
 	// Create the bead
-	createArgs := []string{
-		"create",
-		"--type=task",
-		"--title=" + title,
-		"--description=" + desc.String(),
-		"--json",
-	}
-
 	townBeads, err := getTownBeadsDir()
 	if err != nil {
 		return "", err
@@ -543,29 +521,19 @@ func createSynthesisBead(convoyID string, meta *ConvoyMeta, f *formula.Formula,
 	// cmd.Dir = townBeads - REQUIRED for town beads operations
 	// BEADS_DIR was N/A - not set
 	b := beads.New(townBeads)
-	output, err := b.Run(createArgs...)
+	issue, err := b.Create(beads.CreateOptions{
+		Title:       title,
+		Type:        "task",
+		Description: desc.String(),
+	})
 	if err != nil {
 		return "", fmt.Errorf("creating synthesis bead: %w", err)
 	}
 
-	// Parse created bead ID
-	var result struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(output, &result); err != nil {
-		// Try to extract ID from non-JSON output
-		out := strings.TrimSpace(string(output))
-		if strings.HasPrefix(out, "hq-") || strings.HasPrefix(out, "gt-") {
-			return out, nil
-		}
-		return "", fmt.Errorf("parsing created bead: %w", err)
-	}
-
 	// Add tracking relation: convoy tracks synthesis
-	depArgs := []string{"dep", "add", convoyID, result.ID, "--type=tracks"}
-	_, _ = b.Run(depArgs...) // Non-fatal if this fails
+	_ = b.AddDependencyWithType(convoyID, issue.ID, "tracks") // Non-fatal if this fails
 
-	return result.ID, nil
+	return issue.ID, nil
 }
 
 // slingSynthesis slings the synthesis bead to a rig.

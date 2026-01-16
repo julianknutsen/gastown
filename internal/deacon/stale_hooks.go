@@ -2,12 +2,11 @@
 package deacon
 
 import (
-	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -122,28 +121,38 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 
 // listHookedBeads returns all beads with status=hooked.
 func listHookedBeads(townRoot string) ([]*HookedBead, error) {
-	cmd := exec.Command("bd", "list", "--status=hooked", "--json", "--limit=0")
-	cmd.Dir = townRoot
-
-	output, err := cmd.Output()
+	// BeadsOps Migration: cmd.Dir=townRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(townRoot)
+	issues, err := b.List(beads.ListOptions{Status: "hooked", Limit: 0})
 	if err != nil {
 		// No hooked beads is not an error
-		if strings.Contains(string(output), "no issues found") {
+		if strings.Contains(err.Error(), "no issues found") {
 			return nil, nil
 		}
 		return nil, err
 	}
 
-	if len(output) == 0 || string(output) == "[]" || string(output) == "null\n" {
+	if len(issues) == 0 {
 		return nil, nil
 	}
 
-	var beads []*HookedBead
-	if err := json.Unmarshal(output, &beads); err != nil {
-		return nil, fmt.Errorf("parsing hooked beads: %w", err)
+	// Convert to HookedBead format
+	result := make([]*HookedBead, len(issues))
+	for i, issue := range issues {
+		var updatedAt time.Time
+		if issue.UpdatedAt != "" {
+			updatedAt, _ = time.Parse(time.RFC3339, issue.UpdatedAt)
+		}
+		result[i] = &HookedBead{
+			ID:        issue.ID,
+			Title:     issue.Title,
+			Status:    issue.Status,
+			Assignee:  issue.Assignee,
+			UpdatedAt: updatedAt,
+		}
 	}
 
-	return beads, nil
+	return result, nil
 }
 
 // assigneeToSessionName converts an assignee address to a tmux session name.
@@ -189,7 +198,8 @@ func assigneeToSessionName(assignee string) string {
 
 // unhookBead sets a bead's status back to 'open'.
 func unhookBead(townRoot, beadID string) error {
-	cmd := exec.Command("bd", "update", beadID, "--status=open")
-	cmd.Dir = townRoot
-	return cmd.Run()
+	// BeadsOps Migration: cmd.Dir=townRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(townRoot)
+	status := "open"
+	return b.Update(beadID, beads.UpdateOptions{Status: &status})
 }

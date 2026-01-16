@@ -52,20 +52,24 @@ type IssueDep struct {
 	Status         string `json:"status"`
 	Priority       int    `json:"priority"`
 	Type           string `json:"issue_type"`
+	Assignee       string `json:"assignee,omitempty"`
 	DependencyType string `json:"dependency_type,omitempty"`
 }
 
 // ListOptions specifies filters for listing issues.
 type ListOptions struct {
-	Status     string // "open", "closed", "all"
-	Type       string // Deprecated: use Label instead. "task", "bug", "feature", "epic"
-	Label      string // Label filter (e.g., "gt:agent", "gt:merge-request")
-	Priority   int    // 0-4, -1 for no filter
-	Parent     string // filter by parent ID
-	Assignee   string // filter by assignee (e.g., "gastown/Toast")
-	NoAssignee bool   // filter for issues with no assignee
-	Limit      int    // max issues to return (0 = default)
-	Tag        string // tag filter (e.g., "escalation")
+	Status       string   // "open", "closed", "all"
+	Type         string   // Deprecated: use Label instead. "task", "bug", "feature", "epic"
+	Label        string   // Label filter (e.g., "gt:agent", "gt:merge-request")
+	Labels       []string // Multiple label filters (all must match)
+	Priority     int      // 0-4, -1 for no filter
+	Parent       string   // filter by parent ID
+	Assignee     string   // filter by assignee (e.g., "gastown/Toast")
+	NoAssignee   bool     // filter for issues with no assignee
+	Limit        int      // max issues to return (0 = default)
+	Tag          string   // tag filter (e.g., "escalation")
+	CreatedAfter string   // filter for issues created after this time (e.g., "-1h", "-24h")
+	All          bool     // include closed issues
 }
 
 // CreateOptions specifies options for creating an issue.
@@ -163,15 +167,17 @@ type WispCreateOptions struct {
 type CloseOptions struct {
 	Reason  string // Reason for closing (--reason)
 	Session string // Session ID for audit trail (--session)
+	Force   bool   // Force close even if pinned (--force)
 }
 
 // Gate represents a gate for synchronization.
 type Gate struct {
-	ID       string   `json:"id"`
-	Status   string   `json:"status"` // "open", "closed"
-	Waiters  []string `json:"waiters,omitempty"`
-	OpenedAt string   `json:"opened_at,omitempty"`
-	ClosedAt string   `json:"closed_at,omitempty"`
+	ID          string   `json:"id"`
+	Status      string   `json:"status"` // "open", "closed"
+	CloseReason string   `json:"close_reason,omitempty"`
+	Waiters     []string `json:"waiters,omitempty"`
+	OpenedAt    string   `json:"opened_at,omitempty"`
+	ClosedAt    string   `json:"closed_at,omitempty"`
 }
 
 // SwarmStatus represents the status of a swarm.
@@ -182,7 +188,19 @@ type SwarmStatus struct {
 	Completed  int            `json:"completed"`
 	InProgress int            `json:"in_progress"`
 	Blocked    int            `json:"blocked"`
+	Ready      int            `json:"ready"`
 	Workers    []*SwarmWorker `json:"workers,omitempty"`
+	// Task arrays with details (from swarm status --json)
+	ReadyTasks      []*SwarmTask `json:"ready,omitempty"`
+	ActiveTasks     []*SwarmTask `json:"active,omitempty"`
+	BlockedTasks    []*SwarmTask `json:"blocked,omitempty"`
+	CompletedTasks  []*SwarmTask `json:"completed,omitempty"`
+}
+
+// SwarmTask represents a task in a swarm with basic info.
+type SwarmTask struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 // SwarmWorker represents a worker in a swarm.

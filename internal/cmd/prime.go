@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -666,25 +665,14 @@ func checkPendingEscalations(ctx RoleContext) {
 	// Query for open escalations using BeadsOps interface
 	// cmd.Dir = ctx.WorkDir - REQUIRED for operating on specific workDir
 	// BEADS_DIR was N/A - not set
-	// NOTE: Using Run because ListOptions doesn't support --tag filter
 	b := beads.New(ctx.WorkDir)
-	listOutput, err := b.Run("list", "--status=open", "--tag=escalation", "--json")
-	if err != nil {
+	escalations, err := b.List(beads.ListOptions{
+		Status:   "open",
+		Tag:      "escalation",
+		Priority: -1,
+	})
+	if err != nil || len(escalations) == 0 {
 		// Silently skip - escalation check is best-effort
-		return
-	}
-
-	// Parse JSON output
-	var escalations []struct {
-		ID          string `json:"id"`
-		Title       string `json:"title"`
-		Priority    int    `json:"priority"`
-		Description string `json:"description"`
-		Created     string `json:"created"`
-	}
-
-	if err := json.Unmarshal(listOutput, &escalations); err != nil || len(escalations) == 0 {
-		// No escalations or parse error
 		return
 	}
 

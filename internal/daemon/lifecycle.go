@@ -598,19 +598,11 @@ func (d *Daemon) syncWorkspace(workDir string) {
 		// Don't fail - agent can handle conflicts
 	}
 
-	// Reset stderr buffer
-	stderr.Reset()
-
 	// Sync beads
-	bdCmd := exec.Command("bd", "sync")
-	bdCmd.Dir = workDir
-	bdCmd.Stderr = &stderr
-	if err := bdCmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg == "" {
-			errMsg = err.Error()
-		}
-		d.logger.Printf("Warning: bd sync failed in %s: %s", workDir, errMsg)
+	// BeadsOps Migration: cmd.Dir=workDir (REQUIRED - agent beads location), BEADS_DIR N/A
+	b := beads.New(workDir)
+	if err := b.Sync(); err != nil {
+		d.logger.Printf("Warning: bd sync failed in %s: %s", workDir, err.Error())
 		// Don't fail - sync issues may be recoverable
 	}
 }
@@ -657,33 +649,13 @@ func (d *Daemon) getAgentBeadState(agentBeadID string) (string, error) {
 
 // getAgentBeadInfo fetches and parses an agent bead by ID.
 func (d *Daemon) getAgentBeadInfo(agentBeadID string) (*AgentBeadInfo, error) {
-	cmd := exec.Command("bd", "show", agentBeadID, "--json")
-	cmd.Dir = d.config.TownRoot
-
-	output, err := cmd.Output()
+	// BeadsOps Migration: cmd.Dir=d.config.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(d.config.TownRoot)
+	issue, err := b.Show(agentBeadID)
 	if err != nil {
 		return nil, fmt.Errorf("bd show %s: %w", agentBeadID, err)
 	}
 
-	// bd show --json returns an array with one element
-	var issues []struct {
-		ID          string `json:"id"`
-		Type        string `json:"issue_type"`
-		Description string `json:"description"`
-		UpdatedAt   string `json:"updated_at"`
-		HookBead    string `json:"hook_bead"`   // Read from database column
-		AgentState  string `json:"agent_state"` // Read from database column
-	}
-
-	if err := json.Unmarshal(output, &issues); err != nil {
-		return nil, fmt.Errorf("parsing bd show output: %w", err)
-	}
-
-	if len(issues) == 0 {
-		return nil, fmt.Errorf("agent bead not found: %s", agentBeadID)
-	}
-
-	issue := issues[0]
 	if issue.Type != "agent" {
 		return nil, fmt.Errorf("bead %s is not an agent bead (type=%s)", agentBeadID, issue.Type)
 	}
@@ -795,25 +767,11 @@ func (d *Daemon) checkGUPPViolations() {
 func (d *Daemon) checkRigGUPPViolations(rigName string) {
 	// List polecat agent beads for this rig
 	// Pattern: <prefix>-<rig>-polecat-<name> (e.g., gt-gastown-polecat-Toast)
-	cmd := exec.Command("bd", "list", "--type=agent", "--json")
-	cmd.Dir = d.config.TownRoot
-
-	output, err := cmd.Output()
+	// BeadsOps Migration: cmd.Dir=d.config.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(d.config.TownRoot)
+	agents, err := b.List(beads.ListOptions{Type: "agent"})
 	if err != nil {
 		d.logger.Printf("Warning: bd list failed for GUPP check: %v", err)
-		return
-	}
-
-	var agents []struct {
-		ID          string `json:"id"`
-		Type        string `json:"issue_type"`
-		Description string `json:"description"`
-		UpdatedAt   string `json:"updated_at"`
-		HookBead    string `json:"hook_bead"` // Read from database column, not description
-		AgentState  string `json:"agent_state"`
-	}
-
-	if err := json.Unmarshal(output, &agents); err != nil {
 		return
 	}
 
@@ -893,21 +851,11 @@ func (d *Daemon) checkOrphanedWork() {
 
 // checkRigOrphanedWork checks polecats in a specific rig for orphaned work.
 func (d *Daemon) checkRigOrphanedWork(rigName string) {
-	cmd := exec.Command("bd", "list", "--type=agent", "--json")
-	cmd.Dir = d.config.TownRoot
-
-	output, err := cmd.Output()
+	// BeadsOps Migration: cmd.Dir=d.config.TownRoot (REQUIRED - town beads), BEADS_DIR N/A
+	b := beads.New(d.config.TownRoot)
+	agents, err := b.List(beads.ListOptions{Type: "agent"})
 	if err != nil {
 		d.logger.Printf("Warning: bd list failed for orphaned work check: %v", err)
-		return
-	}
-
-	var agents []struct {
-		ID       string `json:"id"`
-		HookBead string `json:"hook_bead"`
-	}
-
-	if err := json.Unmarshal(output, &agents); err != nil {
 		return
 	}
 
