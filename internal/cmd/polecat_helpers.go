@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -107,7 +108,7 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 
 	// Check 1: Unpushed commits via cleanup_status or git state
 	bd := beads.New(target.r.Path)
-	agentBeadID := beads.PolecatBeadID(target.rigName, target.polecatName)
+	agentBeadID := polecatBeadIDForRig(target.r, target.rigName, target.polecatName)
 	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
 
 	if err != nil || fields == nil {
@@ -179,6 +180,15 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	return result
 }
 
+func rigPrefix(r *rig.Rig) string {
+	townRoot := filepath.Dir(r.Path)
+	return beads.GetPrefixForRig(townRoot, r.Name)
+}
+
+func polecatBeadIDForRig(r *rig.Rig, rigName, polecatName string) string {
+	return beads.PolecatBeadIDWithPrefix(rigPrefix(r), rigName, polecatName)
+}
+
 // displaySafetyCheckBlocked prints blocked polecats and guidance.
 func displaySafetyCheckBlocked(blocked []*SafetyCheckResult) {
 	fmt.Printf("%s Cannot nuke the following polecats:\n\n", style.Error.Render("Error:"))
@@ -205,7 +215,7 @@ func displayDryRunSafetyCheck(target polecatTarget) {
 	fmt.Printf("\n  Safety checks:\n")
 	polecatInfo, infoErr := target.mgr.Get(target.polecatName)
 	bd := beads.New(target.r.Path)
-	agentBeadID := beads.PolecatBeadID(target.rigName, target.polecatName)
+	agentBeadID := polecatBeadIDForRig(target.r, target.rigName, target.polecatName)
 	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
 
 	// Check 1: Git state
