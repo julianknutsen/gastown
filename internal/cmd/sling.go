@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -379,53 +378,34 @@ func runSling(cmd *cobra.Command, args []string) error {
 		formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 
 		// Use BeadsOps interface for formula operations
-		// cmd.Dir = formulaWorkDir - REQUIRED for rig database access
-		// BEADS_DIR was N/A - not set
-		// NOTE: Using Run because --no-daemon bypasses daemon routing
 		bFormula := beads.New(formulaWorkDir)
 
 		// Step 1: Cook the formula (ensures proto exists)
-		// Cook runs from rig directory to access the correct formula database
-		if _, err := bFormula.Run("--no-daemon", "cook", formulaName); err != nil {
+		if _, err := bFormula.Cook(formulaName); err != nil {
 			return fmt.Errorf("cooking formula %s: %w", formulaName, err)
 		}
 
 		// Step 2: Create wisp with feature and issue variables from bead
-		// Run from rig directory so wisp is created in correct database
-		featureVar := fmt.Sprintf("feature=%s", info.Title)
-		issueVar := fmt.Sprintf("issue=%s", beadID)
-		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--var", issueVar, "--json"}
-		// NOTE: GT_ROOT env not supported by interface - potential gap
-		wispOut, err := bFormula.Run(wispArgs...)
+		wisp, err := bFormula.WispCreateWithOptions(beads.WispCreateOptions{
+			ProtoID: formulaName,
+			Variables: map[string]string{
+				"feature": info.Title,
+				"issue":   beadID,
+			},
+		})
 		if err != nil {
 			return fmt.Errorf("creating wisp for formula %s: %w", formulaName, err)
 		}
-
-		// Parse wisp output to get the root ID
-		wispRootID, err := parseWispIDFromJSON(wispOut)
-		if err != nil {
-			return fmt.Errorf("parsing wisp output: %w", err)
-		}
+		wispRootID := wisp.ID
 		fmt.Printf("%s Formula wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
 
 		// Step 3: Bond wisp to original bead (creates compound)
-		// Use --no-daemon for mol bond (requires direct database access)
-		bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
-		bondOut, err := bFormula.Run(bondArgs...)
+		bondResult, err := bFormula.MolBond(wispRootID, beadID)
 		if err != nil {
 			return fmt.Errorf("bonding formula to bead: %w", err)
 		}
-
-		// Parse bond output - the wisp root becomes the compound root
-		// After bonding, we hook the wisp root (which now contains the original bead)
-		var bondResult struct {
-			RootID string `json:"root_id"`
-		}
-		if err := json.Unmarshal(bondOut, &bondResult); err != nil {
-			// Fallback: use wisp root as the compound root
-			fmt.Printf("%s Could not parse bond output, using wisp root\n", style.Dim.Render("Warning:"))
-		} else if bondResult.RootID != "" {
-			wispRootID = bondResult.RootID
+		if bondResult != nil && bondResult.ID != "" {
+			wispRootID = bondResult.ID
 		}
 
 		fmt.Printf("%s Formula bonded to %s\n", style.Bold.Render("✓"), beadID)

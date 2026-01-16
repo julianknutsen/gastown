@@ -235,21 +235,3 @@ func TestMatrix_SlotShow(t *testing.T) {
 	})
 }
 
-func TestMatrix_Run(t *testing.T) {
-	RunSimpleConformanceTest(t, SimpleConformanceTest{
-		Name:      "Run",
-		Operation: "Run",
-		Test: func(ops beads.BeadsOps) error {
-			// Run with version command should work
-			out, err := ops.Run("version")
-			if err != nil {
-				// Run may fail in test env
-				return nil
-			}
-			if out == nil {
-				return fmt.Errorf("Run returned nil without error")
-			}
-			return nil
-		},
-	})
-}

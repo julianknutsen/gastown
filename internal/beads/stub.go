@@ -59,6 +59,7 @@ type BeadsStub struct {
 	SlotSetErr          error
 	SlotClearErr        error
 	SearchErr           error
+	MessageThreadErr    error
 	VersionErr          error
 	DoctorErr           error
 	PrimeErr            error
@@ -66,7 +67,6 @@ type BeadsStub struct {
 	FlushErr            error
 	BurnErr             error
 	CommentErr          error
-	RunErr              error
 }
 
 // NewBeadsStub creates a new BeadsStub wrapping the given BeadsOps.
@@ -546,6 +546,14 @@ func (s *BeadsStub) Search(query string, opts SearchOptions) ([]*Issue, error) {
 	return s.BeadsOps.Search(query, opts)
 }
 
+// MessageThread delegates to the wrapped implementation unless MessageThreadErr is set.
+func (s *BeadsStub) MessageThread(threadID string) ([]*Issue, error) {
+	if s.MessageThreadErr != nil {
+		return nil, s.MessageThreadErr
+	}
+	return s.BeadsOps.MessageThread(threadID)
+}
+
 // Version delegates to the wrapped implementation unless VersionErr is set.
 func (s *BeadsStub) Version() (string, error) {
 	if s.VersionErr != nil {
@@ -613,14 +621,6 @@ func (s *BeadsStub) Comment(id, message string) error {
 // IsBeadsRepo delegates to the wrapped implementation.
 func (s *BeadsStub) IsBeadsRepo() bool {
 	return s.BeadsOps.IsBeadsRepo()
-}
-
-// Run delegates to the wrapped implementation unless RunErr is set.
-func (s *BeadsStub) Run(args ...string) ([]byte, error) {
-	if s.RunErr != nil {
-		return nil, s.RunErr
-	}
-	return s.BeadsOps.Run(args...)
 }
 
 // Compile-time check that BeadsStub implements BeadsOps.

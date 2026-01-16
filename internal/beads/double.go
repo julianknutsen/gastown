@@ -1820,6 +1820,35 @@ func (d *Double) Search(query string, opts SearchOptions) ([]*Issue, error) {
 	return results, nil
 }
 
+// MessageThread returns all messages in a thread.
+func (d *Double) MessageThread(threadID string) ([]*Issue, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	if !d.db.isActive {
+		return nil, fmt.Errorf("not a beads repository")
+	}
+
+	var results []*Issue
+	for _, issue := range d.db.issues {
+		// Check if issue has thread:<threadID> label
+		for _, label := range issue.Labels {
+			if label == "thread:"+threadID {
+				issueCopy := *issue
+				results = append(results, &issueCopy)
+				break
+			}
+		}
+	}
+
+	// Sort by created_at ascending (oldest first for thread view)
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].CreatedAt < results[j].CreatedAt
+	})
+
+	return results, nil
+}
+
 // Flush flushes pending writes to the database.
 func (d *Double) Flush() error {
 	// Double has no pending writes to flush
@@ -1932,61 +1961,6 @@ func (d *Double) IsBeadsRepo() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.db.isActive
-}
-
-// Run executes an arbitrary bd command.
-// For the double, this parses basic commands and delegates to typed methods.
-func (d *Double) Run(args ...string) ([]byte, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("no command specified")
-	}
-
-	// Parse the first argument as the command
-	cmd := args[0]
-	rest := args[1:]
-
-	switch cmd {
-	case "list":
-		issues, err := d.List(ListOptions{})
-		if err != nil {
-			return nil, err
-		}
-		return marshalJSON(issues)
-	case "show":
-		if len(rest) == 0 {
-			return nil, fmt.Errorf("show requires an ID")
-		}
-		issue, err := d.Show(rest[0])
-		if err != nil {
-			return nil, err
-		}
-		return marshalJSON([]*Issue{issue})
-	case "ready":
-		issues, err := d.Ready()
-		if err != nil {
-			return nil, err
-		}
-		return marshalJSON(issues)
-	case "blocked":
-		issues, err := d.Blocked()
-		if err != nil {
-			return nil, err
-		}
-		return marshalJSON(issues)
-	case "version":
-		v, err := d.Version()
-		if err != nil {
-			return nil, err
-		}
-		return []byte(v), nil
-	default:
-		return nil, fmt.Errorf("unknown command: %s", cmd)
-	}
-}
-
-// marshalJSON is a helper for JSON marshaling.
-func marshalJSON(v interface{}) ([]byte, error) {
-	return []byte(fmt.Sprintf("%v", v)), nil
 }
 
 // Compile-time check that Double implements BeadsOps.

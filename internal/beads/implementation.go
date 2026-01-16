@@ -199,6 +199,15 @@ func (b *Implementation) List(opts ListOptions) ([]*Issue, error) {
 	if opts.MolType != "" {
 		args = append(args, "--mol-type="+opts.MolType)
 	}
+	if opts.DescContains != "" {
+		args = append(args, "--desc-contains="+opts.DescContains)
+	}
+	if opts.SortBy != "" {
+		args = append(args, "--sort="+opts.SortBy)
+	}
+	if opts.SortAsc {
+		args = append(args, "--asc")
+	}
 
 	out, err := b.run(args...)
 	if err != nil {
@@ -284,6 +293,9 @@ func (b *Implementation) Create(opts CreateOptions) (*Issue, error) {
 	if opts.Parent != "" {
 		args = append(args, "--parent="+opts.Parent)
 	}
+	if opts.Assignee != "" {
+		args = append(args, "--assignee="+opts.Assignee)
+	}
 	if opts.Ephemeral {
 		args = append(args, "--ephemeral")
 	}
@@ -349,6 +361,9 @@ func (b *Implementation) CreateWithID(id string, opts CreateOptions) (*Issue, er
 	}
 	if opts.Parent != "" {
 		args = append(args, "--parent="+opts.Parent)
+	}
+	if opts.Assignee != "" {
+		args = append(args, "--assignee="+opts.Assignee)
 	}
 	for _, label := range opts.Labels {
 		args = append(args, "--labels="+label)
@@ -1197,6 +1212,25 @@ func (b *Implementation) Search(query string, opts SearchOptions) ([]*Issue, err
 		return nil, fmt.Errorf("parsing bd search output: %w", err)
 	}
 
+	return issues, nil
+}
+
+// MessageThread returns all messages in a thread.
+// Uses bd message thread <threadID> --json to get all messages.
+func (b *Implementation) MessageThread(threadID string) ([]*Issue, error) {
+	out, err := b.run("message", "thread", threadID, "--json")
+	if err != nil {
+		return nil, err
+	}
+
+	var issues []*Issue
+	if err := json.Unmarshal(out, &issues); err != nil {
+		return nil, fmt.Errorf("parsing bd message thread output: %w", err)
+	}
+
+	if issues == nil {
+		return []*Issue{}, nil
+	}
 	return issues, nil
 }
 

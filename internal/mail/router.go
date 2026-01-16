@@ -1,13 +1,13 @@
 package mail
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -53,6 +53,11 @@ func NewRouterWithTownRoot(workDir, townRoot string) *Router {
 		townRoot: townRoot,
 		tmux:     tmux.NewTmux(),
 	}
+}
+
+// beadsOpsForDir returns a BeadsOps instance for the specified beadsDir.
+func (r *Router) beadsOpsForDir(beadsDir string) *beads.Implementation {
+	return beads.NewWithBeadsDir(filepath.Dir(beadsDir), beadsDir)
 }
 
 // isListAddress returns true if the address uses list:name syntax.
@@ -440,25 +445,28 @@ func (r *Router) resolveAgentsByRig(rig string) ([]string, error) {
 // queryAgents queries agent beads using bd list with description filtering.
 func (r *Router) queryAgents(descContains string) ([]*agentBead, error) {
 	beadsDir := r.resolveBeadsDir("")
-	args := []string{"list", "--type=agent", "--json", "--limit=0"}
+	b := r.beadsOpsForDir(beadsDir)
 
-	if descContains != "" {
-		args = append(args, "--desc-contains="+descContains)
+	opts := beads.ListOptions{
+		Type:         "agent",
+		Limit:        0, // No limit (bd default)
+		DescContains: descContains,
 	}
 
-	stdout, err := runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	issues, err := b.List(opts)
 	if err != nil {
 		return nil, fmt.Errorf("querying agents: %w", err)
 	}
 
-	var agents []*agentBead
-	if err := json.Unmarshal(stdout, &agents); err != nil {
-		return nil, fmt.Errorf("parsing agent query result: %w", err)
-	}
-
-	// Filter for open agents only (closed agents are inactive)
+	// Convert to agentBead and filter for open agents only
 	var active []*agentBead
-	for _, agent := range agents {
+	for _, issue := range issues {
+		agent := &agentBead{
+			ID:          issue.ID,
+			Title:       issue.Title,
+			Description: issue.Description,
+			Status:      issue.Status,
+		}
 		if agent.Status == "open" || agent.Status == "in_progress" {
 			active = append(active, agent)
 		}
@@ -579,32 +587,21 @@ func (r *Router) sendToSingle(msg *Message) error {
 		labels = append(labels, "cc:"+ccIdentity)
 	}
 
-	// Build command: bd create <subject> --type=message --assignee=<recipient> -d <body>
-	args := []string{"create", msg.Subject,
-		"--type", "message",
-		"--assignee", toIdentity,
-		"-d", msg.Body,
-	}
-
-	// Add priority flag
-	beadsPriority := PriorityToBeads(msg.Priority)
-	args = append(args, "--priority", fmt.Sprintf("%d", beadsPriority))
-
-	// Add labels
-	if len(labels) > 0 {
-		args = append(args, "--labels", strings.Join(labels, ","))
-	}
-
-	// Add actor for attribution (sender identity)
-	args = append(args, "--actor", msg.From)
-
-	// Add --ephemeral flag for ephemeral messages (stored in single DB, filtered from JSONL export)
-	if r.shouldBeWisp(msg) {
-		args = append(args, "--ephemeral")
+	// Build create options
+	opts := beads.CreateOptions{
+		Title:       msg.Subject,
+		Type:        "message",
+		Assignee:    toIdentity,
+		Description: msg.Body,
+		Priority:    PriorityToBeads(msg.Priority),
+		Labels:      labels,
+		Actor:       msg.From,
+		Ephemeral:   r.shouldBeWisp(msg),
 	}
 
 	beadsDir := r.resolveBeadsDir(msg.To)
-	_, err := runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	b := r.beadsOpsForDir(beadsDir)
+	_, err := b.Create(opts)
 	if err != nil {
 		return fmt.Errorf("sending message: %w", err)
 	}
@@ -689,32 +686,24 @@ func (r *Router) sendToQueue(msg *Message) error {
 		labels = append(labels, "cc:"+ccIdentity)
 	}
 
-	// Build command: bd create <subject> --type=message --assignee=queue:<name> -d <body>
+	// Build create options
 	// Use queue:<name> as assignee so inbox queries can filter by queue
-	args := []string{"create", msg.Subject,
-		"--type", "message",
-		"--assignee", msg.To, // queue:name
-		"-d", msg.Body,
-	}
-
-	// Add priority flag
-	beadsPriority := PriorityToBeads(msg.Priority)
-	args = append(args, "--priority", fmt.Sprintf("%d", beadsPriority))
-
-	// Add labels (includes queue name for filtering)
-	if len(labels) > 0 {
-		args = append(args, "--labels", strings.Join(labels, ","))
-	}
-
-	// Add actor for attribution (sender identity)
-	args = append(args, "--actor", msg.From)
-
 	// Queue messages are never ephemeral - they need to persist until claimed
-	// (deliberately not checking shouldBeWisp)
+	opts := beads.CreateOptions{
+		Title:       msg.Subject,
+		Type:        "message",
+		Assignee:    msg.To, // queue:name
+		Description: msg.Body,
+		Priority:    PriorityToBeads(msg.Priority),
+		Labels:      labels,
+		Actor:       msg.From,
+		Ephemeral:   false, // Queue messages are never ephemeral
+	}
 
 	// Queue messages go to town-level beads (shared location)
 	beadsDir := r.resolveBeadsDir("")
-	_, err = runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	b := r.beadsOpsForDir(beadsDir)
+	_, err = b.Create(opts)
 	if err != nil {
 		return fmt.Errorf("sending to queue %s: %w", queueName, err)
 	}
@@ -760,32 +749,24 @@ func (r *Router) sendToAnnounce(msg *Message) error {
 		labels = append(labels, "cc:"+ccIdentity)
 	}
 
-	// Build command: bd create <subject> --type=message --assignee=announce:<name> -d <body>
+	// Build create options
 	// Use announce:<name> as assignee so queries can filter by channel
-	args := []string{"create", msg.Subject,
-		"--type", "message",
-		"--assignee", msg.To, // announce:name
-		"-d", msg.Body,
-	}
-
-	// Add priority flag
-	beadsPriority := PriorityToBeads(msg.Priority)
-	args = append(args, "--priority", fmt.Sprintf("%d", beadsPriority))
-
-	// Add labels (includes announce name for filtering)
-	if len(labels) > 0 {
-		args = append(args, "--labels", strings.Join(labels, ","))
-	}
-
-	// Add actor for attribution (sender identity)
-	args = append(args, "--actor", msg.From)
-
 	// Announce messages are never ephemeral - they need to persist for readers
-	// (deliberately not checking shouldBeWisp)
+	opts := beads.CreateOptions{
+		Title:       msg.Subject,
+		Type:        "message",
+		Assignee:    msg.To, // announce:name
+		Description: msg.Body,
+		Priority:    PriorityToBeads(msg.Priority),
+		Labels:      labels,
+		Actor:       msg.From,
+		Ephemeral:   false, // Announce messages are never ephemeral
+	}
 
 	// Announce messages go to town-level beads (shared location)
 	beadsDir := r.resolveBeadsDir("")
-	_, err = runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	b := r.beadsOpsForDir(beadsDir)
+	_, err = b.Create(opts)
 	if err != nil {
 		return fmt.Errorf("sending to announce %s: %w", announceName, err)
 	}
@@ -803,44 +784,35 @@ func (r *Router) pruneAnnounce(announceName string, retainCount int) error {
 	}
 
 	beadsDir := r.resolveBeadsDir("")
+	b := r.beadsOpsForDir(beadsDir)
 
 	// Query existing messages in this announce channel
 	// Use bd list with labels filter to find messages with announce:<name> label
-	args := []string{"list",
-		"--type=message",
-		"--labels=announce:" + announceName,
-		"--json",
-		"--limit=0", // Get all
-		"--sort=created",
-		"--asc", // Oldest first
+	opts := beads.ListOptions{
+		Type:    "message",
+		Label:   "announce:" + announceName,
+		Limit:   0, // Get all (bd default)
+		SortBy:  "created",
+		SortAsc: true, // Oldest first
 	}
 
-	stdout, err := runBdCommand(args, filepath.Dir(beadsDir), beadsDir)
+	issues, err := b.List(opts)
 	if err != nil {
 		return fmt.Errorf("querying announce messages: %w", err)
-	}
-
-	// Parse message list
-	var messages []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(stdout, &messages); err != nil {
-		return fmt.Errorf("parsing announce messages: %w", err)
 	}
 
 	// Calculate how many to delete (we're about to add 1 more)
 	// If we have N messages and retainCount is R, we need to keep at most R-1 after pruning
 	// so the new message makes it exactly R
-	toDelete := len(messages) - (retainCount - 1)
+	toDelete := len(issues) - (retainCount - 1)
 	if toDelete <= 0 {
 		return nil // No pruning needed
 	}
 
 	// Delete oldest messages
-	for i := 0; i < toDelete && i < len(messages); i++ {
-		deleteArgs := []string{"close", messages[i].ID, "--reason=retention pruning"}
+	for i := 0; i < toDelete && i < len(issues); i++ {
 		// Best-effort deletion - don't fail if one delete fails
-		_, _ = runBdCommand(deleteArgs, filepath.Dir(beadsDir), beadsDir)
+		_ = b.CloseWithReason("retention pruning", issues[i].ID)
 	}
 
 	return nil

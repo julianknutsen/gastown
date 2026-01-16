@@ -211,6 +211,11 @@ type BeadsOps interface {
 	// Search searches issues by text query.
 	Search(query string, opts SearchOptions) ([]*Issue, error)
 
+	// === Message Operations ===
+
+	// MessageThread returns all messages in a thread.
+	MessageThread(threadID string) ([]*Issue, error)
+
 	// === Miscellaneous Operations ===
 
 	// Version returns the bd version.
@@ -239,9 +244,6 @@ type BeadsOps interface {
 
 	// IsBeadsRepo checks if the working directory is a beads repository.
 	IsBeadsRepo() bool
-
-	// Run executes an arbitrary bd command (escape hatch).
-	Run(args ...string) ([]byte, error)
 }
 
 // Compile-time check that Implementation implements BeadsOps.

@@ -555,6 +555,19 @@ func (r *TrueRawBdOps) Delete(ids ...string) error {
 	return err
 }
 
+func (r *TrueRawBdOps) DeleteWithOptions(opts beads.DeleteOptions, ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := []string{"delete"}
+	if opts.Force {
+		args = append(args, "--force")
+	}
+	args = append(args, ids...)
+	_, err := r.run(args...)
+	return err
+}
+
 func (r *TrueRawBdOps) Reopen(id string) error {
 	_, err := r.run("reopen", id)
 	return err
@@ -763,6 +776,7 @@ func (r *TrueRawBdOps) WispCreateWithOptions(opts beads.WispCreateOptions) (*bea
 func (r *TrueRawBdOps) WispList(all bool) ([]*beads.Issue, error)                             { return []*beads.Issue{}, nil }
 func (r *TrueRawBdOps) WispGC() error                                                         { return nil }
 func (r *TrueRawBdOps) MolBond(wispID, beadID string) (*beads.Issue, error)                   { return nil, nil }
+func (r *TrueRawBdOps) MolBurn(ids ...string) error                                           { return nil }
 func (r *TrueRawBdOps) GateShow(gateID string) (*beads.Gate, error)                           { return nil, nil }
 func (r *TrueRawBdOps) GateWait(gateID, notifyAgent string) error                             { return nil }
 func (r *TrueRawBdOps) GateList(all bool) ([]*beads.Gate, error)                              { return []*beads.Gate{}, nil }
@@ -781,9 +795,9 @@ func (r *TrueRawBdOps) SlotShow(id string) (*beads.Slot, error)                 
 func (r *TrueRawBdOps) SlotSet(agentID, slotName, beadID string) error                        { return nil }
 func (r *TrueRawBdOps) SlotClear(agentID, slotName string) error                              { return nil }
 func (r *TrueRawBdOps) Search(query string, opts beads.SearchOptions) ([]*beads.Issue, error) { return []*beads.Issue{}, nil }
+func (r *TrueRawBdOps) MessageThread(threadID string) ([]*beads.Issue, error)                 { return []*beads.Issue{}, nil }
 func (r *TrueRawBdOps) Doctor() (*beads.DoctorReport, error)                                  { return &beads.DoctorReport{Status: "ok"}, nil }
 func (r *TrueRawBdOps) Prime() (string, error)                                                { return "", nil }
 func (r *TrueRawBdOps) Flush() error                                                          { return nil }
 func (r *TrueRawBdOps) Burn(opts beads.BurnOptions) error                                     { return nil }
 func (r *TrueRawBdOps) IsBeadsRepo() bool                                                     { return true }
-func (r *TrueRawBdOps) Run(args ...string) ([]byte, error)                                    { return r.run(args...) }

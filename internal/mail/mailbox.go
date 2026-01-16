@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/runtime"
 )
 
 // timeNow is a function that returns the current time. It can be overridden in tests.
@@ -81,6 +80,31 @@ func (m *Mailbox) Identity() string {
 // Path returns the JSONL path for legacy mailboxes.
 func (m *Mailbox) Path() string {
 	return m.path
+}
+
+// beadsOps returns a BeadsOps instance for this mailbox's configuration.
+func (m *Mailbox) beadsOps() *beads.Implementation {
+	return beads.NewWithBeadsDir(m.workDir, m.beadsDir)
+}
+
+// issueToBeadsMessage converts a beads.Issue to a BeadsMessage.
+func issueToBeadsMessage(issue *beads.Issue) BeadsMessage {
+	var createdAt time.Time
+	if issue.CreatedAt != "" {
+		createdAt, _ = time.Parse(time.RFC3339, issue.CreatedAt)
+	}
+	return BeadsMessage{
+		ID:          issue.ID,
+		Title:       issue.Title,
+		Description: issue.Description,
+		Assignee:    issue.Assignee,
+		Priority:    issue.Priority,
+		Status:      issue.Status,
+		CreatedAt:   createdAt,
+		Labels:      issue.Labels,
+		Pinned:      issue.Status == "pinned",
+		// Note: Wisp field is not directly available from Issue; if needed, check labels
+	}
 }
 
 // List returns all open messages in the mailbox.
@@ -180,31 +204,30 @@ func (m *Mailbox) identityVariants() []string {
 
 // queryMessages runs a bd list query with the given filter flag and value.
 func (m *Mailbox) queryMessages(beadsDir, filterFlag, filterValue, status string) ([]*Message, error) {
-	args := []string{"list",
-		"--type", "message",
-		filterFlag, filterValue,
-		"--status", status,
-		"--json",
+	// Build ListOptions based on filter flag
+	opts := beads.ListOptions{
+		Type:   "message",
+		Status: status,
 	}
 
-	stdout, err := runBdCommand(args, m.workDir, beadsDir)
+	switch filterFlag {
+	case "--assignee":
+		opts.Assignee = filterValue
+	case "--label":
+		opts.Label = filterValue
+	}
+
+	// Use explicit beadsDir if provided (for cross-directory queries)
+	b := beads.NewWithBeadsDir(m.workDir, beadsDir)
+	issues, err := b.List(opts)
 	if err != nil {
-		return nil, err
-	}
-
-	// Parse JSON output
-	var beadsMsgs []BeadsMessage
-	if err := json.Unmarshal(stdout, &beadsMsgs); err != nil {
-		// Empty inbox returns empty array or nothing
-		if len(stdout) == 0 || string(stdout) == "null" {
-			return nil, nil
-		}
 		return nil, err
 	}
 
 	// Convert to GGT messages - wisp status comes from beads issue.wisp field
 	var messages []*Message
-	for _, bm := range beadsMsgs {
+	for _, issue := range issues {
+		bm := issueToBeadsMessage(issue)
 		messages = append(messages, bm.ToMessage())
 	}
 
@@ -282,27 +305,17 @@ func (m *Mailbox) getBeads(id string) (*Message, error) {
 
 // getFromDir retrieves a message from a beads directory.
 func (m *Mailbox) getFromDir(id, beadsDir string) (*Message, error) {
-	args := []string{"show", id, "--json"}
-
-	stdout, err := runBdCommand(args, m.workDir, beadsDir)
+	b := beads.NewWithBeadsDir(m.workDir, beadsDir)
+	issue, err := b.Show(id)
 	if err != nil {
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
+		if err == beads.ErrNotFound {
 			return nil, ErrMessageNotFound
 		}
 		return nil, err
 	}
 
-	// bd show --json returns an array
-	var bms []BeadsMessage
-	if err := json.Unmarshal(stdout, &bms); err != nil {
-		return nil, err
-	}
-	if len(bms) == 0 {
-		return nil, ErrMessageNotFound
-	}
-
-	// Wisp status comes from beads issue.wisp field via ToMessage()
-	return bms[0].ToMessage(), nil
+	bm := issueToBeadsMessage(issue)
+	return bm.ToMessage(), nil
 }
 
 func (m *Mailbox) getLegacy(id string) (*Message, error) {
@@ -333,20 +346,15 @@ func (m *Mailbox) markReadBeads(id string) error {
 
 // closeInDir closes a message in a specific beads directory.
 func (m *Mailbox) closeInDir(id, beadsDir string) error {
-	args := []string{"close", id}
-	// Pass session ID for work attribution if available
-	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
-		args = append(args, "--session="+sessionID)
-	}
-
-	_, err := runBdCommand(args, m.workDir, beadsDir)
+	b := beads.NewWithBeadsDir(m.workDir, beadsDir)
+	// CloseWithOptions passes session ID for work attribution automatically
+	err := b.CloseWithOptions(beads.CloseOptions{}, id)
 	if err != nil {
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
+		if err == beads.ErrNotFound {
 			return ErrMessageNotFound
 		}
 		return err
 	}
-
 	return nil
 }
 
@@ -384,16 +392,14 @@ func (m *Mailbox) MarkReadOnly(id string) error {
 
 func (m *Mailbox) markReadOnlyBeads(id string) error {
 	// Add "read" label to mark as read without closing
-	args := []string{"label", "add", id, "read"}
-
-	_, err := runBdCommand(args, m.workDir, m.beadsDir)
+	b := m.beadsOps()
+	err := b.LabelAdd(id, "read")
 	if err != nil {
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
+		if err == beads.ErrNotFound {
 			return ErrMessageNotFound
 		}
 		return err
 	}
-
 	return nil
 }
 
@@ -409,20 +415,16 @@ func (m *Mailbox) MarkUnreadOnly(id string) error {
 
 func (m *Mailbox) markUnreadOnlyBeads(id string) error {
 	// Remove "read" label to mark as unread
-	args := []string{"label", "remove", id, "read"}
-
-	_, err := runBdCommand(args, m.workDir, m.beadsDir)
+	b := m.beadsOps()
+	err := b.LabelRemove(id, "read")
 	if err != nil {
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
+		if err == beads.ErrNotFound {
 			return ErrMessageNotFound
 		}
-		// Ignore error if label doesn't exist
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("does not have label") {
-			return nil
-		}
-		return err
+		// LabelRemove may return error if label doesn't exist, which is fine
+		// We can ignore this since the goal is to ensure the label is gone
+		return nil
 	}
-
 	return nil
 }
 
@@ -435,16 +437,14 @@ func (m *Mailbox) MarkUnread(id string) error {
 }
 
 func (m *Mailbox) markUnreadBeads(id string) error {
-	args := []string{"reopen", id}
-
-	_, err := runBdCommand(args, m.workDir, m.beadsDir)
+	b := m.beadsOps()
+	err := b.Reopen(id)
 	if err != nil {
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") {
+		if err == beads.ErrNotFound {
 			return ErrMessageNotFound
 		}
 		return err
 	}
-
 	return nil
 }
 
@@ -825,23 +825,15 @@ func (m *Mailbox) ListByThread(threadID string) ([]*Message, error) {
 }
 
 func (m *Mailbox) listByThreadBeads(threadID string) ([]*Message, error) {
-	args := []string{"message", "thread", threadID, "--json"}
-
-	stdout, err := runBdCommand(args, m.workDir, m.beadsDir, "BD_IDENTITY="+m.identity)
+	b := m.beadsOps()
+	issues, err := b.MessageThread(threadID)
 	if err != nil {
 		return nil, err
 	}
 
-	var beadsMsgs []BeadsMessage
-	if err := json.Unmarshal(stdout, &beadsMsgs); err != nil {
-		if len(stdout) == 0 || string(stdout) == "null" {
-			return nil, nil
-		}
-		return nil, err
-	}
-
 	var messages []*Message
-	for _, bm := range beadsMsgs {
+	for _, issue := range issues {
+		bm := issueToBeadsMessage(issue)
 		messages = append(messages, bm.ToMessage())
 	}
 

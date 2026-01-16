@@ -73,11 +73,14 @@ type ListOptions struct {
 	Parent       string   // filter by parent ID
 	Assignee     string   // filter by assignee (e.g., "gastown/Toast")
 	NoAssignee   bool     // filter for issues with no assignee
-	Limit        int      // max issues to return (0 = default)
+	Limit        int      // max issues to return (0 = default, meaning use bd default)
 	Tag          string   // tag filter (e.g., "escalation")
 	CreatedAfter string   // filter for issues created after this time (e.g., "-1h", "-24h")
 	All          bool     // include closed issues
 	MolType      string   // molecule type filter (e.g., "swarm", "patrol")
+	DescContains string   // filter by description contains
+	SortBy       string   // sort field (e.g., "created")
+	SortAsc      bool     // sort ascending (default is descending)
 }
 
 // CreateOptions specifies options for creating an issue.
@@ -87,6 +90,7 @@ type CreateOptions struct {
 	Priority    int    // 0-4
 	Description string
 	Parent      string
+	Assignee    string   // Who this issue is assigned to
 	Actor       string   // Who is creating this issue (populates created_by)
 	Ephemeral   bool     // Create as ephemeral (wisp) - not exported to JSONL
 	Labels      []string // Additional labels to add

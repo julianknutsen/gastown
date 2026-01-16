@@ -90,15 +90,14 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		}
 
 		// Hook the bead. See: https://github.com/steveyegge/gastown/issues/148
-		// Use BeadsOps interface
-		// cmd.Dir = beads.ResolveHookDir(...) - REQUIRED for correct beads directory
-		// BEADS_DIR was N/A - not set
-		// NOTE: Using Run because --no-daemon flag bypasses daemon routing
 		townRoot := filepath.Dir(townBeadsDir)
 		hookDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 		bHook := beads.New(hookDir)
-		hookArgs := []string{"--no-daemon", "update", beadID, "--status=hooked", "--assignee=" + targetAgent}
-		if _, err := bHook.Run(hookArgs...); err != nil {
+		hookedStatus := "hooked"
+		if err := bHook.Update(beadID, beads.UpdateOptions{
+			Status:   &hookedStatus,
+			Assignee: &targetAgent,
+		}); err != nil {
 			results = append(results, slingResult{beadID: beadID, polecat: spawnInfo.PolecatName, success: false, errMsg: "hook failed"})
 			fmt.Printf("  %s Failed to hook bead: %v\n", style.Dim.Render("✗"), err)
 			continue
