@@ -254,17 +254,17 @@ func TestDoneCircularRedirectProtection(t *testing.T) {
 // contain the actual issue ID (test-845.1), but the agent's hook does.
 func TestGetIssueFromAgentHook(t *testing.T) {
 	tests := []struct {
-		name        string
-		agentBeadID string
-		setupBeads  func(t *testing.T, bd *beads.Beads) // setup agent bead with hook
-		wantIssueID string
+		name         string
+		agentBeadID  string
+		setupBeads   func(t *testing.T, bd *beads.Beads) // setup agent bead with hook
+		wantIssueID  string
 	}{
 		{
 			name:        "agent with hook_bead returns issue ID",
 			agentBeadID: "test-testrig-polecat-furiosa",
 			setupBeads: func(t *testing.T, bd *beads.Beads) {
 				// Create a task that will be hooked
-				_, err := bd.CreateWithID("test-task-123", beads.CreateOptions{
+				_, err := bd.CreateWithID("test-456", beads.CreateOptions{
 					Title: "Task to be hooked",
 					Type:  "task",
 				})
@@ -280,11 +280,11 @@ func TestGetIssueFromAgentHook(t *testing.T) {
 				}
 
 				// Set hook_bead on agent
-				if err := bd.SetHookBead("test-testrig-polecat-furiosa", "test-task-123"); err != nil {
+				if err := bd.SetHookBead("test-testrig-polecat-furiosa", "test-456"); err != nil {
 					t.Fatalf("set hook bead: %v", err)
 				}
 			},
-			wantIssueID: "test-task-123",
+			wantIssueID: "test-456",
 		},
 		{
 			name:        "agent without hook_bead returns empty",
