@@ -764,12 +764,16 @@ func (b *Implementation) MolCurrent(moleculeID string) (*MolCurrentOutput, error
 		return nil, err
 	}
 
-	var step MolCurrentOutput
-	if err := json.Unmarshal(out, &step); err != nil {
+	// bd mol current returns an array with one element
+	var steps []MolCurrentOutput
+	if err := json.Unmarshal(out, &steps); err != nil {
 		return nil, fmt.Errorf("parsing bd mol current output: %w", err)
 	}
+	if len(steps) == 0 {
+		return nil, nil
+	}
 
-	return &step, nil
+	return &steps[0], nil
 }
 
 // MolCatalog lists available molecule prototypes.

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,52 +10,21 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 )
 
-// MoleculeCurrentOutput represents the JSON output of bd mol current.
-type MoleculeCurrentOutput struct {
-	MoleculeID    string `json:"molecule_id"`
-	MoleculeTitle string `json:"molecule_title"`
-	NextStep      *struct {
-		ID          string `json:"id"`
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Status      string `json:"status"`
-	} `json:"next_step"`
-	Completed int `json:"completed"`
-	Total     int `json:"total"`
-}
-
 // showMoleculeExecutionPrompt calls bd mol current and shows the current step
 // with execution instructions. This is the core of the Propulsion Principle.
 func showMoleculeExecutionPrompt(workDir, moleculeID string) {
-	// Use BeadsOps interface
-	// cmd.Dir was REQUIRED - operating on specific workDir
-	// NOTE: Using Run because MolCurrentOutput type mismatch and need --no-daemon
 	b := beads.New(workDir)
-	stdout, err := b.Run("--no-daemon", "mol", "current", moleculeID, "--json")
+	output, err := b.MolCurrent(moleculeID)
 
-	if err != nil {
-		// Fall back to simple message if bd mol current fails
+	if err != nil || output == nil {
+		// Fall back to simple message if bd mol current fails or returns nothing
 		fmt.Println(style.Bold.Render("→ PROPULSION PRINCIPLE: Work is on your hook. RUN IT."))
 		fmt.Println("  Begin working on this molecule immediately.")
-		fmt.Printf("  Check status with: bd mol current %s\n", moleculeID)
+		if err != nil {
+			fmt.Printf("  Check status with: bd mol current %s\n", moleculeID)
+		}
 		return
 	}
-	// Handle bd --no-daemon exit 0 bug: empty stdout means not found
-	if len(stdout) == 0 {
-		fmt.Println(style.Bold.Render("→ PROPULSION PRINCIPLE: Work is on your hook. RUN IT."))
-		fmt.Println("  Begin working on this molecule immediately.")
-		return
-	}
-
-	// Parse JSON output - it's an array with one element
-	var outputs []MoleculeCurrentOutput
-	if err := json.Unmarshal(stdout, &outputs); err != nil || len(outputs) == 0 {
-		// Fall back to simple message
-		fmt.Println(style.Bold.Render("→ PROPULSION PRINCIPLE: Work is on your hook. RUN IT."))
-		fmt.Println("  Begin working on this molecule immediately.")
-		return
-	}
-	output := outputs[0]
 
 	// Show molecule progress
 	fmt.Printf("**Progress:** %d/%d steps complete\n\n",
