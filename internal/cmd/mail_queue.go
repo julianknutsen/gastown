@@ -1,11 +1,8 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -137,26 +134,20 @@ type queueMessage struct {
 // listUnclaimedQueueMessages lists unclaimed messages in a queue.
 // Unclaimed messages have queue:<name> label but no claimed-by label.
 func listUnclaimedQueueMessages(beadsDir, queueName string) ([]queueMessage, error) {
+	// Use BeadsOps interface
+	// cmd.Dir was N/A - ran from cwd
+	// BEADS_DIR = beadsDir - REQUIRED for explicit beads directory
+	// NOTE: Using Run because ListOptions doesn't support --label filter
+	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+
 	// Use bd list to find messages with queue:<name> label and status=open
-	args := []string{"list",
-		"--label", "queue:" + queueName,
+	output, err := b.Run("list",
+		"--label", "queue:"+queueName,
 		"--status", "open",
 		"--type", "message",
 		"--json",
-	}
-
-	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return nil, fmt.Errorf("%s", errMsg)
-		}
+	)
+	if err != nil {
 		return nil, err
 	}
 
@@ -170,9 +161,10 @@ func listUnclaimedQueueMessages(beadsDir, queueName string) ([]queueMessage, err
 		Priority    int       `json:"priority"`
 	}
 
-	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
+	if err := json.Unmarshal(output, &issues); err != nil {
 		// If no messages, bd might output empty or error
-		if strings.TrimSpace(stdout.String()) == "" || strings.TrimSpace(stdout.String()) == "[]" {
+		outputStr := strings.TrimSpace(string(output))
+		if outputStr == "" || outputStr == "[]" {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("parsing bd output: %w", err)
@@ -219,31 +211,19 @@ func listUnclaimedQueueMessages(beadsDir, queueName string) ([]queueMessage, err
 
 // claimQueueMessage claims a message by adding claimed-by and claimed-at labels.
 func claimQueueMessage(beadsDir, messageID, claimant string) error {
+	// Use BeadsOps interface
+	// cmd.Dir was N/A - ran from cwd
+	// BEADS_DIR = beadsDir - REQUIRED for explicit beads directory
+	// NOTE: BD_ACTOR was set to claimant, but not supported by interface - omitted
+	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	args := []string{"label", "add", messageID,
-		"claimed-by:" + claimant,
-		"claimed-at:" + now,
-	}
-
-	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(),
-		"BEADS_DIR="+beadsDir,
-		"BD_ACTOR="+claimant,
+	_, err := b.Run("label", "add", messageID,
+		"claimed-by:"+claimant,
+		"claimed-at:"+now,
 	)
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return fmt.Errorf("%s", errMsg)
-		}
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // runMailRelease releases a claimed queue message back to its queue.
@@ -304,35 +284,28 @@ type queueMessageInfo struct {
 
 // getQueueMessageInfo retrieves information about a queue message.
 func getQueueMessageInfo(beadsDir, messageID string) (*queueMessageInfo, error) {
-	args := []string{"show", messageID, "--json"}
+	// Use BeadsOps interface
+	// cmd.Dir was N/A - ran from cwd
+	// BEADS_DIR = beadsDir - REQUIRED for explicit beads directory
+	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
 
-	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if strings.Contains(errMsg, "not found") {
+	output, err := b.Run("show", messageID, "--json")
+	if err != nil {
+		if strings.Contains(string(output), "not found") {
 			return nil, fmt.Errorf("message not found: %s", messageID)
-		}
-		if errMsg != "" {
-			return nil, fmt.Errorf("%s", errMsg)
 		}
 		return nil, err
 	}
 
 	// Parse JSON output - bd show --json returns an array
 	var issues []struct {
-		ID       string   `json:"id"`
-		Title    string   `json:"title"`
-		Labels   []string `json:"labels"`
-		Status   string   `json:"status"`
+		ID     string   `json:"id"`
+		Title  string   `json:"title"`
+		Labels []string `json:"labels"`
+		Status string   `json:"status"`
 	}
 
-	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
+	if err := json.Unmarshal(output, &issues); err != nil {
 		return nil, fmt.Errorf("parsing message: %w", err)
 	}
 
@@ -366,6 +339,12 @@ func getQueueMessageInfo(beadsDir, messageID string) (*queueMessageInfo, error) 
 
 // releaseQueueMessage releases a claimed message by removing claim labels.
 func releaseQueueMessage(beadsDir, messageID, actor string) error {
+	// Use BeadsOps interface
+	// cmd.Dir was N/A - ran from cwd
+	// BEADS_DIR = beadsDir - REQUIRED for explicit beads directory
+	// NOTE: BD_ACTOR was set to actor, but not supported by interface - omitted
+	b := beads.NewWithBeadsDir(beadsDir, beadsDir)
+
 	// Get current message info to find the exact claim labels
 	info, err := getQueueMessageInfo(beadsDir, messageID)
 	if err != nil {
@@ -374,18 +353,9 @@ func releaseQueueMessage(beadsDir, messageID, actor string) error {
 
 	// Remove claimed-by label
 	if info.ClaimedBy != "" {
-		args := []string{"label", "remove", messageID, "claimed-by:" + info.ClaimedBy}
-		cmd := exec.Command("bd", args...)
-		cmd.Env = append(os.Environ(),
-			"BEADS_DIR="+beadsDir,
-			"BD_ACTOR="+actor,
-		)
-
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-
-		if err := cmd.Run(); err != nil {
-			errMsg := strings.TrimSpace(stderr.String())
+		output, err := b.Run("label", "remove", messageID, "claimed-by:"+info.ClaimedBy)
+		if err != nil {
+			errMsg := strings.TrimSpace(string(output))
 			if errMsg != "" && !strings.Contains(errMsg, "does not have label") {
 				return fmt.Errorf("%s", errMsg)
 			}
@@ -395,18 +365,9 @@ func releaseQueueMessage(beadsDir, messageID, actor string) error {
 	// Remove claimed-at label if present
 	if info.ClaimedAt != nil {
 		claimedAtStr := info.ClaimedAt.Format(time.RFC3339)
-		args := []string{"label", "remove", messageID, "claimed-at:" + claimedAtStr}
-		cmd := exec.Command("bd", args...)
-		cmd.Env = append(os.Environ(),
-			"BEADS_DIR="+beadsDir,
-			"BD_ACTOR="+actor,
-		)
-
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-
-		if err := cmd.Run(); err != nil {
-			errMsg := strings.TrimSpace(stderr.String())
+		output, err := b.Run("label", "remove", messageID, "claimed-at:"+claimedAtStr)
+		if err != nil {
+			errMsg := strings.TrimSpace(string(output))
 			if errMsg != "" && !strings.Contains(errMsg, "does not have label") {
 				return fmt.Errorf("%s", errMsg)
 			}

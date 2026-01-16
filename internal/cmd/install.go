@@ -355,11 +355,13 @@ func writeJSON(path string, data interface{}) error {
 // initTownBeads initializes town-level beads database using bd init.
 // Town beads use the "hq-" prefix for mayor mail and cross-rig coordination.
 func initTownBeads(townPath string) error {
-	// Run: bd init --prefix hq
-	cmd := exec.Command("bd", "init", "--prefix", "hq")
-	cmd.Dir = townPath
+	// Use BeadsOps interface
+	// cmd.Dir = townPath - REQUIRED for operating on specific townPath
+	// BEADS_DIR was N/A - not set
+	b := beads.New(townPath)
 
-	output, err := cmd.CombinedOutput()
+	// Run: bd init --prefix hq
+	output, err := b.Run("init", "--prefix", "hq")
 	if err != nil {
 		// Check if beads is already initialized
 		if strings.Contains(string(output), "already initialized") {
@@ -371,11 +373,9 @@ func initTownBeads(townPath string) error {
 
 	// Configure custom types for Gas Town (agent, role, rig, convoy, slot).
 	// These were extracted from beads core in v0.46.0 and now require explicit config.
-	configCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-	configCmd.Dir = townPath
-	if configOutput, configErr := configCmd.CombinedOutput(); configErr != nil {
+	if err := b.ConfigSet("types.custom", constants.BeadsCustomTypes); err != nil {
 		// Non-fatal: older beads versions don't need this, newer ones do
-		fmt.Printf("   %s Could not set custom types: %s\n", style.Dim.Render("⚠"), strings.TrimSpace(string(configOutput)))
+		fmt.Printf("   %s Could not set custom types: %v\n", style.Dim.Render("⚠"), err)
 	}
 
 	// Ensure database has repository fingerprint (GH #25).
@@ -417,9 +417,11 @@ func initTownBeads(townPath string) error {
 // has a repository fingerprint. Legacy databases (pre-0.17.5) lack this, which
 // prevents the daemon from starting properly.
 func ensureRepoFingerprint(beadsPath string) error {
-	cmd := exec.Command("bd", "migrate", "--update-repo-id")
-	cmd.Dir = beadsPath
-	output, err := cmd.CombinedOutput()
+	// Use BeadsOps interface
+	// cmd.Dir = beadsPath - REQUIRED for operating on specific beadsPath
+	// BEADS_DIR was N/A - not set
+	b := beads.New(beadsPath)
+	output, err := b.Run("migrate", "--update-repo-id")
 	if err != nil {
 		return fmt.Errorf("bd migrate --update-repo-id: %s", strings.TrimSpace(string(output)))
 	}
@@ -431,11 +433,12 @@ func ensureRepoFingerprint(beadsPath string) error {
 // Gas Town needs custom types: agent, role, rig, convoy, slot.
 // This is idempotent - safe to call multiple times.
 func ensureCustomTypes(beadsPath string) error {
-	cmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-	cmd.Dir = beadsPath
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("bd config set types.custom: %s", strings.TrimSpace(string(output)))
+	// Use BeadsOps interface
+	// cmd.Dir = beadsPath - REQUIRED for operating on specific beadsPath
+	// BEADS_DIR was N/A - not set
+	b := beads.New(beadsPath)
+	if err := b.ConfigSet("types.custom", constants.BeadsCustomTypes); err != nil {
+		return fmt.Errorf("bd config set types.custom: %w", err)
 	}
 	return nil
 }
@@ -550,11 +553,12 @@ func ensureBeadsCustomTypes(workDir string, types []string) error {
 		return nil
 	}
 
-	cmd := exec.Command("bd", "config", "set", "types.custom", strings.Join(types, ","))
-	cmd.Dir = workDir
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("bd config set types.custom failed: %s", strings.TrimSpace(string(output)))
+	// Use BeadsOps interface
+	// cmd.Dir = workDir - REQUIRED for operating on specific workDir
+	// BEADS_DIR was N/A - not set
+	b := beads.New(workDir)
+	if err := b.ConfigSet("types.custom", strings.Join(types, ",")); err != nil {
+		return fmt.Errorf("bd config set types.custom failed: %w", err)
 	}
 	return nil
 }
