@@ -72,7 +72,6 @@ type ListOptions struct {
 	Priority     int      // 0-4, -1 for no filter
 	Parent       string   // filter by parent ID
 	Assignee     string   // filter by assignee (e.g., "gastown/Toast")
-	NoAssignee   bool     // filter for issues with no assignee
 	Limit        int      // max issues to return (0 = default, meaning use bd default)
 	Tag          string   // tag filter (e.g., "escalation")
 	CreatedAfter string   // filter for issues created after this time (e.g., "-1h", "-24h")

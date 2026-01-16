@@ -4,81 +4,100 @@ Analysis of 343+ production calls across 67+ files (excluding tests).
 
 ## Executive Summary
 
-The BeadsOps interface carries **14+ unused or underused parameters** across its option structs. Removing these would improve API clarity and maintainability.
+After thorough analysis and attempted removal of "unused" parameters, only **1 field** was confirmed as truly unused: `ListOptions.NoAssignee`. All other fields that appeared unused in grep analysis were actually used in production.
 
-## Unused Parameters (Safe to Remove)
+## Removed Parameters
 
-### Completely Unused (0 production calls)
+### ListOptions.NoAssignee
+- **Status**: Removed
+- **Reason**: Zero production callers. Callers filter assignee differently (checking for empty assignee in results).
 
-| Struct | Field | Notes |
-|--------|-------|-------|
-| `ListOptions` | `NoAssignee` | Callers filter assignee differently |
-| `ListOptions` | `SortAsc` | Never used |
-| `UpdateOptions` | `Unassign` | Callers use `Assignee = nil` instead |
-| `UpdateOptions` | `AddLabels` | Callers use `SetLabels` instead |
-| `UpdateOptions` | `RemoveLabels` | Callers use `SetLabels` instead |
-| `CloseOptions` | `Force` | Never used |
-| `CreateOptions` | `MolType` | Never used |
+## Parameters That Appeared Unused But Are Actually Used
 
-### Almost Never Used (1-2 calls - remove)
+The initial audit incorrectly identified these as unused. Build failures revealed actual production usage:
 
-| Struct | Field | Uses | Location |
-|--------|-------|------|----------|
-| `ListOptions` | `Tag` | 1 | beads_dog.go (likely dead code) |
-| `ListOptions` | `CreatedAfter` | 1 | plugin/recording.go |
-| `ListOptions` | `All` | 1 | plugin/recording.go |
-| `ListOptions` | `MolType` | 2 | implementation.go only |
-| `ListOptions` | `DescContains` | 1 | implementation.go only |
-| `ListOptions` | `SortBy` | 1 | implementation.go only |
+| Struct | Field | Actual Usage |
+|--------|-------|--------------|
+| `ListOptions.Tag` | prime.go, beads_dog.go |
+| `ListOptions.CreatedAfter` | plugin/recording.go |
+| `ListOptions.All` | plugin/recording.go |
+| `ListOptions.MolType` | swarm.go |
+| `ListOptions.DescContains` | mail/router.go |
+| `ListOptions.SortBy` | mail/router.go |
+| `ListOptions.SortAsc` | mail/router.go |
+| `UpdateOptions.Unassign` | crew_lifecycle.go |
+| `UpdateOptions.AddLabels` | beads_escalation.go |
+| `UpdateOptions.RemoveLabels` | beads_escalation.go |
+| `CloseOptions.Force` | hook.go |
+| `CreateOptions.MolType` | swarm.go |
 
-## Actively Used Parameters (Keep)
+## Actively Used Parameters (All Kept)
 
-### ListOptions (126 calls)
+### ListOptions
+| Field | Notes |
+|-------|-------|
+| `Status` | Core - "open", "closed", "all", "hooked", "in_progress" |
+| `Type` | Core - "agent", "molecule", "task", "merge-request" |
+| `Priority` | Common - -1 for no filter, 0-4 values |
+| `Label/Labels` | Moderate use |
+| `Assignee` | Light use |
+| `Parent` | Light use |
+| `Limit` | Rarely set |
+| `Tag` | prime.go |
+| `CreatedAfter` | plugin/recording.go |
+| `All` | plugin/recording.go |
+| `MolType` | swarm.go |
+| `DescContains` | mail/router.go |
+| `SortBy` | mail/router.go |
+| `SortAsc` | mail/router.go |
 
-| Field | Uses | Notes |
-|-------|------|-------|
-| `Status` | 111 | Core - "open", "closed", "all", "hooked", "in_progress" |
-| `Type` | 52 | Core - "agent", "molecule", "task", "merge-request" |
-| `Priority` | 27 | Common - -1 for no filter, 0-4 values |
-| `Label/Labels` | 30+ | Moderate use |
-| `Assignee` | 7 | Light use |
-| `Parent` | 3 | Light use |
-| `Limit` | 9 | Rarely set |
+### CreateOptions
+| Field | Notes |
+|-------|-------|
+| `Title` | Required |
+| `Type` | Required |
+| `Priority` | Common |
+| `Description` | Moderate |
+| `Parent` | handoff.go, molecule.go |
+| `Assignee` | Light |
+| `Actor` | Provenance tracking |
+| `Ephemeral` | Wisps |
+| `Labels` | mail/router.go |
+| `MolType` | swarm.go |
+| `EventCategory` | costs.go |
+| `EventActor` | costs.go |
+| `EventPayload` | costs.go |
+| `EventTarget` | costs.go |
 
-### CreateOptions (23 calls)
+### UpdateOptions
+| Field | Notes |
+|-------|-------|
+| `Title` | Moderate |
+| `Status` | Core |
+| `Priority` | Moderate |
+| `Description` | Light |
+| `Assignee` | Light |
+| `Unassign` | crew_lifecycle.go |
+| `AddLabels` | beads_escalation.go |
+| `RemoveLabels` | beads_escalation.go |
+| `SetLabels` | Various |
+| `Notes` | Minimal |
 
-| Field | Uses | Notes |
-|-------|------|-------|
-| `Type` | 52 | Required |
-| `Title` | 16 | Required |
-| `Priority` | 27 | Common |
-| `Description` | 6 | Moderate |
-| `Assignee` | 7 | Light |
-| `Ephemeral` | 4 | Wisps |
-| `EventCategory` | 4 | costs.go |
-| `Labels` | 3+ | mail/router.go |
-| `Parent` | 3 | handoff.go, molecule.go only |
+### CloseOptions
+| Field | Notes |
+|-------|-------|
+| `Reason` | "merged", "retention pruning", "rejected" |
+| `Session` | Audit trail |
+| `Force` | hook.go (closing pinned issues) |
 
-### UpdateOptions (68 calls)
+## Redundant Method Variants
 
-| Field | Uses | Notes |
-|-------|------|-------|
-| `Status` | 111 | Core |
-| `Title` | 16 | Moderate |
-| `Priority` | 27 | Moderate |
-| `Description` | 6 | Light |
-| `Assignee` | 7 | Light |
-| `SetLabels` | 1 | Replaces AddLabels/RemoveLabels |
-| `Notes` | 2 | Minimal |
+| Method | Status | Notes |
+|--------|--------|-------|
+| `DeleteWithOptions` | Keep | Part of interface, may be needed for future use |
+| `CloseWithOptions` | Keep | Used in swarm.go, polecat.go, hook.go, crew_lifecycle.go, synthesis.go |
 
-### CloseOptions (12 calls)
-
-| Field | Uses | Notes |
-|-------|------|-------|
-| `Reason` | 11 | "merged", "retention pruning", "rejected" |
-| `Session` | 2 | Audit trail |
-
-## Methods with Good Design (No Changes Needed)
+## Methods with Good Design
 
 These methods have no options structs - clean, simple APIs:
 
@@ -87,70 +106,17 @@ These methods have no options structs - clean, simple APIs:
 - `ReadyWithLabel(label, limit)` - 1 call
 - `Close(ids ...string)` - basic variant
 
-## Redundant Method Variants
+## Lessons Learned
 
-| Method | Calls | Issue |
-|--------|-------|-------|
-| `CloseWithOptions` | 1 | Always called with empty options, use `CloseWithReason` instead |
-| `DeleteWithOptions` | 0 | Production uses `Delete()` directly |
+1. **Grep-based analysis is insufficient**: Static grep analysis missed callers because:
+   - Field names appear in struct literals without explicit field names
+   - Callers may use different variable names
+   - Some files were excluded from the initial search
 
-## Recommendations
+2. **Build verification is essential**: Attempting to remove "unused" fields immediately reveals actual dependencies through build failures.
 
-### High Priority (Remove unused fields)
-
-```go
-// ListOptions: Remove these fields
-- NoAssignee bool
-- SortAsc bool
-- Tag string
-- CreatedAfter time.Time
-- All bool
-- MolType string
-- DescContains string
-- SortBy string
-
-// UpdateOptions: Remove these fields
-- Unassign bool
-- AddLabels []string
-- RemoveLabels []string
-
-// CloseOptions: Remove this field
-- Force bool
-
-// CreateOptions: Remove this field
-- MolType string
-```
-
-### Medium Priority (Design improvements)
-
-1. **CreateOptions.Parent** - Only 3 uses. Consider separate `CreateChildIssue()` method.
-2. **CloseWithOptions** - Consider removing, always called with empty options.
-3. **DeleteWithOptions** - Consider removing, zero production uses.
-
-### Low Priority
-
-1. Review if `ListOptions.Limit` default behavior is correct (rarely set).
-
-## Call Distribution by File
-
-### Top List() Callers
-- mailbox.go (10)
-- rig.go (9)
-- molecule_status.go (7)
-- convoy.go (5)
-
-### Top Update() Callers
-- handoff.go (6)
-- engineer.go (5)
-- beads_channel.go (5)
-- beads_agent.go (5)
-
-### Top Show() Callers
-- Distributed across validation code
-- hook_check.go
-- engineer.go
-- handoff.go
+3. **Conservative approach preferred**: Keep parameters that have any production usage, even if infrequent.
 
 ## Conclusion
 
-**14 fields can be removed** from option structs with zero impact on production code. The `Show()` method's design (no options, single parameter) should be the template for other simple operations.
+Only `ListOptions.NoAssignee` was confirmed as truly unused and removed. All other option struct fields are used in production and remain in the API.

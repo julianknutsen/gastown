@@ -186,9 +186,6 @@ func (b *Implementation) List(opts ListOptions) ([]*Issue, error) {
 	if opts.Assignee != "" {
 		args = append(args, "--assignee="+opts.Assignee)
 	}
-	if opts.NoAssignee {
-		args = append(args, "--no-assignee")
-	}
 	if opts.Limit > 0 {
 		args = append(args, fmt.Sprintf("--limit=%d", opts.Limit))
 	}
@@ -315,9 +312,6 @@ func (b *Implementation) Create(opts CreateOptions) (*Issue, error) {
 	if actor != "" {
 		args = append(args, "--actor="+actor)
 	}
-	if opts.MolType != "" {
-		args = append(args, "--mol-type="+opts.MolType)
-	}
 	// Event-specific fields
 	if opts.EventCategory != "" {
 		args = append(args, "--event-category="+opts.EventCategory)
@@ -330,6 +324,9 @@ func (b *Implementation) Create(opts CreateOptions) (*Issue, error) {
 	}
 	if opts.EventTarget != "" {
 		args = append(args, "--event-target="+opts.EventTarget)
+	}
+	if opts.MolType != "" {
+		args = append(args, "--mol-type="+opts.MolType)
 	}
 
 	out, err := b.run(args...)
@@ -381,9 +378,6 @@ func (b *Implementation) CreateWithID(id string, opts CreateOptions) (*Issue, er
 	if actor != "" {
 		args = append(args, "--actor="+actor)
 	}
-	if opts.MolType != "" {
-		args = append(args, "--mol-type="+opts.MolType)
-	}
 	// Event-specific fields
 	if opts.EventCategory != "" {
 		args = append(args, "--event-category="+opts.EventCategory)
@@ -396,6 +390,9 @@ func (b *Implementation) CreateWithID(id string, opts CreateOptions) (*Issue, er
 	}
 	if opts.EventTarget != "" {
 		args = append(args, "--event-target="+opts.EventTarget)
+	}
+	if opts.MolType != "" {
+		args = append(args, "--mol-type="+opts.MolType)
 	}
 
 	out, err := b.run(args...)

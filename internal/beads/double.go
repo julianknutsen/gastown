@@ -359,25 +359,6 @@ func (d *Double) List(opts ListOptions) ([]*Issue, error) {
 			continue
 		}
 
-		// Filter by no assignee
-		if opts.NoAssignee && issue.Assignee != "" {
-			continue
-		}
-
-		// Filter by tag
-		if opts.Tag != "" {
-			found := false
-			for _, l := range issue.Labels {
-				if l == opts.Tag {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
-		}
-
 		// Make a copy to avoid data races
 		issueCopy := *issue
 		result = append(result, &issueCopy)
