@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // ErrUnknownList indicates a mailing list name was not found in configuration.
@@ -160,24 +160,15 @@ func (r *Router) expandAnnounce(announceName string) (*config.AnnounceConfig, er
 	}, ErrUnknownAnnounce)
 }
 
-// detectTownRoot finds the town root by looking for mayor/town.json.
+// detectTownRoot finds the town root using workspace.Find.
+// This ensures consistent detection with the rest of the codebase,
+// supporting both primary (mayor/town.json) and secondary (mayor/) markers.
 func detectTownRoot(startDir string) string {
-	dir := startDir
-	for {
-		// Check for primary marker (mayor/town.json)
-		markerPath := filepath.Join(dir, "mayor", "town.json")
-		if _, err := os.Stat(markerPath); err == nil {
-			return dir
-		}
-
-		// Move up
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
+	townRoot, err := workspace.Find(startDir)
+	if err != nil {
+		return ""
 	}
-	return ""
+	return townRoot
 }
 
 // resolveBeadsDir returns the correct .beads directory for the given address.
