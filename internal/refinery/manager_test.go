@@ -31,7 +31,7 @@ func setupTestManager(t *testing.T) (*Manager, *agent.Double, string) {
 	}
 
 	agents := agent.NewDouble()
-	return NewManager(agents, r, "claude"), agents, rigPath
+	return NewManager(agents, r), agents, rigPath
 }
 
 func TestManager_GetMR(t *testing.T) {
@@ -205,7 +205,7 @@ func setupTestManagerForStatus(t *testing.T) (*Manager, *agent.Double, string) {
 	}
 
 	agents := agent.NewDouble()
-	return NewManager(agents, r, "claude"), agents, rigPath
+	return NewManager(agents, r), agents, rigPath
 }
 
 // --- Status() Tests ---
@@ -360,7 +360,7 @@ func TestManager_Status_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	_, err := mgr.Status()
 	assert.Error(t, err)
@@ -546,7 +546,7 @@ func TestManager_GetMR_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	_, err := mgr.GetMR("any-id")
 	assert.Error(t, err)
@@ -562,7 +562,7 @@ func TestManager_Retry_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	err := mgr.Retry("any-id", false)
 	assert.Error(t, err)
@@ -575,7 +575,7 @@ func TestManager_Retry_WhenSaveStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	// Create a failed MR
 	mr := &MergeRequest{
@@ -603,7 +603,7 @@ func TestManager_RegisterMR_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	mr := &MergeRequest{ID: "test-mr"}
 	err := mgr.RegisterMR(mr)
@@ -617,7 +617,7 @@ func TestManager_RegisterMR_WhenSaveStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	// Initialize state first
 	_, _ = mgr.Status()

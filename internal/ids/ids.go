@@ -33,6 +33,12 @@ func (id AgentID) String() string {
 
 // Parse extracts role, rig, and worker from the AgentID.
 // This is a convenience method that just returns the struct fields.
+//
+// Note: Parse() does not validate the AgentID. An empty or malformed AgentID
+// will return empty strings without error. Use this method only when the
+// AgentID is known to be valid (e.g., from constructor functions or after
+// successful parsing). For user input validation, check the Role field
+// is non-empty and matches a known role.
 func (id AgentID) Parse() (role, rig, worker string) {
 	return id.Role, id.Rig, id.Worker
 }
@@ -73,6 +79,10 @@ func CrewAddress(rig, name string) AgentID {
 //   - "mayor" → {Role: "mayor"}
 //   - "rig/witness" → {Role: "witness", Rig: "rig"}
 //   - "rig/polecat/name" → {Role: "polecat", Rig: "rig", Worker: "name"}
+//
+// Returns an empty AgentID for invalid formats (more than 3 parts).
+// Note: This function does not validate that the parsed role is a known role;
+// it simply extracts parts from the address string.
 func ParseAddress(addr string) AgentID {
 	parts := strings.Split(addr, "/")
 	switch len(parts) {

@@ -32,7 +32,7 @@ func setupTestManagerInternal(t *testing.T) (*Manager, string) {
 	}
 
 	agents := agent.NewDouble()
-	return NewManager(agents, r, "claude"), rigPath
+	return NewManager(agents, r), rigPath
 }
 
 // =============================================================================
@@ -48,7 +48,7 @@ func TestManager_witnessDir_PrefersWitnessRig(t *testing.T) {
 	require.NoError(t, os.MkdirAll(witnessRigDir, 0755))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	assert.Equal(t, witnessRigDir, mgr.witnessDir())
 }
@@ -62,7 +62,7 @@ func TestManager_witnessDir_FallsBackToWitness(t *testing.T) {
 	require.NoError(t, os.MkdirAll(witnessDir, 0755))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	assert.Equal(t, witnessDir, mgr.witnessDir())
 }
@@ -75,7 +75,7 @@ func TestManager_witnessDir_FallsBackToRigPath(t *testing.T) {
 	require.NoError(t, os.MkdirAll(rigPath, 0755))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	assert.Equal(t, rigPath, mgr.witnessDir())
 }
@@ -94,7 +94,7 @@ func TestManager_Status_WhenLoadStateFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	_, err := mgr.Status()
 	assert.Error(t, err)
@@ -117,7 +117,7 @@ func TestManager_LoadState_ReturnsPersistedState(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, data, 0644))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	loaded, err := mgr.LoadState()
 	require.NoError(t, err)
@@ -132,7 +132,7 @@ func TestManager_SaveState_PersistsState(t *testing.T) {
 	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
 
 	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r, "claude")
+	mgr := NewManager(agent.NewDouble(), r)
 
 	state := &Witness{RigName: "testrig", State: agent.StateRunning}
 	err := mgr.SaveState(state)

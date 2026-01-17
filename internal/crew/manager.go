@@ -82,7 +82,7 @@ type Manager struct {
 //
 // The agents parameter only needs AgentObserverStopper (Exists, Stop, GetInfo, List).
 // In production, pass factory.Agents(). In tests, use agent.NewDouble().
-func NewManager(agents agent.AgentObserverStopper, r *rig.Rig, g *git.Git, _, townRoot string) *Manager {
+func NewManager(agents agent.AgentObserverStopper, r *rig.Rig, g *git.Git, townRoot string) *Manager {
 	return &Manager{
 		rig:      r,
 		git:      g,

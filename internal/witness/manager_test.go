@@ -47,7 +47,7 @@ func setupTestRig(t *testing.T) (*rig.Rig, string) {
 func TestManager_Status_WhenAgentRunning_ReportsRunning(t *testing.T) {
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	// Simulate running agent
 	agentID := agent.WitnessAddress(r.Name)
@@ -70,7 +70,7 @@ func TestManager_Status_WhenAgentCrashed_DetectsMismatch(t *testing.T) {
 	// Status() should detect mismatch and report stopped.
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	// Write state that says running (but don't create agent)
 	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
@@ -91,7 +91,7 @@ func TestManager_Status_WhenAgentCrashed_DetectsMismatch(t *testing.T) {
 func TestManager_Status_WhenStateStopped_ReportsStopped(t *testing.T) {
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	// Write state that says stopped
 	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
@@ -109,7 +109,7 @@ func TestManager_Status_WhenStateStopped_ReportsStopped(t *testing.T) {
 func TestManager_IsRunning_WhenAgentExists_ReturnsTrue(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	agentID := agent.WitnessAddress(r.Name)
 	agents.CreateAgent(agentID)
@@ -120,7 +120,7 @@ func TestManager_IsRunning_WhenAgentExists_ReturnsTrue(t *testing.T) {
 func TestManager_IsRunning_WhenAgentNotExists_ReturnsFalse(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	assert.False(t, mgr.IsRunning())
 }
@@ -130,7 +130,7 @@ func TestManager_IsRunning_WhenAgentNotExists_ReturnsFalse(t *testing.T) {
 func TestManager_SessionName_Format(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	assert.Equal(t, "gt-testrig-witness", mgr.SessionName())
 }
@@ -140,7 +140,7 @@ func TestManager_SessionName_Format(t *testing.T) {
 func TestManager_Address_ReturnsCorrectAgentID(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	expected := agent.WitnessAddress(r.Name)
 	assert.Equal(t, expected, mgr.Address())
@@ -151,7 +151,7 @@ func TestManager_Address_ReturnsCorrectAgentID(t *testing.T) {
 func TestManager_LoadState_ReturnsPersistedState(t *testing.T) {
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	// Write a state file
 	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
@@ -168,7 +168,7 @@ func TestManager_LoadState_ReturnsPersistedState(t *testing.T) {
 func TestManager_SaveState_PersistsState(t *testing.T) {
 	r, rigPath := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	state := &witness.Witness{RigName: "testrig", State: agent.StateRunning}
 	err := mgr.SaveState(state)
@@ -188,7 +188,7 @@ func TestManager_SaveState_PersistsState(t *testing.T) {
 func TestManager_LoadState_WhenNoFile_ReturnsDefaultState(t *testing.T) {
 	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r, "claude")
+	mgr := witness.NewManager(agents, r)
 
 	// Don't create state file - should return default
 	state, err := mgr.LoadState()

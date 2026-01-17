@@ -50,7 +50,7 @@ func TestManagerAddAndGet(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, g, "claude", "")
+	mgr := NewManager(agent.NewDouble(), r, g, "")
 
 	// Test Add
 	worker, err := mgr.Add("dave", false)
@@ -157,7 +157,7 @@ func TestManagerAddUsesLocalRepoReference(t *testing.T) {
 		LocalRepo: localRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, git.NewGit(rigPath), "claude", "")
+	mgr := NewManager(agent.NewDouble(), r, git.NewGit(rigPath), "")
 
 	worker, err := mgr.Add("dave", false)
 	if err != nil {
@@ -226,7 +226,7 @@ func TestManagerAddWithBranch(t *testing.T) {
 		GitURL: sourceRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, g, "claude", "")
+	mgr := NewManager(agent.NewDouble(), r, g, "")
 
 	// Test Add with branch
 	worker, err := mgr.Add("emma", true)
@@ -267,7 +267,7 @@ func TestManagerList(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, g, "claude", "")
+	mgr := NewManager(agent.NewDouble(), r, g, "")
 
 	// Initially empty
 	workers, err := mgr.List()
@@ -325,7 +325,7 @@ func TestManagerRemove(t *testing.T) {
 		GitURL: bareRepoPath,
 	}
 
-	mgr := NewManager(agent.NewDouble(), r, g, "claude", "")
+	mgr := NewManager(agent.NewDouble(), r, g, "")
 
 	// Add a worker
 	_, err = mgr.Add("charlie", false)
@@ -371,7 +371,7 @@ func TestManagerStop_TerminatesSession(t *testing.T) {
 	}
 
 	agents := agent.NewDouble()
-	mgr := NewManager(agents, r, git.NewGit(rigPath), "claude", "")
+	mgr := NewManager(agents, r, git.NewGit(rigPath), "")
 
 	// Create an agent directly (simulating factory.Start())
 	agentID := agent.CrewAddress("test-rig", "emma")
@@ -407,7 +407,7 @@ func TestManagerStop_NotRunning_ReturnsError(t *testing.T) {
 	}
 
 	agents := agent.NewDouble()
-	mgr := NewManager(agents, r, git.NewGit(rigPath), "claude", "")
+	mgr := NewManager(agents, r, git.NewGit(rigPath), "")
 
 	// Add but don't create agent (don't start)
 	_, err := mgr.Add("frank", false)
@@ -433,7 +433,7 @@ func TestManagerStop_InvalidName_ReturnsError(t *testing.T) {
 	}
 
 	agents := agent.NewDouble()
-	mgr := NewManager(agents, r, git.NewGit(rigPath), "claude", "")
+	mgr := NewManager(agents, r, git.NewGit(rigPath), "")
 
 	// Stop with empty name
 	err := mgr.Stop("")
@@ -453,7 +453,7 @@ func TestManagerIsRunning_CorrectState(t *testing.T) {
 	}
 
 	agents := agent.NewDouble()
-	mgr := NewManager(agents, r, git.NewGit(rigPath), "claude", "")
+	mgr := NewManager(agents, r, git.NewGit(rigPath), "")
 
 	// Not running initially
 	running, _ := mgr.IsRunning("henry")
@@ -489,7 +489,7 @@ func TestManagerSessionName_Format(t *testing.T) {
 		Path: "/tmp/testrig",
 	}
 	agents := agent.NewDouble()
-	mgr := NewManager(agents, r, git.NewGit(r.Path), "claude", "")
+	mgr := NewManager(agents, r, git.NewGit(r.Path), "")
 
 	name := mgr.SessionName("alice")
 	expected := "gt-testrig-crew-alice"
@@ -504,7 +504,7 @@ func TestManagerRigName(t *testing.T) {
 		Path: "/tmp/myrig",
 	}
 	agents := agent.NewDouble()
-	mgr := NewManager(agents, r, git.NewGit(r.Path), "claude", "")
+	mgr := NewManager(agents, r, git.NewGit(r.Path), "")
 
 	if mgr.RigName() != "myrig" {
 		t.Errorf("RigName = %q, want myrig", mgr.RigName())

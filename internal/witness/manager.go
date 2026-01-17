@@ -26,7 +26,7 @@ type Manager struct {
 //
 // The agents parameter only needs to implement AgentObserver (Exists, GetInfo, List).
 // In production, pass factory.Agents(). In tests, use agent.NewObserverDouble().
-func NewManager(agents agent.AgentObserver, r *rig.Rig, _ string) *Manager {
+func NewManager(agents agent.AgentObserver, r *rig.Rig) *Manager {
 	stateFactory := func() *Witness {
 		return &Witness{
 			RigName: r.Name,

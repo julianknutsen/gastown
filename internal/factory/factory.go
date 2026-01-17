@@ -78,6 +78,10 @@ func WithEnvOverrides(overrides map[string]string) StartOption {
 // Start starts any agent with full production setup.
 // Works for all agent types: singletons, rig-level, and named workers.
 //
+// Start blocks until the agent is ready for input (or times out). This differs
+// from the old per-role managers which returned immediately after session creation.
+// The blocking behavior ensures callers can interact with the agent immediately.
+//
 // Usage:
 //
 //	factory.Start(townRoot, agent.MayorAddress, aiRuntime)
@@ -187,7 +191,14 @@ func StartWithAgents(
 		return agent.AgentID{}, err
 	}
 
-	// Wait for agent to be ready
+	// Wait for agent to be ready.
+	// NOTE: This blocks until the agent is ready for input or times out. This is
+	// intentionally different from the old per-role managers which returned immediately.
+	// The blocking ensures callers can interact with the agent immediately after Start().
+	//
+	// Error is intentionally ignored - the agent session exists even if it times out
+	// waiting for the ready prompt. Callers needing to verify readiness should call
+	// WaitReady() explicitly and handle the error.
 	_ = agents.WaitReady(id)
 
 	return id, nil
@@ -405,13 +416,13 @@ func New(townRoot string) *Factory {
 func (f *Factory) WitnessManager(r *rig.Rig, aiRuntime string, envOverrides ...string) *witness.Manager {
 	overrides := parseEnvOverrides(envOverrides)
 	agents := f.agentsForRole(constants.RoleWitness, r.Name, aiRuntime, overrides)
-	return witness.NewManager(agents, r, aiRuntime)
+	return witness.NewManager(agents, r)
 }
 
 // RefineryManager creates a properly configured refinery.Manager.
 func (f *Factory) RefineryManager(r *rig.Rig, aiRuntime string) *refinery.Manager {
 	agents := f.agentsForRole(constants.RoleRefinery, r.Name, aiRuntime, nil)
-	return refinery.NewManager(agents, r, aiRuntime)
+	return refinery.NewManager(agents, r)
 }
 
 // PolecatSessionManager creates a properly configured polecat.SessionManager.
@@ -425,7 +436,7 @@ func (f *Factory) PolecatSessionManager(r *rig.Rig, aiRuntime string) *polecat.S
 func (f *Factory) CrewManager(r *rig.Rig, aiRuntime string) *crew.Manager {
 	g := git.NewGit(r.Path)
 	agents := agent.New(f.sess, agent.FromPreset(aiRuntime))
-	return crew.NewManager(agents, r, g, aiRuntime, f.townRoot)
+	return crew.NewManager(agents, r, g, f.townRoot)
 }
 
 // =============================================================================
