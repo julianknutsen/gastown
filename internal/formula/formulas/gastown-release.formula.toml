@@ -341,20 +341,18 @@ id = "restart-daemons"
 title = "Restart daemons"
 needs = ["local-install"]
 description = """
-Restart gt daemons to pick up the new version.
+Restart gt daemon to pick up the new version.
 
 ```bash
-gt daemons killall
+gt daemon stop && gt daemon start
 ```
-
-Daemons will auto-restart with the new version on next gt command.
 
 Verify:
 ```bash
-gt daemons list
+gt daemon status
 ```
 
-Check that daemon versions match {{version}}.
+The daemon should show the new binary timestamp and no stale warning.
 
 Note: This step is safe to retry if it fails.
 """
