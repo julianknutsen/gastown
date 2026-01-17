@@ -247,16 +247,9 @@ func runNamepoolAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("saving settings: %w", err)
 	}
 
-	// Also update runtime pool for immediate use
-	pool := polecat.NewNamePool(rigPath, rigName)
-	if err := pool.Load(); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("loading pool: %w", err)
-	}
-	pool.AddCustomName(name)
-
-	if err := pool.Save(); err != nil {
-		return fmt.Errorf("saving pool: %w", err)
-	}
+	// Note: No need to update runtime pool state - the settings file is the source
+	// of truth for custom names. The pool state file only persists OverflowNext/MaxSize.
+	// New managers will load custom names from settings/config.json.
 
 	fmt.Printf("Added '%s' to the name pool\n", name)
 	return nil
