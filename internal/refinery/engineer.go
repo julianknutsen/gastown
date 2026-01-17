@@ -352,6 +352,44 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 	}
 
 	// Step 7: Push to origin
+	// === MERGE SLOT GATE: Serialize all pushes to main ===
+	// Acquire the merge slot to prevent racing with conflict-resolution polecats.
+	// This fixes the race condition where both the normal merge path and a
+	// conflict-resolution polecat can push to main concurrently (gh-594).
+	holder := e.rig.Name + "/refinery"
+	_, slotErr := e.beads.MergeSlotEnsureExists()
+	if slotErr != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: could not ensure merge slot: %v\n", slotErr)
+		// Continue anyway - slot is optional for backwards compatibility
+	}
+	slotStatus, slotErr := e.beads.MergeSlotAcquire(holder, false)
+	if slotErr != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: could not acquire merge slot: %v\n", slotErr)
+		// Continue anyway - slot is optional for backwards compatibility
+	} else if !slotStatus.Available && slotStatus.Holder != "" && slotStatus.Holder != holder {
+		// Slot is held by someone else (likely a conflict-resolution polecat)
+		// Return failure so MR stays in queue and retries after slot is released
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Merge slot held by %s - deferring push\n", slotStatus.Holder)
+		return ProcessResult{
+			Success: false,
+			Error:   fmt.Sprintf("merge slot held by %s - will retry when released", slotStatus.Holder),
+		}
+	} else {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Acquired merge slot for push\n")
+	}
+	// Release the slot after push completes (success or failure)
+	defer func() {
+		if releaseErr := e.beads.MergeSlotRelease(holder); releaseErr != nil {
+			// Only log if it's a real error (not "slot not held")
+			errStr := releaseErr.Error()
+			if !strings.Contains(errStr, "not held") && !strings.Contains(errStr, "not found") {
+				_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to release merge slot: %v\n", releaseErr)
+			}
+		} else {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
+		}
+	}()
+
 	_, _ = fmt.Fprintf(e.output, "[Engineer] Pushing to origin/%s...\n", target)
 	if err := e.git.Push("origin", target, false); err != nil {
 		return ProcessResult{
