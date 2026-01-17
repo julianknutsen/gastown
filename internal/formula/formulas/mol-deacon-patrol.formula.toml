@@ -666,9 +666,46 @@ we don't try to digest today's incomplete data.
 **Exit criteria:** Yesterday's costs digested (or no wisps to digest)."""
 
 [[steps]]
+id = "patrol-digest"
+title = "Aggregate daily patrol digests"
+needs = ["costs-digest"]
+description = """
+**DAILY DIGEST** - Aggregate yesterday's patrol cycle digests.
+
+Patrol cycles (Deacon, Witness, Refinery) create ephemeral per-cycle digests
+to avoid JSONL pollution. This step aggregates them into a single permanent
+"Patrol Report YYYY-MM-DD" bead for audit purposes.
+
+**Step 1: Check if digest is needed**
+```bash
+# Preview yesterday's patrol digests (dry run)
+gt patrol digest --yesterday --dry-run
+```
+
+If output shows "No patrol digests found", skip to Step 3.
+
+**Step 2: Create the digest**
+```bash
+gt patrol digest --yesterday
+```
+
+This:
+- Queries all ephemeral patrol digests from yesterday
+- Creates a single "Patrol Report YYYY-MM-DD" bead with aggregated data
+- Deletes the source digests
+
+**Step 3: Verify**
+Daily patrol digests preserve audit trail without per-cycle pollution.
+
+**Timing**: Run once per morning patrol cycle. The --yesterday flag ensures
+we don't try to digest today's incomplete data.
+
+**Exit criteria:** Yesterday's patrol digests aggregated (or none to aggregate)."""
+
+[[steps]]
 id = "log-maintenance"
 title = "Rotate logs and prune state"
-needs = ["costs-digest"]
+needs = ["patrol-digest"]
 description = """
 Maintain daemon logs and state files.
 
