@@ -436,6 +436,18 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 	// Get repo base to remove the worktree properly
 	repoGit, err := m.repoBase()
 	if err != nil {
+		// Best-effort: try to prune stale worktree entries from both possible repo locations.
+		// This handles edge cases where the repo base is corrupted but worktree entries exist.
+		bareRepoPath := filepath.Join(m.rig.Path, ".repo.git")
+		if info, statErr := os.Stat(bareRepoPath); statErr == nil && info.IsDir() {
+			bareGit := git.NewGitWithDir(bareRepoPath, "")
+			_ = bareGit.WorktreePrune()
+		}
+		mayorRigPath := filepath.Join(m.rig.Path, "mayor", "rig")
+		if info, statErr := os.Stat(mayorRigPath); statErr == nil && info.IsDir() {
+			mayorGit := git.NewGit(mayorRigPath)
+			_ = mayorGit.WorktreePrune()
+		}
 		// Fall back to direct removal if repo base not found
 		return os.RemoveAll(polecatDir)
 	}
