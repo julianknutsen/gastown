@@ -1199,8 +1199,15 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		}
 
 		// Step 4: Delete branch (if we know it)
+		// Use bare repo if it exists (matches where worktree was created), otherwise mayor/rig
 		if branchToDelete != "" {
-			repoGit := git.NewGit(filepath.Join(p.r.Path, "mayor", "rig"))
+			var repoGit *git.Git
+			bareRepoPath := filepath.Join(p.r.Path, ".repo.git")
+			if info, err := os.Stat(bareRepoPath); err == nil && info.IsDir() {
+				repoGit = git.NewGitWithDir(bareRepoPath, "")
+			} else {
+				repoGit = git.NewGit(filepath.Join(p.r.Path, "mayor", "rig"))
+			}
 			if err := repoGit.DeleteBranch(branchToDelete, true); err != nil {
 				// Non-fatal - branch might already be gone
 				fmt.Printf("  %s branch delete: %v\n", style.Dim.Render("○"), err)
