@@ -75,6 +75,14 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.3.1",
+		Date:    "2026-01-17",
+		Changes: []string{
+			"FIX: Orphan cleanup on macOS - TTY comparison now handles macOS '??' format",
+			"FIX: Session kill orphan prevention - gt done and gt crew stop use KillSessionWithProcesses",
+		},
+	},
+	{
 		Version: "0.3.0",
 		Date:    "2026-01-17",
 		Changes: []string{
