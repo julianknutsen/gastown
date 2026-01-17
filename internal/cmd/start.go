@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -158,23 +159,46 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Starting Gas Town from %s\n\n", style.Dim.Render(townRoot))
-
-	// Start core agents (Mayor and Deacon)
-	if err := startCoreAgents(townRoot, startAgentOverride); err != nil {
-		return err
-	}
-
-	// If --all, start witnesses and refineries for all rigs
-	if startAll {
-		fmt.Println()
-		fmt.Println("Starting rig agents...")
-		startRigAgents(townRoot)
-	}
-
-	// Auto-start configured crew for each rig
+	fmt.Println("Starting all agents in parallel...")
 	fmt.Println()
-	fmt.Println("Starting configured crew...")
-	startConfiguredCrew(townRoot)
+
+	// Start all agent groups in parallel for maximum speed
+	var wg sync.WaitGroup
+	var mu sync.Mutex // Protects stdout
+	var coreErr error
+
+	// Start core agents (Mayor and Deacon) in background
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := startCoreAgentsParallel(townRoot, startAgentOverride, &mu); err != nil {
+			mu.Lock()
+			coreErr = err
+			mu.Unlock()
+		}
+	}()
+
+	// Start rig agents (witnesses, refineries) if --all
+	if startAll {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			startRigAgentsParallel(townRoot, &mu)
+		}()
+	}
+
+	// Start configured crew
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		startConfiguredCrewParallel(townRoot, &mu)
+	}()
+
+	wg.Wait()
+
+	if coreErr != nil {
+		return coreErr
+	}
 
 	fmt.Println()
 	fmt.Printf("%s Gas Town is running\n", style.Bold.Render("✓"))
@@ -284,6 +308,188 @@ func startConfiguredCrew(townRoot string) {
 
 	if !startedAny {
 		fmt.Printf("  %s No crew configured or all already running\n", style.Dim.Render("○"))
+	}
+}
+
+// startCoreAgentsParallel starts Mayor and Deacon sessions in parallel using factory.Start().
+// The mutex is used to synchronize output with other parallel startup operations.
+func startCoreAgentsParallel(townRoot string, agentOverride string, mu *sync.Mutex) error {
+	// Resolve agent names: command line override takes precedence over config
+	mayorAgentName := config.ResolveAgentForRole("mayor", townRoot, "", agentOverride)
+	deaconAgentName := config.ResolveAgentForRole("deacon", townRoot, "", agentOverride)
+
+	var wg sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
+
+	// Start Mayor in goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if _, err := factory.Start(townRoot, agent.MayorAddress, mayorAgentName); err != nil {
+			if errors.Is(err, agent.ErrAlreadyRunning) {
+				mu.Lock()
+				fmt.Printf("  %s Mayor already running\n", style.Dim.Render("○"))
+				mu.Unlock()
+			} else {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("starting Mayor: %w", err)
+				}
+				errMu.Unlock()
+				mu.Lock()
+				fmt.Printf("  %s Mayor failed: %v\n", style.Dim.Render("○"), err)
+				mu.Unlock()
+			}
+		} else {
+			mu.Lock()
+			fmt.Printf("  %s Mayor started\n", style.Bold.Render("✓"))
+			mu.Unlock()
+		}
+	}()
+
+	// Start Deacon in goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if _, err := factory.Start(townRoot, agent.DeaconAddress, deaconAgentName); err != nil {
+			if errors.Is(err, agent.ErrAlreadyRunning) {
+				mu.Lock()
+				fmt.Printf("  %s Deacon already running\n", style.Dim.Render("○"))
+				mu.Unlock()
+			} else {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("starting Deacon: %w", err)
+				}
+				errMu.Unlock()
+				mu.Lock()
+				fmt.Printf("  %s Deacon failed: %v\n", style.Dim.Render("○"), err)
+				mu.Unlock()
+			}
+		} else {
+			mu.Lock()
+			fmt.Printf("  %s Deacon started\n", style.Bold.Render("✓"))
+			mu.Unlock()
+		}
+	}()
+
+	wg.Wait()
+	return firstErr
+}
+
+// startRigAgentsParallel starts witness and refinery for all rigs in parallel.
+// Uses the provided mutex for synchronized output with other parallel operations.
+func startRigAgentsParallel(townRoot string, mu *sync.Mutex) {
+	rigs, err := discoverAllRigs(townRoot)
+	if err != nil {
+		mu.Lock()
+		fmt.Printf("  %s Could not discover rigs: %v\n", style.Dim.Render("○"), err)
+		mu.Unlock()
+		return
+	}
+
+	var wg sync.WaitGroup
+
+	for _, r := range rigs {
+		wg.Add(2) // Witness + Refinery
+
+		// Start Witness in goroutine
+		go func(r *rig.Rig) {
+			defer wg.Done()
+			msg := startWitnessForRig(townRoot, r)
+			mu.Lock()
+			fmt.Print(msg)
+			mu.Unlock()
+		}(r)
+
+		// Start Refinery in goroutine
+		go func(r *rig.Rig) {
+			defer wg.Done()
+			msg := startRefineryForRig(townRoot, r)
+			mu.Lock()
+			fmt.Print(msg)
+			mu.Unlock()
+		}(r)
+	}
+
+	wg.Wait()
+}
+
+// startWitnessForRig starts the witness for a single rig and returns a status message.
+func startWitnessForRig(townRoot string, r *rig.Rig) string {
+	agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
+	witnessID := agent.WitnessAddress(r.Name)
+	if _, err := factory.Start(townRoot, witnessID, agentName); err != nil {
+		if errors.Is(err, agent.ErrAlreadyRunning) {
+			return fmt.Sprintf("  %s %s witness already running\n", style.Dim.Render("○"), r.Name)
+		}
+		return fmt.Sprintf("  %s %s witness failed: %v\n", style.Dim.Render("○"), r.Name, err)
+	}
+	return fmt.Sprintf("  %s %s witness started\n", style.Bold.Render("✓"), r.Name)
+}
+
+// startRefineryForRig starts the refinery for a single rig and returns a status message.
+func startRefineryForRig(townRoot string, r *rig.Rig) string {
+	refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+	refineryID := agent.RefineryAddress(r.Name)
+	if _, err := factory.Start(townRoot, refineryID, refineryAgentName); err != nil {
+		if errors.Is(err, agent.ErrAlreadyRunning) {
+			return fmt.Sprintf("  %s %s refinery already running\n", style.Dim.Render("○"), r.Name)
+		}
+		return fmt.Sprintf("  %s %s refinery failed: %v\n", style.Dim.Render("○"), r.Name, err)
+	}
+	return fmt.Sprintf("  %s %s refinery started\n", style.Bold.Render("✓"), r.Name)
+}
+
+// startConfiguredCrewParallel starts crew members configured in rig settings in parallel.
+// Uses the provided mutex for synchronized output with other parallel operations.
+func startConfiguredCrewParallel(townRoot string, mu *sync.Mutex) {
+	rigs, err := discoverAllRigs(townRoot)
+	if err != nil {
+		mu.Lock()
+		fmt.Printf("  %s Could not discover rigs: %v\n", style.Dim.Render("○"), err)
+		mu.Unlock()
+		return
+	}
+
+	var wg sync.WaitGroup
+	startedAny := false
+	var startedMu sync.Mutex // Protects startedAny
+
+	for _, r := range rigs {
+		crewToStart := getCrewToStart(r, townRoot)
+		for _, crewName := range crewToStart {
+			wg.Add(1)
+			go func(r *rig.Rig, crewName string) {
+				defer wg.Done()
+				err := startCrewMember(r.Name, crewName, townRoot)
+				if err != nil {
+					mu.Lock()
+					if errors.Is(err, crew.ErrSessionRunning) {
+						fmt.Printf("  %s %s/%s already running\n", style.Dim.Render("○"), r.Name, crewName)
+					} else {
+						fmt.Printf("  %s %s/%s failed: %v\n", style.Dim.Render("○"), r.Name, crewName, err)
+					}
+					mu.Unlock()
+				} else {
+					mu.Lock()
+					fmt.Printf("  %s %s/%s started\n", style.Bold.Render("✓"), r.Name, crewName)
+					mu.Unlock()
+					startedMu.Lock()
+					startedAny = true
+					startedMu.Unlock()
+				}
+			}(r, crewName)
+		}
+	}
+
+	wg.Wait()
+
+	if !startedAny {
+		mu.Lock()
+		fmt.Printf("  %s No crew configured or all already running\n", style.Dim.Render("○"))
+		mu.Unlock()
 	}
 }
 
