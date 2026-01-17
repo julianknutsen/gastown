@@ -262,10 +262,13 @@ func detectCloneRoot() (string, error) {
 }
 
 // detectActor returns the current agent's actor string for event logging.
+// When running from rig root or without a known agent identity, returns:
+// - The rig name (e.g., "gastown") if we can detect it
+// - "human" as a fallback for human operators
 func detectActor() string {
 	roleInfo, err := GetRole()
 	if err != nil {
-		return "unknown"
+		return "human"
 	}
 	return roleInfo.ActorString()
 }
