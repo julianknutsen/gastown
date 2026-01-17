@@ -283,7 +283,13 @@ func (info RoleInfo) ActorString() string {
 		}
 		return "crew"
 	default:
-		return string(info.Role)
+		// When role is unknown, provide a useful fallback:
+		// - If we know the rig, use it (e.g., "gastown") - implies human operator at rig root
+		// - Otherwise use "human" to indicate a human operator
+		if info.Rig != "" {
+			return info.Rig
+		}
+		return "human"
 	}
 }
 
