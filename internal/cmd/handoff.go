@@ -11,9 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -131,7 +129,7 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create agents manager for respawn
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 
 	// If handing off a different agent, use remote handoff flow
 	if targetID != currentID {
@@ -142,8 +140,8 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Handing off %s...\n", style.Bold.Render("🤝"), targetID)
 
 	// Log handoff event (both townlog and events feed)
-	_ = LogHandoff(townRoot, string(targetID), handoffSubject)
-	_ = events.LogFeed(events.TypeHandoff, string(targetID), events.HandoffPayload(handoffSubject, true))
+	_ = LogHandoff(townRoot, targetID.String(), handoffSubject)
+	_ = events.LogFeed(events.TypeHandoff, targetID.String(), events.HandoffPayload(handoffSubject, true))
 
 	// Dry run mode - show what would happen (BEFORE any side effects)
 	if handoffDryRun {
@@ -173,7 +171,7 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 		runtimeDir := filepath.Join(cwd, constants.DirRuntime)
 		_ = os.MkdirAll(runtimeDir, 0755)
 		markerPath := filepath.Join(runtimeDir, constants.FileHandoffMarker)
-		_ = os.WriteFile(markerPath, []byte(targetID), 0644)
+		_ = os.WriteFile(markerPath, []byte(targetID.String()), 0644)
 	}
 
 	// Respawn the agent - for self-handoff, this terminates the current process
@@ -181,10 +179,14 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 	return agents.Respawn(targetID)
 }
 
-// getCurrentTmuxSession returns the current tmux session name.
+// getCurrentTmuxSession returns the current agent's session-style identifier.
 // Used by cycle commands for tmux session navigation.
 func getCurrentTmuxSession() (string, error) {
-	return tmux.NewTmux().CurrentSessionName()
+	id, err := agent.Self()
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
 }
 
 // resolveRoleToAgentID converts a role name or path to an AgentID.
@@ -219,26 +221,26 @@ func resolveRoleToAgentID(role string) (agent.AgentID, error) {
 			}
 		}
 		if rig == "" || crewName == "" {
-			return "", fmt.Errorf("cannot determine crew identity - run from crew directory or specify GT_RIG/GT_CREW")
+			return agent.AgentID{}, fmt.Errorf("cannot determine crew identity - run from crew directory or specify GT_RIG/GT_CREW")
 		}
 		return agent.CrewAddress(rig, crewName), nil
 
 	case "witness", "wit":
 		rig := os.Getenv("GT_RIG")
 		if rig == "" {
-			return "", fmt.Errorf("cannot determine rig - set GT_RIG or run from rig context")
+			return agent.AgentID{}, fmt.Errorf("cannot determine rig - set GT_RIG or run from rig context")
 		}
 		return agent.WitnessAddress(rig), nil
 
 	case "refinery", "ref":
 		rig := os.Getenv("GT_RIG")
 		if rig == "" {
-			return "", fmt.Errorf("cannot determine rig - set GT_RIG or run from rig context")
+			return agent.AgentID{}, fmt.Errorf("cannot determine rig - set GT_RIG or run from rig context")
 		}
 		return agent.RefineryAddress(rig), nil
 
 	default:
-		return "", fmt.Errorf("unknown role: %s", role)
+		return agent.AgentID{}, fmt.Errorf("unknown role: %s", role)
 	}
 }
 
@@ -273,9 +275,9 @@ func resolvePathToAgentID(path string) (agent.AgentID, error) {
 		case "refinery":
 			return agent.RefineryAddress(rig), nil
 		case "crew":
-			return "", fmt.Errorf("crew path requires name: %s/crew/<name>", rig)
+			return agent.AgentID{}, fmt.Errorf("crew path requires name: %s/crew/<name>", rig)
 		case "polecats", "polecat":
-			return "", fmt.Errorf("polecat path requires name: %s/polecat/<name>", rig)
+			return agent.AgentID{}, fmt.Errorf("polecat path requires name: %s/polecat/<name>", rig)
 		default:
 			// Check if it's a crew member before assuming polecat
 			townRoot := detectTownRootFromCwd()
@@ -290,7 +292,7 @@ func resolvePathToAgentID(path string) (agent.AgentID, error) {
 		}
 	}
 
-	return "", fmt.Errorf("cannot parse path '%s' - expected <rig>/<polecat>, <rig>/crew/<name>, <rig>/witness, or <rig>/refinery", path)
+	return agent.AgentID{}, fmt.Errorf("cannot parse path '%s' - expected <rig>/<polecat>, <rig>/crew/<name>, <rig>/witness, or <rig>/refinery", path)
 }
 
 // handoffRemoteAgent respawns a different agent and optionally switches to its session.
@@ -306,8 +308,7 @@ func handoffRemoteAgent(agents agent.Agents, targetID agent.AgentID, townRoot st
 	if handoffDryRun {
 		fmt.Printf("Would respawn agent %s (reusing original command)\n", targetID)
 		if handoffWatch {
-			sessionName := session.ToUniqueHumanReadableName(session.SessionID(targetID), townRoot)
-			fmt.Printf("Would switch to session: %s\n", sessionName)
+			fmt.Printf("Would switch to session: %s\n", targetID)
 		}
 		return nil
 	}
@@ -323,8 +324,7 @@ func handoffRemoteAgent(agents agent.Agents, targetID agent.AgentID, townRoot st
 	if handoffWatch {
 		fmt.Printf("Switching to %s...\n", targetID)
 		if err := agents.Attach(targetID); err != nil {
-			sessionName := session.ToUniqueHumanReadableName(session.SessionID(targetID), townRoot)
-			fmt.Printf("Note: Could not auto-switch (use: tmux switch-client -t %s)\n", sessionName)
+			fmt.Printf("Note: Could not auto-switch (use: tmux switch-client -t %s)\n", targetID)
 		}
 	}
 

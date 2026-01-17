@@ -19,7 +19,6 @@ import (
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Polecat command flags
@@ -332,7 +331,7 @@ func getPolecatManager(rigName string) (*polecat.Manager, *rig.Rig, string, erro
 	}
 
 	polecatGit := git.NewGit(r.Path)
-	agents := agent.ForTownPath(townRoot)
+	agents := agent.Default()
 	mgr := polecat.NewManager(agents, r, polecatGit)
 
 	return mgr, r, townRoot, nil
@@ -340,9 +339,6 @@ func getPolecatManager(rigName string) (*polecat.Manager, *rig.Rig, string, erro
 
 func runPolecatList(cmd *cobra.Command, args []string) error {
 	var rigs []*rig.Rig
-
-	// Get townRoot for agent operations
-	townRoot, _ := workspace.FindFromCwd()
 
 	if polecatListAll {
 		// List all rigs
@@ -364,13 +360,12 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Collect polecats from all rigs
-	agents := agent.ForTownPath(townRoot)
+	agents := factory.Agents()
 	var allPolecats []PolecatListItem
 
 	for _, r := range rigs {
 		polecatGit := git.NewGit(r.Path)
 		mgr := polecat.NewManager(agents, r, polecatGit)
-		polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 
 		polecats, err := mgr.List()
 		if err != nil {
@@ -379,7 +374,7 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 		}
 
 		for _, p := range polecats {
-			running, _ := polecatMgr.IsRunning(p.Name)
+			running := agents.Exists(agent.PolecatAddress(r.Name, p.Name))
 			allPolecats = append(allPolecats, PolecatListItem{
 				Rig:            r.Name,
 				Name:           p.Name,
@@ -481,9 +476,8 @@ func runPolecatRemove(cmd *cobra.Command, args []string) error {
 	for _, p := range targets {
 		// Check if session is running
 		if !polecatForce {
-			polecatMgr := factory.New(p.townRoot).PolecatSessionManager(p.r, "")
-			running, _ := polecatMgr.IsRunning(p.polecatName)
-			if running {
+			polecatID := agent.PolecatAddress(p.rigName, p.polecatName)
+			if factory.Agents().Exists(polecatID) {
 				removeErrors = append(removeErrors, fmt.Sprintf("%s/%s: session is running (stop first or use --force)", p.rigName, p.polecatName))
 				continue
 			}
@@ -1174,10 +1168,10 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		}
 
 		// Step 1: Kill session (force mode - no graceful shutdown)
-		polecatMgr := factory.New(p.townRoot).PolecatSessionManager(p.r, "")
-		running, _ := polecatMgr.IsRunning(p.polecatName)
-		if running {
-			if err := polecatMgr.Stop(p.polecatName, true); err != nil {
+		polecatID := agent.PolecatAddress(p.rigName, p.polecatName)
+		agents := factory.Agents()
+		if agents.Exists(polecatID) {
+			if err := agents.Stop(polecatID, false); err != nil { // graceful=false for force
 				fmt.Printf("  %s session kill failed: %v\n", style.Warning.Render("⚠"), err)
 				// Continue anyway - worktree removal will still work
 			} else {

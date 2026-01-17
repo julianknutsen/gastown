@@ -492,8 +492,7 @@ func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, wor
 	ID    string `json:"id"`
 	Title string `json:"title"`
 }) error { //nolint:unparam // error return kept for future use
-	agents := agent.ForTownPath(townRoot)
-	polecatSessMgr := factory.New(townRoot).PolecatSessionManager(r, "")
+	agents := factory.Agents()
 	polecatGit := git.NewGit(r.Path)
 	polecatMgr := polecat.NewManager(agents, r, polecatGit)
 
@@ -524,12 +523,11 @@ func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, wor
 		}
 
 		// Check if already running
-		running, _ := polecatSessMgr.IsRunning(worker)
-		if running {
+		polecatID := agent.PolecatAddress(r.Name, worker)
+		if agents.Exists(polecatID) {
 			fmt.Printf("  %s already running, injecting task...\n", worker)
 		} else {
 			fmt.Printf("  Starting %s...\n", worker)
-			polecatID := agent.PolecatAddress(r.Name, worker)
 			if _, err := factory.Start(townRoot, polecatID, polecatAgentName); err != nil {
 				style.PrintWarning("  couldn't start %s: %v", worker, err)
 				continue
@@ -541,7 +539,7 @@ func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, wor
 		// Inject work assignment
 		context := fmt.Sprintf("[SWARM] You are part of swarm %s.\n\nAssigned task: %s\nTitle: %s\n\nWork on this task. When complete, commit and signal DONE.",
 			swarmID, task.ID, task.Title)
-		if err := polecatSessMgr.Inject(worker, context); err != nil {
+		if err := agents.Nudge(polecatID, context); err != nil {
 			style.PrintWarning("  couldn't inject to %s: %v", worker, err)
 		} else {
 			fmt.Printf("  %s → %s ✓\n", worker, task.ID)

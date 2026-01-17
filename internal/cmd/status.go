@@ -215,10 +215,10 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 
 	// Pre-fetch all running agents for O(1) lookup
 	allSessions := make(map[string]bool)
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 	if agentIDs, err := agents.List(); err == nil {
 		for _, id := range agentIDs {
-			allSessions[string(id)] = true
+			allSessions[id.String()] = true
 		}
 	}
 
@@ -1085,8 +1085,9 @@ func discoverRigAgents(allSessions map[string]bool, r *rig.Rig, crews []string, 
 				Role:    d.role,
 			}
 
-			// Check tmux session from preloaded map (O(1))
-			agent.Running = allSessions[d.session]
+			// Check if agent is running from preloaded map (O(1))
+			// allSessions contains AgentID strings like "gastown/refinery"
+			agent.Running = allSessions[d.address]
 
 			// Look up agent bead from preloaded map (O(1))
 			if issue, ok := allAgentBeads[d.beadID]; ok {

@@ -153,7 +153,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 	}
 
 	// Phase 2a: Stop refineries
-	agents := factory.Agents(townRoot)
+	agents := factory.Agents()
 
 	for _, rigName := range rigs {
 		id := agent.RefineryAddress(rigName)

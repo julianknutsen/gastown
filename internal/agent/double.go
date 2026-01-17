@@ -8,9 +8,14 @@ import (
 
 // Note: session import used for GetInfo return type
 
-// Double is an in-memory test double for the Agents interface.
-// It provides a pure drop-in replacement for testing manager logic.
-// For error injection, use agentsStub in tests.
+// Double is a FAKE with SPY capabilities for the Agents interface.
+//
+// Test Double Taxonomy (Meszaros/Fowler):
+//   - FAKE: Working in-memory implementation (no real tmux sessions)
+//   - SPY: Records method calls for verification (StopCalls, NudgeLog, GetStartConfig)
+//
+// Use this for testing manager logic and verifying interactions.
+// For error injection, wrap with AgentsStub.
 type Double struct {
 	mu        sync.RWMutex
 	agents    map[AgentID]*doubleAgent
@@ -18,10 +23,12 @@ type Double struct {
 }
 
 type doubleAgent struct {
-	name     string
-	workDir  string
-	command  string
-	nudgeLog []string
+	name        string
+	workDir     string
+	command     string
+	envVars     map[string]string // Original env vars (before prepending to command)
+	startConfig StartConfig       // Full config for spy verification
+	nudgeLog    []string
 }
 
 // StopCall records a call to Stop() for test verification.
@@ -55,17 +62,24 @@ func (d *Double) StartWithConfig(id AgentID, cfg StartConfig) error {
 		command = prependEnvVars(cfg.EnvVars, command)
 	}
 
+	// Copy env vars to prevent mutation
+	envVars := make(map[string]string, len(cfg.EnvVars))
+	for k, v := range cfg.EnvVars {
+		envVars[k] = v
+	}
+
 	d.agents[id] = &doubleAgent{
-		name:    id.String(),
-		workDir: cfg.WorkDir,
-		command: command,
+		name:        id.String(),
+		workDir:     cfg.WorkDir,
+		command:     command,
+		envVars:     envVars,
+		startConfig: cfg, // Store full config for spy verification
 	}
 
 	// Run the callback if provided (for test verification)
 	if cfg.OnCreated != nil {
-		// Note: We pass nil for Sessions in tests - callbacks should handle this
-		// or tests should not use callbacks that need Sessions
-		_ = cfg.OnCreated(nil, "")
+		sessionID := session.SessionID(session.SessionNameFromAgentID(id))
+		_ = cfg.OnCreated(sessionID)
 	}
 
 	return nil
@@ -260,4 +274,42 @@ func (d *Double) StopCalls() []StopCall {
 	result := make([]StopCall, len(d.stopCalls))
 	copy(result, d.stopCalls)
 	return result
+}
+
+// GetStartConfig returns the StartConfig used for an agent (spy verification).
+// Returns the config and true if found, or empty config and false if not found.
+func (d *Double) GetStartConfig(id AgentID) (StartConfig, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if agent, exists := d.agents[id]; exists {
+		return agent.startConfig, true
+	}
+	return StartConfig{}, false
+}
+
+// GetEnvVars returns the environment variables passed to Start for an agent.
+// Returns nil if agent doesn't exist.
+func (d *Double) GetEnvVars(id AgentID) map[string]string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if agent, exists := d.agents[id]; exists {
+		// Return a copy to prevent mutation
+		result := make(map[string]string, len(agent.envVars))
+		for k, v := range agent.envVars {
+			result[k] = v
+		}
+		return result
+	}
+	return nil
+}
+
+// HasOnCreated returns true if the agent was started with an OnCreated callback.
+// This is useful for verifying that theming would be applied in production.
+func (d *Double) HasOnCreated(id AgentID) bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if agent, exists := d.agents[id]; exists {
+		return agent.startConfig.OnCreated != nil
+	}
+	return false
 }

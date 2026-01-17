@@ -3,11 +3,14 @@
 // testing with mocks and potentially other terminal multiplexers (e.g., zellij).
 package session
 
-import "time"
+import (
+	"time"
 
-// SessionID identifies a session.
-// This is an opaque identifier returned by List() and Start(), and passed to
-// other methods to specify which session to operate on.
+	"github.com/steveyegge/gastown/internal/ids"
+)
+
+// SessionID identifies a session at the interface level.
+// Examples: "hq-mayor", "gt-myrig-witness", "gt-myrig-crew-bob"
 type SessionID string
 
 // Info contains information about a session.
@@ -55,6 +58,11 @@ type Sessions interface {
 	GetInfo(id SessionID) (*Info, error)
 
 	// Interactive
-	Attach(id SessionID) error     // Attach to session (exec into terminal)
-	SwitchTo(id SessionID) error   // Switch to session (when inside multiplexer)
+	Attach(id SessionID) error   // Attach to session (exec into terminal)
+	SwitchTo(id SessionID) error // Switch to session (when inside multiplexer)
+
+	// ID Conversion
+	// SessionIDForAgent converts an agent address to its SessionID.
+	// This allows the agent layer to work with AgentIDs while session layer uses SessionIDs.
+	SessionIDForAgent(id ids.AgentID) SessionID
 }

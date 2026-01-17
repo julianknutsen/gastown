@@ -65,7 +65,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 
 	// Get polecat manager (with agents for session-aware allocation)
 	polecatGit := git.NewGit(r.Path)
-	agents := agent.ForTownPath(townRoot)
+	agents := agent.Default()
 	polecatMgr := polecat.NewManager(agents, r, polecatGit)
 
 	// Allocate a new polecat name
@@ -122,7 +122,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 
 	// Check if already running using agents interface
 	id := agent.PolecatAddress(rigName, polecatName)
-	factoryAgents := factory.Agents(townRoot)
+	factoryAgents := factory.Agents()
 	if !factoryAgents.Exists(id) {
 		fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
 		if _, err := factory.Start(townRoot, id, agentName); err != nil {

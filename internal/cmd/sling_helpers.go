@@ -220,7 +220,7 @@ func storeAttachedMoleculeInBead(beadID, moleculeID string) error {
 // injectStartPrompt sends a prompt to an agent to start working.
 // Uses the Agents abstraction for reliable nudging.
 func injectStartPrompt(townRoot string, id agent.AgentID, beadID, subject, args string) error {
-	if id == "" {
+	if id.Role == "" {
 		return fmt.Errorf("no agent to nudge")
 	}
 
@@ -239,7 +239,7 @@ func injectStartPrompt(townRoot string, id agent.AgentID, beadID, subject, args 
 		prompt = fmt.Sprintf("Work slung: %s. Start working on it now - run `gt hook` to see the hook, then begin.", beadID)
 	}
 
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 	return agents.Nudge(id, prompt)
 }
 
@@ -249,7 +249,7 @@ func injectStartPrompt(townRoot string, id agent.AgentID, beadID, subject, args 
 func ensureAgentReady(townRoot string, id agent.AgentID) error {
 	// Always wait for ready, even if process is running - it may still be initializing
 	// (WaitReady is fast if agent is already ready since prompt checker finds ">" quickly)
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 	return agents.WaitReady(id)
 }
 
@@ -374,7 +374,7 @@ func wakeRigAgents(townRoot, rigName string) {
 	_ = bootCmd.Run() // Ignore errors - rig might already be running
 
 	// Nudge witness and refinery to clear any backoff
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 	witnessID := agent.WitnessAddress(rigName)
 	refineryID := agent.RefineryAddress(rigName)
 

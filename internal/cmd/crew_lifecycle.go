@@ -656,7 +656,7 @@ func runCrewStopAll() error {
 	fmt.Printf("%s Stopping %d crew session(s)...\n\n",
 		style.Bold.Render("🛑"), len(targets))
 
-	agentsAPI := agent.ForTown(townRoot)
+	agentsAPI := agent.Default()
 	var succeeded, failed int
 	var failures []string
 
@@ -694,4 +694,68 @@ func runCrewStopAll() error {
 
 	fmt.Printf("%s Stop complete: %d crew session(s) stopped\n", style.SuccessPrefix, succeeded)
 	return nil
+}
+
+// =============================================================================
+// Parallel Start Helper (testable)
+// =============================================================================
+
+// CrewStartResult holds the result of attempting to start a crew member.
+type CrewStartResult struct {
+	Name    string
+	Err     error
+	Skipped bool // true if already running
+}
+
+// CrewStartStats summarizes the results of a parallel crew start operation.
+type CrewStartStats struct {
+	Started int
+	Skipped int
+	Failed  int
+	LastErr error
+}
+
+// CrewStarter is a function that starts a single crew member.
+// Returns error (including agent.ErrAlreadyRunning for skipped).
+type CrewStarter func(rigName, crewName string) error
+
+// startCrewParallel starts multiple crew members in parallel using the provided starter.
+// This helper encapsulates the parallel execution pattern for testing.
+func startCrewParallel(rigName string, crewNames []string, starter CrewStarter) CrewStartStats {
+	results := make(chan CrewStartResult, len(crewNames))
+	var wg sync.WaitGroup
+
+	for _, name := range crewNames {
+		wg.Add(1)
+		go func(crewName string) {
+			defer wg.Done()
+			err := starter(rigName, crewName)
+			skipped := errors.Is(err, agent.ErrAlreadyRunning)
+			if skipped {
+				err = nil // Not an error, just already running
+			}
+			results <- CrewStartResult{Name: crewName, Err: err, Skipped: skipped}
+		}(name)
+	}
+
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	var stats CrewStartStats
+	for res := range results {
+		if res.Err != nil {
+			stats.Failed++
+			stats.LastErr = res.Err
+		} else if res.Skipped {
+			stats.Skipped++
+		} else {
+			stats.Started++
+		}
+	}
+
+	return stats
 }

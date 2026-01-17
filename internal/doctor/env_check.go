@@ -98,7 +98,7 @@ func (c *EnvVarsCheck) Run(ctx *CheckContext) *CheckResult {
 	checkedCount := 0
 
 	for _, sess := range gtSessions {
-		identity, err := session.ParseSessionName(sess)
+		agentID, err := session.ParseSessionName(sess)
 		if err != nil {
 			// Skip unparseable sessions
 			continue
@@ -106,9 +106,9 @@ func (c *EnvVarsCheck) Run(ctx *CheckContext) *CheckResult {
 
 		// Get expected env vars based on role
 		expected := config.AgentEnv(config.AgentEnvConfig{
-			Role:      string(identity.Role),
-			Rig:       identity.Rig,
-			AgentName: identity.Name,
+			Role:      agentID.Role,
+			Rig:       agentID.Rig,
+			AgentName: agentID.Worker,
 			TownRoot:  ctx.TownRoot,
 		})
 

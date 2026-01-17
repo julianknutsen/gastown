@@ -65,7 +65,7 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
 	// Get rig
-	townRoot, r, err := getRig(rigName)
+	_, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Docking rig %s...\n", style.Bold.Render(rigName))
 
 	var stoppedAgents []string
-	agentsAPI := agent.ForTown(townRoot)
+	agentsAPI := agent.Default()
 
 	// Stop witness if running
 	witnessID := agent.WitnessAddress(rigName)

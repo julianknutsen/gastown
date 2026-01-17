@@ -10,87 +10,29 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/ids"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // AgentID is the logical address of an agent.
-// Format: "role" for town-level, "rig/role" for rig-level, "rig/role/name" for named.
-// Examples: "mayor", "deacon", "myrig/witness", "myrig/polecat/toast"
-type AgentID string
+// Re-exported from ids package for convenience.
+type AgentID = ids.AgentID
 
-// String returns the address as a string.
-func (id AgentID) String() string {
-	return string(id)
-}
-
-// Parse extracts role, rig, and worker from the AgentID.
-// Returns (role, rig, worker) where:
-//   - Town-level ("mayor"): role="mayor", rig="", worker=""
-//   - Rig-level ("rig/witness"): role="witness", rig="rig", worker=""
-//   - Named ("rig/crew/name"): role="crew", rig="rig", worker="name"
-func (id AgentID) Parse() (role, rig, worker string) {
-	parts := strings.Split(string(id), "/")
-	switch len(parts) {
-	case 1:
-		return parts[0], "", ""
-	case 2:
-		return parts[1], parts[0], ""
-	case 3:
-		return parts[1], parts[0], parts[2]
-	default:
-		return "unknown", "", ""
-	}
-}
-
-// Role returns the role component of the AgentID.
-func (id AgentID) Role() string {
-	role, _, _ := id.Parse()
-	return role
-}
-
-// Rig returns the rig component of the AgentID (empty for town-level agents).
-func (id AgentID) Rig() string {
-	_, rig, _ := id.Parse()
-	return rig
-}
-
-// Worker returns the worker/name component of the AgentID (empty for non-named agents).
-func (id AgentID) Worker() string {
-	_, _, worker := id.Parse()
-	return worker
-}
-
-// --- Address constants for singleton agents ---
-
-const (
-	// MayorAddress is the address for the mayor agent.
-	MayorAddress AgentID = "mayor"
-	// DeaconAddress is the address for the deacon agent.
-	DeaconAddress AgentID = "deacon"
-	// BootAddress is the address for the boot watchdog agent.
-	BootAddress AgentID = "boot"
+// Re-export address values from ids package.
+var (
+	MayorAddress  = ids.MayorAddress
+	DeaconAddress = ids.DeaconAddress
+	BootAddress   = ids.BootAddress
 )
 
-// WitnessAddress returns the address for a rig's witness.
-func WitnessAddress(rig string) AgentID {
-	return AgentID(fmt.Sprintf("%s/witness", rig))
-}
-
-// RefineryAddress returns the address for a rig's refinery.
-func RefineryAddress(rig string) AgentID {
-	return AgentID(fmt.Sprintf("%s/refinery", rig))
-}
-
-// PolecatAddress returns the address for a polecat.
-func PolecatAddress(rig, name string) AgentID {
-	return AgentID(fmt.Sprintf("%s/polecat/%s", rig, name))
-}
-
-// CrewAddress returns the address for a crew member.
-func CrewAddress(rig, name string) AgentID {
-	return AgentID(fmt.Sprintf("%s/crew/%s", rig, name))
-}
+// Re-export address constructors from ids package.
+var (
+	WitnessAddress  = ids.WitnessAddress
+	RefineryAddress = ids.RefineryAddress
+	PolecatAddress  = ids.PolecatAddress
+	CrewAddress     = ids.CrewAddress
+)
 
 // ErrUnknownRole is returned when the agent role cannot be determined.
 var ErrUnknownRole = errors.New("unknown or missing GT_ROLE")
@@ -111,37 +53,37 @@ func Self() (AgentID, error) {
 
 	switch role {
 	case constants.RoleMayor:
-		return MayorAddress, nil
+		return ids.MayorAddress, nil
 	case constants.RoleDeacon:
-		return DeaconAddress, nil
+		return ids.DeaconAddress, nil
 	case constants.RoleBoot:
-		return BootAddress, nil
+		return ids.BootAddress, nil
 	case constants.RoleWitness:
 		if rig == "" {
-			return "", fmt.Errorf("%w: witness requires GT_RIG", ErrUnknownRole)
+			return AgentID{}, fmt.Errorf("%w: witness requires GT_RIG", ErrUnknownRole)
 		}
-		return WitnessAddress(rig), nil
+		return ids.WitnessAddress(rig), nil
 	case constants.RoleRefinery:
 		if rig == "" {
-			return "", fmt.Errorf("%w: refinery requires GT_RIG", ErrUnknownRole)
+			return AgentID{}, fmt.Errorf("%w: refinery requires GT_RIG", ErrUnknownRole)
 		}
-		return RefineryAddress(rig), nil
+		return ids.RefineryAddress(rig), nil
 	case constants.RoleCrew:
 		name := os.Getenv("GT_CREW")
 		if rig == "" || name == "" {
-			return "", fmt.Errorf("%w: crew requires GT_RIG and GT_CREW", ErrUnknownRole)
+			return AgentID{}, fmt.Errorf("%w: crew requires GT_RIG and GT_CREW", ErrUnknownRole)
 		}
-		return CrewAddress(rig, name), nil
+		return ids.CrewAddress(rig, name), nil
 	case constants.RolePolecat:
 		name := os.Getenv("GT_POLECAT")
 		if rig == "" || name == "" {
-			return "", fmt.Errorf("%w: polecat requires GT_RIG and GT_POLECAT", ErrUnknownRole)
+			return AgentID{}, fmt.Errorf("%w: polecat requires GT_RIG and GT_POLECAT", ErrUnknownRole)
 		}
-		return PolecatAddress(rig, name), nil
+		return ids.PolecatAddress(rig, name), nil
 	case "":
-		return "", ErrUnknownRole
+		return AgentID{}, ErrUnknownRole
 	default:
-		return "", fmt.Errorf("%w: %s", ErrUnknownRole, role)
+		return AgentID{}, fmt.Errorf("%w: %s", ErrUnknownRole, role)
 	}
 }
 
@@ -151,49 +93,23 @@ var ErrAlreadyRunning = errors.New("agent already running")
 // ErrNotRunning is returned when trying to operate on a non-running agent.
 var ErrNotRunning = errors.New("agent not running")
 
-// Agents is the interface for managing agent processes.
-// Implementations handle lifecycle, readiness detection, and session management.
+// Agents is the full interface for managing agent processes.
+// It composes all the smaller interfaces for consumers that need full control.
+//
+// Most consumers should depend on smaller interfaces instead:
+//   - AgentObserver: for status checks (Exists, GetInfo, List)
+//   - AgentStopper: for cleanup (Stop)
+//   - AgentStarter: for lifecycle (StartWithConfig, WaitReady)
+//   - AgentCommunicator: for interaction (Nudge, Capture, Attach)
+//   - AgentRespawner: for handoff (Respawn)
+//
+// See interfaces.go for the smaller interface definitions.
 type Agents interface {
-	// StartWithConfig launches an agent process with explicit configuration.
-	// This is the preferred method - all configuration is explicit and testable.
-	// Per-start callbacks allow context capture via closures.
-	StartWithConfig(id AgentID, cfg StartConfig) error
-
-	// Stop terminates an agent process.
-	Stop(id AgentID, graceful bool) error
-
-	// Respawn atomically kills the agent process and starts a new one.
-	// Clears scrollback history before respawning for a clean start.
-	// This is used for handoff - an agent can respawn itself or another agent.
-	// Unlike Stop+Start, this is atomic and works for self-handoff.
-	// The original start command (including env vars and beacon) is reused.
-	Respawn(id AgentID) error
-
-	// Exists checks if an agent is running (session exists AND process is alive).
-	// Returns false for zombie sessions (tmux exists but agent process died).
-	Exists(id AgentID) bool
-
-	// WaitReady blocks until the agent is ready for input or times out.
-	WaitReady(id AgentID) error
-
-	// GetInfo returns information about an agent's session.
-	GetInfo(id AgentID) (*session.Info, error)
-
-	// Nudge sends a message to a running agent reliably.
-	// Uses robust delivery (handles vim mode, retries) for inter-agent communication.
-	Nudge(id AgentID, message string) error
-
-	// Capture returns the recent output from an agent's session.
-	Capture(id AgentID, lines int) (string, error)
-
-	// CaptureAll returns the entire scrollback history from an agent's session.
-	CaptureAll(id AgentID) (string, error)
-
-	// List returns all agent addresses.
-	List() ([]AgentID, error)
-
-	// Attach attaches to a running agent's session (exec into terminal).
-	Attach(id AgentID) error
+	AgentObserver
+	AgentStopper
+	AgentStarter
+	AgentCommunicator
+	AgentRespawner
 }
 
 // Implementation is the concrete implementation of the Agents interface.
@@ -247,7 +163,7 @@ func prependEnvVars(envVars map[string]string, command string) string {
 
 // doWaitForReady implements the readiness wait logic.
 func (a *Implementation) doWaitForReady(id AgentID) error {
-	sessionID := session.SessionID(id)
+	sessionID := a.sess.SessionIDForAgent(id)
 
 	// Run startup hook if defined (e.g., dismiss dialogs)
 	if a.config.StartupHook != nil {
@@ -282,7 +198,7 @@ func (a *Implementation) waitForReady(id session.SessionID, timeout time.Duratio
 
 // WaitReady blocks until the agent is ready for input or times out.
 func (a *Implementation) WaitReady(id AgentID) error {
-	sessionID := session.SessionID(id)
+	sessionID := a.sess.SessionIDForAgent(id)
 	exists, _ := a.sess.Exists(sessionID)
 	if !exists {
 		return ErrNotRunning
@@ -292,7 +208,7 @@ func (a *Implementation) WaitReady(id AgentID) error {
 
 // Stop terminates an agent process.
 func (a *Implementation) Stop(id AgentID, graceful bool) error {
-	sessionID := session.SessionID(id)
+	sessionID := a.sess.SessionIDForAgent(id)
 	exists, _ := a.sess.Exists(sessionID)
 	if !exists {
 		return nil // Idempotent - nothing to stop
@@ -322,7 +238,7 @@ func (a *Implementation) Stop(id AgentID, graceful bool) error {
 //
 // For remote handoff: the caller survives, so we launch the readiness wait.
 func (a *Implementation) Respawn(id AgentID) error {
-	sessionID := session.SessionID(id)
+	sessionID := a.sess.SessionIDForAgent(id)
 	exists, _ := a.sess.Exists(sessionID)
 	if !exists {
 		return ErrNotRunning
@@ -350,7 +266,7 @@ func (a *Implementation) Respawn(id AgentID) error {
 // Returns false for zombie sessions (tmux exists but agent process died).
 // If ProcessNames is not configured, falls back to session existence only.
 func (a *Implementation) Exists(id AgentID) bool {
-	sessionID := session.SessionID(id)
+	sessionID := a.sess.SessionIDForAgent(id)
 	exists, _ := a.sess.Exists(sessionID)
 	if !exists {
 		return false
@@ -365,22 +281,22 @@ func (a *Implementation) Exists(id AgentID) bool {
 
 // GetInfo returns information about an agent's session.
 func (a *Implementation) GetInfo(id AgentID) (*session.Info, error) {
-	return a.sess.GetInfo(session.SessionID(id))
+	return a.sess.GetInfo(a.sess.SessionIDForAgent(id))
 }
 
 // Nudge sends a message to a running agent reliably.
 func (a *Implementation) Nudge(id AgentID, message string) error {
-	return a.sess.Nudge(session.SessionID(id), message)
+	return a.sess.Nudge(a.sess.SessionIDForAgent(id), message)
 }
 
 // Capture returns the recent output from an agent's session.
 func (a *Implementation) Capture(id AgentID, lines int) (string, error) {
-	return a.sess.Capture(session.SessionID(id), lines)
+	return a.sess.Capture(a.sess.SessionIDForAgent(id), lines)
 }
 
 // CaptureAll returns the entire scrollback history from an agent's session.
 func (a *Implementation) CaptureAll(id AgentID) (string, error) {
-	return a.sess.CaptureAll(session.SessionID(id))
+	return a.sess.CaptureAll(a.sess.SessionIDForAgent(id))
 }
 
 // List returns all agent addresses.
@@ -389,15 +305,20 @@ func (a *Implementation) List() ([]AgentID, error) {
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]AgentID, 0, len(sessionIDs))
+	result := make([]AgentID, 0, len(sessionIDs))
 	for _, sid := range sessionIDs {
 		// If no process names configured, include all sessions
 		// Otherwise only include if process is running (not zombie)
 		if len(a.config.ProcessNames) == 0 || a.sess.IsRunning(sid, a.config.ProcessNames...) {
-			ids = append(ids, AgentID(sid))
+			// Convert SessionID to AgentID via parsing
+			agentID, err := session.ParseSessionName(string(sid))
+			if err != nil {
+				continue // Skip sessions we can't parse (non-GT sessions)
+			}
+			result = append(result, agentID)
 		}
 	}
-	return ids, nil
+	return result, nil
 }
 
 // Attach attaches to a running agent's session.
@@ -405,7 +326,7 @@ func (a *Implementation) List() ([]AgentID, error) {
 //   - Inside tmux → switch-client (no-op if already in target)
 //   - Outside tmux → blocking attach
 func (a *Implementation) Attach(id AgentID) error {
-	sessionID := session.SessionID(id)
+	sessionID := a.sess.SessionIDForAgent(id)
 
 	// Try to switch (works if inside tmux, no-op if already in target)
 	if err := a.sess.SwitchTo(sessionID); err == nil {
@@ -420,22 +341,15 @@ func (a *Implementation) Attach(id AgentID) error {
 // Factory Functions
 // =============================================================================
 
-// ForTown creates an Agents interface for the given town root path.
-func ForTown(townRoot string) Agents {
+// Default creates an Agents interface with default settings.
+func Default() Agents {
 	t := tmux.NewTmux()
-	sess := session.NewTownSessions(t, townRoot)
-	return New(sess, nil)
+	return New(t, nil)
 }
 
-// ForTownPath is an alias for ForTown.
-func ForTownPath(townRoot string) Agents {
-	return ForTown(townRoot)
-}
-
-// ForTownWithConfig creates an Agents interface with the specified config.
+// WithConfig creates an Agents interface with the specified config.
 // Use Claude() for Claude-specific behavior (zombie filtering, readiness).
-func ForTownWithConfig(townRoot string, cfg *Config) Agents {
+func WithConfig(cfg *Config) Agents {
 	t := tmux.NewTmux()
-	sess := session.NewTownSessions(t, townRoot)
-	return New(sess, cfg)
+	return New(t, cfg)
 }

@@ -44,14 +44,10 @@ func (c *LinkedPaneCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	// Filter to Gas Town sessions (gt-* for rig agents, hq-* for town agents)
-	// and only those belonging to this town
 	var gtSessions []string
 	for _, sessionID := range sessions {
 		sessionName := string(sessionID)
 		if !strings.HasPrefix(sessionName, session.Prefix) && !strings.HasPrefix(sessionName, session.HQPrefix) {
-			continue
-		}
-		if !session.MatchesTown(sessionName, ctx.TownRoot) {
 			continue
 		}
 		gtSessions = append(gtSessions, sessionName)
@@ -96,9 +92,7 @@ func (c *LinkedPaneCheck) Run(ctx *CheckContext) *CheckResult {
 
 	c.linkedSessions = nil
 	for sess := range linkedSessionSet {
-		// Compare base names (without town suffix)
-		sessBase := session.StripTownID(sess)
-		if mayorSessionBase == "" || sessBase != mayorSessionBase {
+		if mayorSessionBase == "" || sess != mayorSessionBase {
 			c.linkedSessions = append(c.linkedSessions, sess)
 		}
 	}

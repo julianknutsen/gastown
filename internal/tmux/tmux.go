@@ -13,6 +13,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/ids"
 	"github.com/steveyegge/gastown/internal/session"
 )
 
@@ -42,6 +43,9 @@ func (c SessionConfig) WithEnvVars(envVars map[string]string) SessionConfig {
 }
 
 // Tmux wraps tmux operations.
+//
+// Tmux-specific operations like theming, env vars, and hooks are available
+// as methods on *Tmux directly (not part of the Sessions interface).
 type Tmux struct {
 	sessionConfig *SessionConfig
 }
@@ -114,6 +118,8 @@ func (t *Tmux) NewSession(name, workDir string) error {
 //
 // If WithSessionConfig was used, the config is applied after session creation.
 func (t *Tmux) Start(name, workDir, command string) (session.SessionID, error) {
+	sessionID := session.SessionID(name)
+
 	args := []string{"new-session", "-d", "-s", name}
 	if workDir != "" {
 		args = append(args, "-c", workDir)
@@ -125,30 +131,28 @@ func (t *Tmux) Start(name, workDir, command string) (session.SessionID, error) {
 		return "", err
 	}
 
-	id := session.SessionID(name)
-
 	// Apply session configuration if provided
 	if t.sessionConfig != nil {
-		if err := t.applySessionConfig(id); err != nil {
+		if err := t.applySessionConfig(name); err != nil {
 			// Config failure is non-fatal but logged
 			// The session is still usable, just without theming
 			_ = err
 		}
 	}
 
-	return id, nil
+	return sessionID, nil
 }
 
 // applySessionConfig applies the pre-configured session settings.
-func (t *Tmux) applySessionConfig(id session.SessionID) error {
+func (t *Tmux) applySessionConfig(sess string) error {
 	cfg := t.sessionConfig
 	if cfg == nil {
 		return nil
 	}
 
 	// Set environment variables
-	if len(cfg.EnvVars) > 0 {
-		if err := t.SetEnvVars(id, cfg.EnvVars); err != nil {
+	for k, v := range cfg.EnvVars {
+		if err := t.setEnvDirect(sess, k, v); err != nil {
 			return err
 		}
 	}
@@ -159,7 +163,7 @@ func (t *Tmux) applySessionConfig(id session.SessionID) error {
 		if theme.Name == "" {
 			theme = DefaultTheme() // Fallback to default if theme not specified
 		}
-		if err := t.ConfigureGasTownSession(id, theme, cfg.Rig, cfg.Worker, cfg.Role); err != nil {
+		if err := t.configureGasTownSessionInternal(sess, theme, cfg.Rig, cfg.Worker, cfg.Role); err != nil {
 			return err
 		}
 	}
@@ -313,11 +317,19 @@ func (t *Tmux) List() ([]session.SessionID, error) {
 	}
 
 	names := strings.Split(out, "\n")
-	ids := make([]session.SessionID, len(names))
-	for i, name := range names {
-		ids[i] = session.SessionID(name)
+	var ids []session.SessionID
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		ids = append(ids, session.SessionID(name))
 	}
 	return ids, nil
+}
+
+// SessionIDForAgent converts an agent address to its SessionID.
+func (t *Tmux) SessionIDForAgent(id ids.AgentID) session.SessionID {
+	return session.SessionID(session.SessionNameFromAgentID(id))
 }
 
 // ListSessionIDs returns a map of session name to session ID.
@@ -629,10 +641,13 @@ func (t *Tmux) CapturePaneLines(sess string, lines int) ([]string, error) {
 }
 
 // AttachSession attaches to an existing session.
-// Note: This replaces the current process with tmux attach.
+// Connects stdin/stdout/stderr to the terminal for interactive use.
 func (t *Tmux) AttachSession(sessionName string) error {
-	_, err := t.run("attach-session", "-t", sessionName)
-	return err
+	cmd := exec.Command("tmux", "attach-session", "-t", sessionName)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // Attach implements session.Sessions interface.
@@ -658,14 +673,19 @@ func (t *Tmux) SelectWindow(session string, index int) error {
 
 // SetEnv sets an environment variable in the session.
 func (t *Tmux) SetEnv(id session.SessionID, key, value string) error {
-	_, err := t.run("set-environment", "-t", string(id), key, value)
+	return t.setEnvDirect(string(id), key, value)
+}
+
+// setEnvDirect sets an environment variable using the session name directly.
+func (t *Tmux) setEnvDirect(sess, key, value string) error {
+	_, err := t.run("set-environment", "-t", sess, key, value)
 	return err
 }
 
 // SetEnvVars sets multiple environment variables on a session.
 func (t *Tmux) SetEnvVars(id session.SessionID, envVars map[string]string) error {
 	for k, v := range envVars {
-		if err := t.SetEnv(id, k, v); err != nil {
+		if err := t.setEnvDirect(string(id), k, v); err != nil {
 			return err
 		}
 	}
@@ -779,41 +799,13 @@ func (t *Tmux) IsAgentRunning(session string, expectedPaneCommands ...string) bo
 	return cmd != ""
 }
 
-// IsClaudeRunning checks if Claude appears to be running in the session.
-// Only trusts the pane command - UI markers in scrollback cause false positives.
-// Claude can report as "node", "claude", or a version number like "2.0.76".
-// Also checks for child processes when the pane is a shell running claude via "bash -c".
-func (t *Tmux) IsClaudeRunning(session string) bool {
-	// Check for known command names first
-	if t.IsAgentRunning(session, "node", "claude") {
-		return true
-	}
-	// Check for version pattern (e.g., "2.0.76") - Claude Code shows version as pane command
-	cmd, err := t.GetPaneCommand(session)
-	if err != nil {
-		return false
-	}
-	matched, _ := regexp.MatchString(`^\d+\.\d+\.\d+`, cmd)
-	if matched {
-		return true
-	}
-	// If pane command is a shell, check for claude/node child processes.
-	// This handles the case where sessions are started with "bash -c 'export ... && claude ...'"
-	for _, shell := range constants.SupportedShells {
-		if cmd == shell {
-			pid, err := t.GetPanePID(session)
-			if err == nil && pid != "" {
-				return hasClaudeChild(pid)
-			}
-			break
-		}
-	}
-	return false
-}
-
 // IsRuntimeRunning checks if a runtime appears to be running in the session.
 // Only trusts the pane command - UI markers in scrollback cause false positives.
 // This is the runtime-config-aware version of IsAgentRunning.
+// Handles:
+//   - Exact matches (e.g., "node", "claude")
+//   - Version patterns for Claude (e.g., "2.0.76")
+//   - Shell wrappers (checks child processes when pane is a shell)
 func (t *Tmux) IsRuntimeRunning(session string, processNames []string) bool {
 	if len(processNames) == 0 {
 		return false
@@ -822,21 +814,54 @@ func (t *Tmux) IsRuntimeRunning(session string, processNames []string) bool {
 	if err != nil {
 		return false
 	}
+
+	// Check for exact matches
 	for _, name := range processNames {
 		if cmd == name {
 			return true
 		}
 	}
+
+	// Check if "claude" is in processNames for special handling
+	hasClaude := false
+	for _, name := range processNames {
+		if name == "claude" {
+			hasClaude = true
+			break
+		}
+	}
+
+	if hasClaude {
+		// Claude can report as a version number like "2.0.76"
+		matched, _ := regexp.MatchString(`^\d+\.\d+\.\d+`, cmd)
+		if matched {
+			return true
+		}
+
+		// If pane command is a shell, check for claude/node child processes
+		for _, shell := range constants.SupportedShells {
+			if cmd == shell {
+				pid, err := t.GetPanePID(session)
+				if err == nil && pid != "" {
+					if hasClaudeChild(pid) {
+						return true
+					}
+				}
+				break
+			}
+		}
+	}
+
 	return false
 }
 
-// IsRunning implements session.Terminal.
+// IsRunning implements session.Sessions.
 // Checks if any of the given process names match the pane's current command.
 func (t *Tmux) IsRunning(id session.SessionID, processNames ...string) bool {
 	return t.IsRuntimeRunning(string(id), processNames)
 }
 
-// WaitFor implements session.Terminal.
+// WaitFor implements session.Sessions.
 // Polls until one of the given process names is running in the session.
 // Returns nil when a matching process is detected, or error on timeout.
 func (t *Tmux) WaitFor(id session.SessionID, timeout time.Duration, processNames ...string) error {
@@ -845,7 +870,7 @@ func (t *Tmux) WaitFor(id session.SessionID, timeout time.Duration, processNames
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if t.IsRunning(id, processNames...) {
+		if t.IsRuntimeRunning(string(id), processNames) {
 			return nil
 		}
 		time.Sleep(constants.PollInterval)
@@ -964,9 +989,8 @@ func (t *Tmux) WaitForRuntimeReady(session string, rc *config.RuntimeConfig, tim
 
 // GetInfo returns detailed information about a session.
 func (t *Tmux) GetInfo(id session.SessionID) (*session.Info, error) {
-	name := string(id)
 	format := "#{session_name}|#{session_windows}|#{session_created_string}|#{session_attached}|#{session_activity}|#{session_last_attached}"
-	out, err := t.run("list-sessions", "-F", format, "-f", fmt.Sprintf("#{==:#{session_name},%s}", name))
+	out, err := t.run("list-sessions", "-F", format, "-f", fmt.Sprintf("#{==:#{session_name},%s}", string(id)))
 	if err != nil {
 		return nil, err
 	}
@@ -1072,7 +1096,12 @@ func (t *Tmux) SetDynamicStatus(session string) error {
 // ConfigureGasTownSession applies full Gas Town theming to a session.
 // This is a convenience method that applies theme, status format, and dynamic status.
 func (t *Tmux) ConfigureGasTownSession(id session.SessionID, theme Theme, rig, worker, role string) error {
-	sess := string(id)
+	return t.configureGasTownSessionInternal(string(id), theme, rig, worker, role)
+}
+
+// configureGasTownSessionInternal is the shared implementation for session theming.
+// Takes the actual tmux session name as a string.
+func (t *Tmux) configureGasTownSessionInternal(sess string, theme Theme, rig, worker, role string) error {
 	if err := t.ApplyTheme(sess, theme); err != nil {
 		return fmt.Errorf("applying theme: %w", err)
 	}
@@ -1154,10 +1183,8 @@ func (t *Tmux) ClearHistory(pane string) error {
 // Clears scrollback history before respawning for a clean start.
 // This is used for handoff - an agent can respawn itself or another agent.
 func (t *Tmux) Respawn(id session.SessionID, command string) error {
-	sessionName := string(id)
-
 	// Get pane ID for the session
-	paneID, err := t.GetPaneID(sessionName)
+	paneID, err := t.GetPaneID(string(id))
 	if err != nil {
 		return fmt.Errorf("getting pane ID: %w", err)
 	}
@@ -1193,11 +1220,7 @@ func (t *Tmux) SwitchClient(targetSession string) error {
 
 // SetCrewCycleBindings sets up C-b n/p to cycle through sessions.
 // This is now an alias for SetCycleBindings - the unified command detects
-// session type automatically.
-//
-// IMPORTANT: We pass #{session_name} to the command because run-shell doesn't
-// reliably preserve the session context. tmux expands #{session_name} at binding
-// resolution time (when the key is pressed), giving us the correct session.
+// session type automatically via GT_* env vars (available in run-shell context).
 func (t *Tmux) SetCrewCycleBindings(session string) error {
 	return t.SetCycleBindings(session)
 }
@@ -1215,27 +1238,27 @@ func (t *Tmux) SetTownCycleBindings(session string) error {
 // - Town sessions: Mayor ↔ Deacon
 // - Crew sessions: All crew members in the same rig
 //
+// The cycle command uses agent.Self() to identify the current agent from
+// GT_* env vars, which are available in tmux run-shell context.
+//
 // IMPORTANT: These bindings are conditional - they only run gt cycle for
 // Gas Town sessions (those starting with "gt-" or "hq-"). For non-GT sessions,
 // the default tmux behavior (next-window/previous-window) is preserved.
 // See: https://github.com/steveyegge/gastown/issues/13
-//
-// IMPORTANT: We pass #{session_name} to the command because run-shell doesn't
-// reliably preserve the session context. tmux expands #{session_name} at binding
-// resolution time (when the key is pressed), giving us the correct session.
 func (t *Tmux) SetCycleBindings(session string) error {
 	// C-b n → gt cycle next for GT sessions, next-window otherwise
 	// The if-shell checks if session name starts with "gt-" or "hq-"
+	// GT_* env vars are available in run-shell context, so agent.Self() works
 	if _, err := t.run("bind-key", "-T", "prefix", "n",
 		"if-shell", "echo '#{session_name}' | grep -Eq '^(gt|hq)-'",
-		"run-shell 'gt cycle next --session #{session_name}'",
+		"run-shell 'gt cycle next'",
 		"next-window"); err != nil {
 		return err
 	}
 	// C-b p → gt cycle prev for GT sessions, previous-window otherwise
 	if _, err := t.run("bind-key", "-T", "prefix", "p",
 		"if-shell", "echo '#{session_name}' | grep -Eq '^(gt|hq)-'",
-		"run-shell 'gt cycle prev --session #{session_name}'",
+		"run-shell 'gt cycle prev'",
 		"previous-window"); err != nil {
 		return err
 	}
@@ -1262,14 +1285,13 @@ func (t *Tmux) SetFeedBinding(session string) error {
 // When the pane exits, tmux runs the hook command with exit status info.
 // The agentID is used to identify the agent in crash logs (e.g., "gastown/Toast").
 func (t *Tmux) SetPaneDiedHook(id session.SessionID, agentID string) error {
-	session := string(id)
 	// Hook command logs the crash with exit status
 	// #{pane_dead_status} is the exit code of the process that died
 	// We run gt log crash which records to the town log
 	hookCmd := fmt.Sprintf(`run-shell "gt log crash --agent '%s' --session '%s' --exit-code #{pane_dead_status}"`,
-		agentID, session)
+		agentID, string(id))
 
 	// Set the hook on this specific session
-	_, err := t.run("set-hook", "-t", session, "pane-died", hookCmd)
+	_, err := t.run("set-hook", "-t", string(id), "pane-died", hookCmd)
 	return err
 }

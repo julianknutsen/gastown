@@ -13,8 +13,8 @@ import (
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/ids"
 	"github.com/steveyegge/gastown/internal/lock"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/town"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -52,83 +52,36 @@ func agentSessionToAgentID(as *AgentSession) agent.AgentID {
 		return agent.PolecatAddress(as.Rig, as.AgentName)
 	default:
 		// Unknown type - return empty AgentID
-		return ""
+		return agent.AgentID{}
 	}
 }
 
 // agentIDToAgentSession converts an agent.AgentID to an AgentSession.
-// Parses the address string format: "role", "rig/role", or "rig/role/name".
 func agentIDToAgentSession(id agent.AgentID) *AgentSession {
-	parts := strings.Split(string(id), "/")
 	as := &AgentSession{
-		Name: string(id), // Used for display/session switching
+		Name:      id.String(), // Used for display/session switching
+		Rig:       id.Rig,
+		AgentName: id.Worker,
 	}
 
-	switch len(parts) {
-	case 1:
-		// Town-level: "mayor" or "deacon"
-		switch parts[0] {
-		case "mayor":
-			as.Type = AgentMayor
-		case "deacon":
-			as.Type = AgentDeacon
-		default:
-			return nil
-		}
-	case 2:
-		// Rig-level: "rig/witness" or "rig/refinery"
-		as.Rig = parts[0]
-		switch parts[1] {
-		case "witness":
-			as.Type = AgentWitness
-		case "refinery":
-			as.Type = AgentRefinery
-		default:
-			return nil
-		}
-	case 3:
-		// Named: "rig/crew/name" or "rig/polecat/name"
-		as.Rig = parts[0]
-		as.AgentName = parts[2]
-		switch parts[1] {
-		case "crew":
-			as.Type = AgentCrew
-		case "polecat":
-			as.Type = AgentPolecat
-		default:
-			return nil
-		}
+	switch id.Role {
+	case "mayor":
+		as.Type = AgentMayor
+	case "deacon":
+		as.Type = AgentDeacon
+	case "witness":
+		as.Type = AgentWitness
+	case "refinery":
+		as.Type = AgentRefinery
+	case "crew":
+		as.Type = AgentCrew
+	case "polecat":
+		as.Type = AgentPolecat
 	default:
 		return nil
 	}
 
 	return as
-}
-
-// sessionNameToAgentID parses a raw tmux session name into an agent.AgentID.
-// This is used for legacy support where callers pass raw session names.
-func sessionNameToAgentID(sessionName string) (agent.AgentID, error) {
-	identity, err := session.ParseSessionName(sessionName)
-	if err != nil {
-		return "", err
-	}
-
-	switch identity.Role {
-	case session.RoleMayor:
-		return agent.MayorAddress, nil
-	case session.RoleDeacon:
-		return agent.DeaconAddress, nil
-	case session.RoleWitness:
-		return agent.WitnessAddress(identity.Rig), nil
-	case session.RoleRefinery:
-		return agent.RefineryAddress(identity.Rig), nil
-	case session.RoleCrew:
-		return agent.CrewAddress(identity.Rig, identity.Name), nil
-	case session.RolePolecat:
-		return agent.PolecatAddress(identity.Rig, identity.Name), nil
-	default:
-		return "", fmt.Errorf("unknown role: %s", identity.Role)
-	}
 }
 
 // AgentType represents the type of Gas Town agent.
@@ -240,34 +193,32 @@ func init() {
 }
 
 // categorizeSession determines the agent type from a session name.
-// Handles town ID suffixes correctly using session.ParseSessionName().
+// Handles town ID suffixes correctly using ids.ParseSessionName().
 func categorizeSession(name string) *AgentSession {
-	identity, err := session.ParseSessionName(name)
-	if err != nil {
+	identity := ids.ParseSessionName(name)
+	if identity.Role == "" {
 		return nil
 	}
 
-	agentSession := &AgentSession{Name: name}
+	agentSession := &AgentSession{
+		Name:      name,
+		Rig:       identity.Rig,
+		AgentName: identity.Worker,
+	}
 
 	switch identity.Role {
-	case session.RoleMayor:
+	case "mayor":
 		agentSession.Type = AgentMayor
-	case session.RoleDeacon:
+	case "deacon":
 		agentSession.Type = AgentDeacon
-	case session.RoleWitness:
+	case "witness":
 		agentSession.Type = AgentWitness
-		agentSession.Rig = identity.Rig
-	case session.RoleRefinery:
+	case "refinery":
 		agentSession.Type = AgentRefinery
-		agentSession.Rig = identity.Rig
-	case session.RoleCrew:
+	case "crew":
 		agentSession.Type = AgentCrew
-		agentSession.Rig = identity.Rig
-		agentSession.AgentName = identity.Name
-	case session.RolePolecat:
+	case "polecat":
 		agentSession.Type = AgentPolecat
-		agentSession.Rig = identity.Rig
-		agentSession.AgentName = identity.Name
 	default:
 		return nil
 	}
@@ -277,7 +228,7 @@ func categorizeSession(name string) *AgentSession {
 
 // getAgentSessions returns all categorized Gas Town sessions.
 func getAgentSessions(townRoot string, includePolecats bool) ([]*AgentSession, error) {
-	agentsAPI := agent.ForTown(townRoot)
+	agentsAPI := agent.Default()
 	agentIDs, err := agentsAPI.List()
 	if err != nil {
 		return nil, err
@@ -581,7 +532,7 @@ func buildCollisionReport(townRoot string) (*CollisionReport, error) {
 	}
 
 	// Get all running agents
-	agentsAPI := agent.ForTown(townRoot)
+	agentsAPI := agent.Default()
 	agentIDs, err := agentsAPI.List()
 	if err != nil {
 		agentIDs = nil // Continue even if tmux not running
@@ -591,8 +542,8 @@ func buildCollisionReport(townRoot string) (*CollisionReport, error) {
 	var gtSessions []string
 	for _, id := range agentIDs {
 		sessionName := id.String()
-		// All valid agent addresses should be non-empty
-		if strings.HasPrefix(sessionName, "gt-") || id != "" {
+		// All valid agent addresses should have a role
+		if strings.HasPrefix(sessionName, "gt-") || id.Role != "" {
 			gtSessions = append(gtSessions, sessionName)
 		}
 	}

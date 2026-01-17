@@ -14,19 +14,17 @@ import (
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // getDeaconSessionName returns the Deacon session name.
 func getDeaconSessionName() string {
-	return session.DeaconSessionName()
+	return agent.DeaconAddress.String()
 }
 
 // addressToAgentID converts an agent address to an AgentID.
@@ -38,7 +36,7 @@ func addressToAgentID(address string) (agent.AgentID, error) {
 
 	// Handle placeholders - these aren't real agents
 	if strings.Contains(address, "<") {
-		return "", fmt.Errorf("placeholder address: %s", address)
+		return agent.AgentID{}, fmt.Errorf("placeholder address: %s", address)
 	}
 
 	switch address {
@@ -77,11 +75,11 @@ func addressToAgentID(address string) (agent.AgentID, error) {
 		case "crew":
 			return agent.CrewAddress(first, name), nil
 		default:
-			return "", fmt.Errorf("unknown role: %s", role)
+			return agent.AgentID{}, fmt.Errorf("unknown role: %s", role)
 		}
 	}
 
-	return "", fmt.Errorf("invalid address format: %s", address)
+	return agent.AgentID{}, fmt.Errorf("invalid address format: %s", address)
 }
 
 var deaconCmd = &cobra.Command{
@@ -366,8 +364,8 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	agents := factory.Agents(townRoot)
-	id := agent.AgentID(constants.RoleDeacon)
+	agents := factory.Agents()
+	id := agent.DeaconAddress
 
 	// Check if already running
 	if agents.Exists(id) {
@@ -395,7 +393,7 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// Inject startup nudge for predecessor discovery via /resume
-	startupMsg := session.FormatStartupNudge(session.StartupNudgeConfig{
+	startupMsg := agent.FormatStartupNudge(agent.StartupNudgeConfig{
 		Recipient: "deacon",
 		Sender:    "daemon",
 		Topic:     "patrol",
@@ -405,7 +403,7 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 	// GUPP: Gas Town Universal Propulsion Principle
 	// Send the propulsion nudge to trigger autonomous patrol execution.
 	time.Sleep(2 * time.Second)
-	_ = agents.Nudge(id, session.PropulsionNudgeForRole("deacon", deaconDir))
+	_ = agents.Nudge(id, agent.PropulsionNudgeForRole("deacon", deaconDir))
 
 	fmt.Printf("%s Deacon session started. Attach with: %s\n",
 		style.Bold.Render("✓"),
@@ -415,13 +413,13 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 }
 
 func runDeaconStop(cmd *cobra.Command, args []string) error {
-	townRoot, err := workspace.FindFromCwdOrError()
+	_, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	agents := factory.Agents(townRoot)
-	id := agent.AgentID(constants.RoleDeacon)
+	agents := factory.Agents()
+	id := agent.DeaconAddress
 
 	// Check if running
 	if !agents.Exists(id) {
@@ -439,13 +437,13 @@ func runDeaconStop(cmd *cobra.Command, args []string) error {
 }
 
 func runDeaconAttach(cmd *cobra.Command, args []string) error {
-	townRoot, err := workspace.FindFromCwdOrError()
+	_, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	agents := factory.Agents(townRoot)
-	id := agent.AgentID(constants.RoleDeacon)
+	agents := factory.Agents()
+	id := agent.DeaconAddress
 
 	// Check if running
 	if !agents.Exists(id) {
@@ -480,8 +478,8 @@ func runDeaconStatus(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 
-	agents := factory.Agents(townRoot)
-	id := agent.AgentID(constants.RoleDeacon)
+	agents := factory.Agents()
+	id := agent.DeaconAddress
 
 	if agents.Exists(id) {
 		fmt.Printf("%s Deacon session is %s\n",
@@ -499,7 +497,7 @@ func runDeaconStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runDeaconRestart(cmd *cobra.Command, args []string) error {
-	townRoot, err := workspace.FindFromCwdOrError()
+	_, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
@@ -507,8 +505,8 @@ func runDeaconRestart(cmd *cobra.Command, args []string) error {
 	fmt.Println("Restarting Deacon...")
 
 	// Stop if running (ignore errors - we'll start fresh anyway)
-	agents := factory.Agents(townRoot)
-	id := agent.AgentID(constants.RoleDeacon)
+	agents := factory.Agents()
+	id := agent.DeaconAddress
 	_ = agents.Stop(id, true)
 
 	// Start fresh
@@ -652,7 +650,7 @@ func runDeaconHealthCheck(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid agent address: %w", err)
 	}
-	agentsAPI := agent.ForTown(townRoot)
+	agentsAPI := agent.Default()
 	if !agentsAPI.Exists(agentID) {
 		fmt.Printf("%s Agent %s session not running\n", style.Dim.Render("○"), targetAgent)
 		return nil
@@ -755,7 +753,7 @@ func runDeaconForceKill(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if session exists
-	agentsAPI := agent.ForTown(townRoot)
+	agentsAPI := agent.Default()
 	if !agentsAPI.Exists(agentID) {
 		fmt.Printf("%s Agent %s session not running\n", style.Dim.Render("○"), targetAgent)
 		return nil
@@ -856,9 +854,9 @@ func runDeaconHealthState(cmd *cobra.Command, args []string) error {
 func agentAddressToIDs(address string) (beadID, sessionName string, err error) {
 	switch address {
 	case "deacon":
-		return beads.DeaconBeadIDTown(), session.DeaconSessionName(), nil
+		return beads.DeaconBeadIDTown(), agent.DeaconAddress.String(), nil
 	case "mayor":
-		return beads.MayorBeadIDTown(), session.MayorSessionName(), nil
+		return beads.MayorBeadIDTown(), agent.MayorAddress.String(), nil
 	}
 
 	parts := strings.Split(address, "/")

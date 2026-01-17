@@ -22,10 +22,13 @@ type sessionsStub struct {
 	session.Sessions
 
 	// Inject errors for specific operations
-	StartErr       error
-	StopErr        error
-	SendControlErr error
-	CaptureErr     error
+	StartErr           error
+	StopErr            error
+	SendControlErr     error
+	CaptureErr         error
+	CaptureAllErr      error
+	GetStartCommandErr error
+	ListErr            error
 }
 
 func newSessionsStub(wrapped session.Sessions) *sessionsStub {
@@ -78,7 +81,24 @@ func (s *sessionsStub) WaitFor(id session.SessionID, timeout time.Duration, proc
 }
 
 func (s *sessionsStub) List() ([]session.SessionID, error) {
+	if s.ListErr != nil {
+		return nil, s.ListErr
+	}
 	return s.Sessions.List()
+}
+
+func (s *sessionsStub) CaptureAll(id session.SessionID) (string, error) {
+	if s.CaptureAllErr != nil {
+		return "", s.CaptureAllErr
+	}
+	return s.Sessions.CaptureAll(id)
+}
+
+func (s *sessionsStub) GetStartCommand(id session.SessionID) (string, error) {
+	if s.GetStartCommandErr != nil {
+		return "", s.GetStartCommandErr
+	}
+	return s.Sessions.GetStartCommand(id)
 }
 
 func (s *sessionsStub) GetInfo(id session.SessionID) (*session.Info, error) {

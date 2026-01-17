@@ -90,7 +90,7 @@ func TestWaitForReady_WhenCaptureFailsInitially_Retries(t *testing.T) {
 func TestConfig_WithOnSessionCreated_SetsCallback(t *testing.T) {
 	base := &agent.Config{Name: "test"}
 	called := false
-	callback := func(sess session.Sessions, id session.SessionID) error {
+	callback := func(id session.SessionID) error {
 		called = true
 		return nil
 	}
@@ -101,7 +101,7 @@ func TestConfig_WithOnSessionCreated_SetsCallback(t *testing.T) {
 	assert.Equal(t, "test", result.Name, "should preserve other fields")
 
 	// Verify callback is the one we set
-	_ = result.OnSessionCreated(nil, "")
+	_ = result.OnSessionCreated("")
 	assert.True(t, called)
 }
 
@@ -134,7 +134,7 @@ func TestConfig_WithEnvVars_SetsEnvVars(t *testing.T) {
 }
 
 func TestConfig_Chaining(t *testing.T) {
-	callback := func(sess session.Sessions, id session.SessionID) error { return nil }
+	callback := func(id session.SessionID) error { return nil }
 	hook := func(sess session.Sessions, id session.SessionID) error { return nil }
 	envVars := map[string]string{"KEY": "value"}
 

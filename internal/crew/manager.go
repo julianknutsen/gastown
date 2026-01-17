@@ -72,14 +72,17 @@ func validateCrewName(name string) error {
 type Manager struct {
 	rig      *rig.Rig
 	git      *git.Git
-	agents   agent.Agents
+	agents   agent.AgentObserverStopper // Only needs Exists() and Stop()
 	townRoot string
 }
 
 // NewManager creates a new crew manager.
 // The manager handles workspace management and status queries.
 // Lifecycle operations (Start) should use factory.Start().
-func NewManager(agents agent.Agents, r *rig.Rig, g *git.Git, _, townRoot string) *Manager {
+//
+// The agents parameter only needs AgentObserverStopper (Exists, Stop, GetInfo, List).
+// In production, pass factory.Agents(). In tests, use agent.NewDouble().
+func NewManager(agents agent.AgentObserverStopper, r *rig.Rig, g *git.Git, _, townRoot string) *Manager {
 	return &Manager{
 		rig:      r,
 		git:      g,
@@ -453,7 +456,6 @@ func (m *Manager) agentID(name string) agent.AgentID {
 }
 
 // Stop terminates a crew member's tmux session.
-// Stop stops a crew member's session.
 // Returns ErrNotRunning if the agent was not running (for user messaging).
 // Always cleans up zombie sessions (tmux exists but process dead).
 func (m *Manager) Stop(name string) error {

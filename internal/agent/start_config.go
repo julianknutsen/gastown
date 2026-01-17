@@ -2,8 +2,6 @@ package agent
 
 import (
 	"fmt"
-
-	"github.com/steveyegge/gastown/internal/session"
 )
 
 // StartConfig holds configuration for starting an agent.
@@ -51,7 +49,7 @@ func mergeEnvVars(agentsVars, startVars map[string]string) map[string]string {
 //   - EnvVars from StartConfig are merged with Agents-level EnvVars
 //   - OnCreated callback is per-start (can capture context via closure)
 func (a *Implementation) StartWithConfig(id AgentID, cfg StartConfig) error {
-	sessionID := session.SessionID(id)
+	sessionID := a.sess.SessionIDForAgent(id)
 
 	// Check for existing session and handle zombie detection
 	exists, _ := a.sess.Exists(sessionID)
@@ -76,13 +74,13 @@ func (a *Implementation) StartWithConfig(id AgentID, cfg StartConfig) error {
 	}
 
 	// Create the session
-	if _, err := a.sess.Start(string(id), cfg.WorkDir, command); err != nil {
+	if _, err := a.sess.Start(string(sessionID), cfg.WorkDir, command); err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
 
 	// Run Agents-level callback first (if any)
 	if a.config.OnSessionCreated != nil {
-		if err := a.config.OnSessionCreated(a.sess, sessionID); err != nil {
+		if err := a.config.OnSessionCreated(sessionID); err != nil {
 			_ = a.sess.Stop(sessionID)
 			return fmt.Errorf("session setup: %w", err)
 		}
@@ -90,7 +88,7 @@ func (a *Implementation) StartWithConfig(id AgentID, cfg StartConfig) error {
 
 	// Run per-start callback (if any)
 	if cfg.OnCreated != nil {
-		if err := cfg.OnCreated(a.sess, sessionID); err != nil {
+		if err := cfg.OnCreated(sessionID); err != nil {
 			_ = a.sess.Stop(sessionID)
 			return fmt.Errorf("session setup: %w", err)
 		}

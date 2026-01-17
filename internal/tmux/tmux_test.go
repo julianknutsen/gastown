@@ -50,7 +50,7 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 
 	tm := NewTmux()
-	sessionName := "gt-test-session-" + t.Name()
+	sessionName := "tmux-test-" + t.Name() // Use non-gt prefix to avoid translation
 	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
@@ -265,7 +265,7 @@ func TestEnsureSessionFresh_ZombieSession(t *testing.T) {
 	defer func() { _ = tm.Stop(sessionID) }()
 
 	// Verify it's a zombie (not running Claude/node)
-	if tm.IsClaudeRunning(sessionName) {
+	if tm.IsRuntimeRunning(sessionName, []string{"claude", "node"}) {
 		t.Skip("session unexpectedly has Claude running - can't test zombie case")
 	}
 
@@ -411,13 +411,13 @@ func TestIsAgentRunning_NonexistentSession(t *testing.T) {
 	}
 }
 
-func TestIsClaudeRunning(t *testing.T) {
+func TestIsRuntimeRunning(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not installed")
 	}
 
 	tm := NewTmux()
-	sessionName := "gt-test-claude-" + t.Name()
+	sessionName := "gt-test-runtime-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
 	// Clean up any existing session
@@ -429,16 +429,16 @@ func TestIsClaudeRunning(t *testing.T) {
 	}
 	defer func() { _ = tm.Stop(sessionID) }()
 
-	// IsClaudeRunning should be false (shell is running, not node/claude)
+	// IsRuntimeRunning should be false (shell is running, not node/claude)
 	cmd, _ := tm.GetPaneCommand(sessionName)
 	wantRunning := cmd == "node" || cmd == "claude"
 
-	if got := tm.IsClaudeRunning(sessionName); got != wantRunning {
-		t.Errorf("IsClaudeRunning() = %v, want %v (pane cmd: %q)", got, wantRunning, cmd)
+	if got := tm.IsRuntimeRunning(sessionName, []string{"claude", "node"}); got != wantRunning {
+		t.Errorf("IsRuntimeRunning() = %v, want %v (pane cmd: %q)", got, wantRunning, cmd)
 	}
 }
 
-func TestIsClaudeRunning_VersionPattern(t *testing.T) {
+func TestIsRuntimeRunning_VersionPattern(t *testing.T) {
 	// Test the version pattern regex matching directly
 	// Since we can't easily mock the pane command, test the pattern logic
 	tests := []struct {
@@ -461,18 +461,18 @@ func TestIsClaudeRunning_VersionPattern(t *testing.T) {
 		t.Run(tt.cmd, func(t *testing.T) {
 			// Check if it matches node/claude directly
 			isKnownCmd := tt.cmd == "node" || tt.cmd == "claude"
-			// Check version pattern
+			// Check version pattern (only when "claude" is in processNames)
 			matched, _ := regexp.MatchString(`^\d+\.\d+\.\d+`, tt.cmd)
 
 			got := isKnownCmd || matched
 			if got != tt.want {
-				t.Errorf("IsClaudeRunning logic for %q = %v, want %v", tt.cmd, got, tt.want)
+				t.Errorf("IsRuntimeRunning logic for %q = %v, want %v", tt.cmd, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestIsClaudeRunning_ShellWithNodeChild(t *testing.T) {
+func TestIsRuntimeRunning_ShellWithNodeChild(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not installed")
 	}
@@ -503,18 +503,19 @@ func TestIsClaudeRunning_ShellWithNodeChild(t *testing.T) {
 		t.Logf("Pane command is %q - testing shell+child detection", paneCmd)
 	}
 
-	// Now test IsClaudeRunning - it should detect node as a child process
+	// Now test IsRuntimeRunning - it should detect node as a child process
 	paneCmd, _ := tm.GetPaneCommand(sessionName)
+	claudeProcessNames := []string{"claude", "node"}
 	if paneCmd == "node" {
 		// Direct node detection should work
-		if !tm.IsClaudeRunning(sessionName) {
-			t.Error("IsClaudeRunning should return true when pane command is 'node'")
+		if !tm.IsRuntimeRunning(sessionName, claudeProcessNames) {
+			t.Error("IsRuntimeRunning should return true when pane command is 'node'")
 		}
 	} else {
 		// Pane is a shell (bash/zsh) with node as child
-		// The new child process detection should catch this
-		got := tm.IsClaudeRunning(sessionName)
-		t.Logf("Pane command: %q, IsClaudeRunning: %v", paneCmd, got)
+		// The child process detection should catch this
+		got := tm.IsRuntimeRunning(sessionName, claudeProcessNames)
+		t.Logf("Pane command: %q, IsRuntimeRunning: %v", paneCmd, got)
 		// Note: This may or may not detect depending on how tmux runs the command.
 		// On some systems, tmux runs the command directly; on others via a shell.
 	}

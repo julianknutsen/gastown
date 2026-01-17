@@ -170,7 +170,7 @@ func runPolecatIdentityAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get rig
-	townRoot, r, err := getRig(rigName)
+	_, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -178,7 +178,7 @@ func runPolecatIdentityAdd(cmd *cobra.Command, args []string) error {
 	// Generate name if not provided
 	if polecatName == "" {
 		polecatGit := git.NewGit(r.Path)
-		agents := agent.ForTownPath(townRoot)
+		agents := agent.Default()
 		mgr := polecat.NewManager(agents, r, polecatGit)
 		polecatName, err = mgr.AllocateName()
 		if err != nil {
@@ -219,7 +219,7 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
 	// Get rig
-	townRoot, r, err := getRig(rigName)
+	_, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -233,8 +233,7 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 
 	// Filter for polecat beads in this rig
 	identities := []IdentityInfo{} // Initialize to empty slice (not nil) for JSON
-	agents := agent.ForTownPath(townRoot)
-	polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
+	agents := factory.Agents()
 
 	for id, issue := range agentBeads {
 		// Parse the bead ID to check if it's a polecat for this rig
@@ -258,7 +257,7 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 		}
 
 		// Check if session is running
-		sessionRunning, _ := polecatMgr.IsRunning(name)
+		sessionRunning := agents.Exists(agent.PolecatAddress(rigName, name))
 
 		info := IdentityInfo{
 			Rig:            rigName,
@@ -345,7 +344,7 @@ func runPolecatIdentityShow(cmd *cobra.Command, args []string) error {
 	polecatName := args[1]
 
 	// Get rig
-	townRoot, r, err := getRig(rigName)
+	_, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -362,15 +361,14 @@ func runPolecatIdentityShow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check worktree and session
-	agents := agent.ForTownPath(townRoot)
-	polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
+	agents := factory.Agents()
 	mgr := polecat.NewManager(agents, r, nil)
 
 	worktreeExists := false
 	if p, err := mgr.Get(polecatName); err == nil && p != nil {
 		worktreeExists = true
 	}
-	sessionRunning, _ := polecatMgr.IsRunning(polecatName)
+	sessionRunning := agents.Exists(agent.PolecatAddress(rigName, polecatName))
 
 	// Build details
 	details := IdentityDetails{
@@ -490,7 +488,7 @@ func runPolecatIdentityRename(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get rig
-	townRoot, r, err := getRig(rigName)
+	_, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -515,9 +513,7 @@ func runPolecatIdentityRename(cmd *cobra.Command, args []string) error {
 	}
 
 	// Safety check: no active session
-	polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
-	running, _ := polecatMgr.IsRunning(oldName)
-	if running {
+	if factory.Agents().Exists(agent.PolecatAddress(rigName, oldName)) {
 		return fmt.Errorf("cannot rename: polecat session %s is running", oldName)
 	}
 
@@ -557,7 +553,7 @@ func runPolecatIdentityRemove(cmd *cobra.Command, args []string) error {
 	polecatName := args[1]
 
 	// Get rig
-	townRoot, r, err := getRig(rigName)
+	_, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -582,9 +578,7 @@ func runPolecatIdentityRemove(cmd *cobra.Command, args []string) error {
 		var reasons []string
 
 		// Check for active session
-		polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
-		running, _ := polecatMgr.IsRunning(polecatName)
-		if running {
+		if factory.Agents().Exists(agent.PolecatAddress(rigName, polecatName)) {
 			reasons = append(reasons, "session is running")
 		}
 

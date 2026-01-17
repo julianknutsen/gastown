@@ -14,7 +14,6 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/townlog"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -632,13 +631,11 @@ func selfKillSession(townRoot string, roleInfo RoleInfo) error {
 	}
 
 	// Log to events (JSON audit log with structured payload)
-	// Use unique name for the session name in the payload (for backwards compat with logs)
-	uniqueName := session.ToUniqueHumanReadableName(session.SessionID(agentID), townRoot)
 	_ = events.LogFeed(events.TypeSessionDeath, agentID.String(),
-		events.SessionDeathPayload(uniqueName, agentID.String(), "self-clean: done means gone", "gt done"))
+		events.SessionDeathPayload(agentID.String(), agentID.String(), "self-clean: done means gone", "gt done"))
 
 	// Kill our own session (not graceful - immediate termination)
-	agentsAPI := agent.ForTown(townRoot)
+	agentsAPI := agent.Default()
 	if err := agentsAPI.Stop(agentID, false); err != nil {
 		return fmt.Errorf("killing session for %s: %w", agentID, err)
 	}

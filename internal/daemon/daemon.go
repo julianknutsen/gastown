@@ -282,8 +282,8 @@ func (d *Daemon) runDegradedBootTriage(b *boot.Boot) {
 	}
 
 	// Simple check: is Deacon agent alive?
-	agents := factory.Agents(d.config.TownRoot)
-	deaconID := agent.AgentID(constants.RoleDeacon)
+	agents := factory.Agents()
+	deaconID := agent.DeaconAddress
 	if !agents.Exists(deaconID) {
 		d.logger.Println("Deacon not running, starting...")
 		d.ensureDeaconRunning()
@@ -337,8 +337,8 @@ func (d *Daemon) checkDeaconHeartbeat() {
 
 	d.logger.Printf("Deacon heartbeat is stale (%s old), checking agent...", age.Round(time.Minute))
 
-	agents := factory.Agents(d.config.TownRoot)
-	deaconID := agent.AgentID(constants.RoleDeacon)
+	agents := factory.Agents()
+	deaconID := agent.DeaconAddress
 
 	// Check if agent exists
 	if !agents.Exists(deaconID) {
@@ -704,7 +704,7 @@ func listPolecatWorktrees(polecatsDir string) ([]string, error) {
 func (d *Daemon) checkPolecatHealth(rigName, polecatName string) {
 	// Check if polecat agent exists using factory.Agents().Exists()
 	polecatID := agent.PolecatAddress(rigName, polecatName)
-	running := factory.Agents(d.config.TownRoot).Exists(polecatID)
+	running := factory.Agents().Exists(polecatID)
 	if running {
 		// Agent is alive - nothing to do
 		return
@@ -732,7 +732,7 @@ func (d *Daemon) checkPolecatHealth(rigName, polecatName string) {
 		polecatID, info.HookBead)
 
 	// Track this death for mass death detection
-	d.recordSessionDeath(string(polecatID))
+	d.recordSessionDeath(polecatID.String())
 
 	// Auto-restart the polecat using factory
 	if err := d.restartPolecatAgent(rigName, polecatName); err != nil {

@@ -10,7 +10,7 @@ func resolveTargetAgent(target string) (agentID string, err error) {
 	if err != nil {
 		return "", err
 	}
-	return string(id), nil
+	return id.String(), nil
 }
 
 // resolveSelfTarget determines agent identity for slinging to self.

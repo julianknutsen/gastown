@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/agent"
+	"github.com/steveyegge/gastown/internal/ids"
 )
 
 // AgentChecker is the minimal interface for checking if agents exist.
@@ -23,7 +24,7 @@ type StaleHookConfig struct {
 	// DryRun if true, only reports what would be done without making changes.
 	DryRun bool `json:"dry_run"`
 	// AgentChecker is used to check if agents exist.
-	// If nil, agent.ForTown() is used.
+	// If nil, agent.Default() is used.
 	// This field enables testing without real tmux sessions.
 	AgentChecker AgentChecker `json:"-"`
 }
@@ -87,10 +88,10 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 	// Filter to stale ones (older than threshold)
 	threshold := time.Now().Add(-cfg.MaxAge)
 
-	// Use injected AgentChecker if provided, otherwise use agent.ForTown
+	// Use injected AgentChecker if provided, otherwise use agent.Default
 	checker := cfg.AgentChecker
 	if checker == nil {
-		checker = agent.ForTown(townRoot)
+		checker = agent.Default()
 	}
 
 	for _, bead := range hookedBeads {
@@ -109,9 +110,9 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 		}
 
 		// Check if assignee agent is still alive
-		// The assignee format (e.g., "gastown/polecats/max") IS the AgentID format
+		// The assignee format (e.g., "gastown/polecat/max") IS the AgentID format
 		if bead.Assignee != "" {
-			hookResult.AgentAlive = checker.Exists(agent.AgentID(bead.Assignee))
+			hookResult.AgentAlive = checker.Exists(ids.ParseAddress(bead.Assignee))
 		}
 
 		// If agent is dead/gone and not dry run, unhook the bead

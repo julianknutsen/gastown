@@ -306,7 +306,7 @@ func runShutdown(cmd *cobra.Command, args []string) error {
 	townRoot, _ := workspace.FindFromCwd()
 
 	// Create agents interface - use nil config to include all sessions (not just healthy ones)
-	agents := agent.ForTownWithConfig(townRoot, nil)
+	agents := agent.Default()
 
 	// List all agents
 	agentList, err := agents.List()
@@ -355,11 +355,9 @@ func runShutdown(cmd *cobra.Command, args []string) error {
 // AgentID format: "mayor", "deacon", "rig/witness", "rig/refinery", "rig/crew/name", "rig/polecat/name"
 func categorizeAgents(agents []agent.AgentID) (toStop, preserved []agent.AgentID) {
 	for _, id := range agents {
-		idStr := string(id)
-
-		// Determine role from AgentID format
-		isCrew := strings.Contains(idStr, "/crew/")
-		isPolecat := strings.Contains(idStr, "/polecat/")
+		// Determine role from AgentID struct
+		isCrew := id.Role == "crew"
+		isPolecat := id.Role == "polecat"
 
 		// Decide based on flags
 		if shutdownPolecatsOnly {

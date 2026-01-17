@@ -194,11 +194,8 @@ func runCosts(cmd *cobra.Command, args []string) error {
 }
 
 func runLiveCosts() error {
-	// Find workspace for proper agent resolution
-	townRoot, _ := workspace.FindFromCwd()
-
 	// Create agents interface - use nil config to include all sessions
-	agents := agent.ForTownWithConfig(townRoot, nil)
+	agents := agent.Default()
 
 	// Get all agents
 	agentList, err := agents.List()
@@ -226,7 +223,7 @@ func runLiveCosts() error {
 		running := agents.Exists(agentID)
 
 		costs = append(costs, SessionCost{
-			Session: string(agentID),
+			Session: agentID.String(),
 			Role:    role,
 			Rig:     rig,
 			Worker:  worker,
@@ -744,11 +741,8 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 	// Build AgentID from parsed info
 	agentID := buildAgentID(role, rig, worker)
 
-	// Find workspace for proper agent resolution
-	townRoot, _ := workspace.FindFromCwd()
-
 	// Create agents interface
-	agents := agent.ForTownWithConfig(townRoot, nil)
+	agents := agent.Default()
 
 	// Capture pane content
 	content, err := agents.CaptureAll(agentID)
@@ -957,13 +951,7 @@ func buildAgentID(role, rig, worker string) agent.AgentID {
 		return agent.CrewAddress(rig, worker)
 	default:
 		// Fallback: construct manually
-		if rig != "" && worker != "" {
-			return agent.AgentID(rig + "/" + role + "/" + worker)
-		}
-		if rig != "" {
-			return agent.AgentID(rig + "/" + role)
-		}
-		return agent.AgentID(role)
+		return agent.AgentID{Role: role, Rig: rig, Worker: worker}
 	}
 }
 

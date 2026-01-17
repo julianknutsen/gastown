@@ -72,7 +72,7 @@ func runRigPark(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Parking rig %s...\n", style.Bold.Render(rigName))
 
 	var stoppedAgents []string
-	agents := agent.ForTownPath(townRoot)
+	agents := agent.Default()
 
 	// Stop witness if running
 	witnessID := agent.WitnessAddress(rigName)

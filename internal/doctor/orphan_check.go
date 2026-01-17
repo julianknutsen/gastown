@@ -108,11 +108,6 @@ func (c *OrphanSessionCheck) Run(ctx *CheckContext) *CheckResult {
 			continue
 		}
 
-		// Filter to sessions belonging to this town (skip sessions from other towns)
-		if !session.MatchesTown(sess, ctx.TownRoot) {
-			continue
-		}
-
 		if c.isValidSession(sess, validRigs, mayorSession, deaconSession) {
 			validCount++
 		} else {
@@ -221,32 +216,29 @@ func (c *OrphanSessionCheck) getValidRigs(townRoot string) []string {
 //
 // Note: We can't verify polecat names without reading state, so we're permissive.
 func (c *OrphanSessionCheck) isValidSession(sess string, validRigs []string, mayorSession, deaconSession string) bool {
-	// Strip town suffix for comparison with base session names
-	baseName := session.StripTownID(sess)
-
 	// Mayor session is always valid
-	if mayorSession != "" && baseName == mayorSession {
+	if mayorSession != "" && sess == mayorSession {
 		return true
 	}
 
 	// Deacon session is always valid
-	if deaconSession != "" && baseName == deaconSession {
+	if deaconSession != "" && sess == deaconSession {
 		return true
 	}
 
 	// Boot session is always valid
-	if baseName == session.BootSessionName {
+	if sess == session.BootSessionName {
 		return true
 	}
 
 	// For rig-specific sessions (gt-* prefix), extract rig name
 	// Pattern: gt-<rig>-<role> or gt-<rig>-<polecat>
-	if !strings.HasPrefix(baseName, session.Prefix) {
+	if !strings.HasPrefix(sess, session.Prefix) {
 		// Not a rig-level session and not matched above - invalid
 		return false
 	}
 
-	suffix := strings.TrimPrefix(baseName, session.Prefix)
+	suffix := strings.TrimPrefix(sess, session.Prefix)
 	parts := strings.SplitN(suffix, "-", 2)
 	if len(parts) < 2 {
 		// Invalid format - must be gt-<rig>-<something>

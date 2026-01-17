@@ -301,7 +301,7 @@ func (d *Daemon) getRoleConfigForIdentity(identity string) (*beads.RoleConfig, *
 func identityToAgentID(identity string) (agentpkg.AgentID, error) {
 	parsed, err := parseIdentity(identity)
 	if err != nil {
-		return "", err
+		return agentpkg.AgentID{}, err
 	}
 
 	switch parsed.RoleType {
@@ -318,7 +318,7 @@ func identityToAgentID(identity string) (agentpkg.AgentID, error) {
 	case "polecat":
 		return agentpkg.PolecatAddress(parsed.RigName, parsed.AgentName), nil
 	default:
-		return "", fmt.Errorf("unknown role type: %s", parsed.RoleType)
+		return agentpkg.AgentID{}, fmt.Errorf("unknown role type: %s", parsed.RoleType)
 	}
 }
 
@@ -389,7 +389,7 @@ func (d *Daemon) isAgentRunning(identity string) bool {
 		return false
 	}
 
-	agents := factory.Agents(d.config.TownRoot)
+	agents := factory.Agents()
 
 	switch parsed.RoleType {
 	case "mayor":
@@ -422,7 +422,7 @@ func (d *Daemon) stopAgent(identity string) error {
 		return err
 	}
 
-	agents := factory.Agents(d.config.TownRoot)
+	agents := factory.Agents()
 
 	switch parsed.RoleType {
 	case "mayor":
@@ -721,7 +721,7 @@ func (d *Daemon) checkRigGUPPViolations(rigName string) {
 
 		// Check if agent is running using factory.Agents().Exists()
 		polecatID := agentpkg.PolecatAddress(rigName, polecatName)
-		running := factory.Agents(d.config.TownRoot).Exists(polecatID)
+		running := factory.Agents().Exists(polecatID)
 
 		if running {
 			// Session is alive - check if it's been stuck too long
@@ -814,7 +814,7 @@ func (d *Daemon) checkRigOrphanedWork(rigName string) {
 
 		// Check if agent is running using factory.Agents().Exists()
 		polecatID := agentpkg.PolecatAddress(rigName, polecatName)
-		running := factory.Agents(d.config.TownRoot).Exists(polecatID)
+		running := factory.Agents().Exists(polecatID)
 
 		// Agent running = not orphaned (work is being processed)
 		if running {

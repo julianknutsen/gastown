@@ -283,7 +283,7 @@ func runDegradedTriage(b *boot.Boot) (action, target string, err error) {
 		return "error", "deacon", fmt.Errorf("not in a town workspace")
 	}
 
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 	deaconID := agent.DeaconAddress
 
 	// Check if Deacon agent exists

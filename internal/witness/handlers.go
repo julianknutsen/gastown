@@ -651,8 +651,7 @@ func NukePolecat(workDir, rigName, polecatName string) error {
 	// We do this explicitly here because gt polecat nuke may fail to kill the
 	// session due to rig loading issues or race conditions with IsRunning checks.
 	// See: gt-g9ft5 - sessions were piling up because nuke wasn't killing them.
-	townRoot := filepath.Dir(workDir) // workDir is rig path, parent is town root
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 	id := agent.PolecatAddress(rigName, polecatName)
 
 	// Kill the agent session if running (graceful=true sends Ctrl-C first)

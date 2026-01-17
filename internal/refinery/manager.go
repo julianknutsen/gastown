@@ -26,7 +26,7 @@ var ErrNoQueue = errors.New("no items in queue")
 // Start/Stop operations are handled via factory.Start()/factory.Agents().Stop().
 type Manager struct {
 	stateManager *agent.StateManager[Refinery]
-	agents       agent.Agents
+	agents       agent.AgentObserver // Only needs Exists() for status checks
 	rigName      string
 	rigPath      string
 	address      agent.AgentID
@@ -37,7 +37,10 @@ type Manager struct {
 // NewManager creates a new refinery manager for a rig.
 // The manager handles status queries and queue operations.
 // Lifecycle operations (Start/Stop) should use factory.Start()/factory.Agents().Stop().
-func NewManager(agents agent.Agents, r *rig.Rig, _ string) *Manager {
+//
+// The agents parameter only needs to implement AgentObserver (Exists, GetInfo, List).
+// In production, pass factory.Agents(). In tests, use agent.NewObserverDouble().
+func NewManager(agents agent.AgentObserver, r *rig.Rig, _ string) *Manager {
 	stateFactory := func() *Refinery {
 		return &Refinery{RigName: r.Name, State: agent.StateStopped}
 	}

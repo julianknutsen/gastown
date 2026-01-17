@@ -9,14 +9,26 @@ import (
 // =============================================================================
 // Test Stubs for Error Injection
 //
-// These stubs wrap pure doubles and allow injecting errors for testing
-// error paths. This keeps the doubles as pure drop-in replacements.
+// Test Double Taxonomy (Meszaros/Fowler):
+//   - STUB: Provides canned responses and error injection
+//   - Wraps a FAKE (Double) for normal operations
+//   - Intercepts specific methods to return configured errors
+//
+// These stubs wrap pure fakes and allow injecting errors for testing
+// error paths. This keeps the fakes as pure drop-in replacements.
 //
 // Exported so other packages (e.g., refinery) can use them for testing.
 // =============================================================================
 
-// AgentsStub wraps an Agents implementation and allows injecting errors.
-// Use this for testing error paths that can't be triggered with Double.
+// AgentsStub is a STUB wrapper for testing error paths.
+// Wraps an Agents implementation (typically Double) and injects errors.
+//
+// Example:
+//
+//	fake := agent.NewDouble()
+//	stub := agent.NewAgentsStub(fake)
+//	stub.StartErr = errors.New("start failed")
+//	// Now StartWithConfig will return the injected error
 type AgentsStub struct {
 	Agents
 

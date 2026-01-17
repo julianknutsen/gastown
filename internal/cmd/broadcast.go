@@ -95,7 +95,7 @@ func runBroadcast(cmd *cobra.Command, args []string) error {
 	}
 
 	// Send nudges
-	agentsAPI := agent.ForTown(townRoot)
+	agentsAPI := agent.Default()
 	var succeeded, failed int
 	var failures []string
 

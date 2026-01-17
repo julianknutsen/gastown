@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -109,13 +108,13 @@ func runMayorStart(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorStop(cmd *cobra.Command, args []string) error {
-	townRoot, err := workspace.FindFromCwdOrError()
+	_, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	agents := factory.Agents(townRoot)
-	id := agent.AgentID(constants.RoleMayor)
+	agents := factory.Agents()
+	id := agent.MayorAddress
 
 	fmt.Println("Stopping Mayor session...")
 	if !agents.Exists(id) {
@@ -135,8 +134,8 @@ func runMayorAttach(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	agents := factory.Agents(townRoot)
-	id := agent.AgentID(constants.RoleMayor)
+	agents := factory.Agents()
+	id := agent.MayorAddress
 
 	if !agents.Exists(id) {
 		// Auto-start if not running
@@ -152,13 +151,13 @@ func runMayorAttach(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorStatus(cmd *cobra.Command, args []string) error {
-	townRoot, err := workspace.FindFromCwdOrError()
+	_, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	agents := factory.Agents(townRoot)
-	id := agent.AgentID(constants.RoleMayor)
+	agents := factory.Agents()
+	id := agent.MayorAddress
 
 	if !agents.Exists(id) {
 		fmt.Printf("%s Mayor session is %s\n",
@@ -177,14 +176,14 @@ func runMayorStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runMayorRestart(cmd *cobra.Command, args []string) error {
-	townRoot, err := workspace.FindFromCwdOrError()
+	_, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
 	// Stop if running (ignore errors - we'll start fresh anyway)
-	agents := factory.Agents(townRoot)
-	id := agent.AgentID(constants.RoleMayor)
+	agents := factory.Agents()
+	id := agent.MayorAddress
 	_ = agents.Stop(id, true)
 
 	// Start fresh

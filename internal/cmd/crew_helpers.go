@@ -14,9 +14,7 @@ import (
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -251,29 +249,21 @@ func ensureDefaultBranch(dir, roleName, rigPath string) bool { //nolint:unparam 
 }
 
 // findRigCrewSessions returns all crew sessions for a given rig, sorted alphabetically.
-// townID filters to sessions in the same town (empty matches any).
-func findRigCrewSessions(rigName, townID string) ([]string, error) { //nolint:unparam // error return kept for future use
-	t := tmux.NewTmux()
-	allSessions, err := t.List()
+func findRigCrewSessions(rigName string) ([]string, error) { //nolint:unparam // error return kept for future use
+	agents := factory.Agents()
+	allIDs, err := agents.List()
 	if err != nil {
-		// No tmux server or no sessions
+		// No agents running
 		return nil, nil
 	}
 
 	var sessions []string
 
-	for _, id := range allSessions {
-		name := string(id)
-		// Parse session name to check role, rig, and town
-		identity, err := session.ParseSessionName(name)
-		if err != nil {
-			continue
-		}
-		// Match: crew role, same rig, same town (or legacy with no town ID)
-		if identity.Role == session.RoleCrew &&
-			identity.Rig == rigName &&
-			(townID == "" || identity.TownID == "" || identity.TownID == townID) {
-			sessions = append(sessions, name)
+	for _, id := range allIDs {
+		role, rig, _ := id.Parse()
+		// Match: crew role, same rig
+		if role == constants.RoleCrew && rig == rigName {
+			sessions = append(sessions, id.String())
 		}
 	}
 

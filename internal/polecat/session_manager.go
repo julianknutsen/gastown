@@ -31,7 +31,7 @@ type SessionManager struct {
 // NewSessionManager creates a new polecat session manager for a rig.
 // The manager handles status queries and session operations.
 // Lifecycle operations (Start) should use factory.Start().
-func NewSessionManager(agents agent.Agents, r *rig.Rig, _, townRoot string) *SessionManager {
+func NewSessionManager(agents agent.Agents, r *rig.Rig, townRoot string) *SessionManager {
 	return &SessionManager{
 		agents:   agents,
 		rig:      r,
@@ -222,7 +222,7 @@ func (m *SessionManager) List() ([]SessionInfo, error) {
 	var infos []SessionInfo
 
 	for _, id := range agentIDs {
-		idStr := string(id)
+		idStr := id.String()
 		if !strings.HasPrefix(idStr, prefix) {
 			continue
 		}

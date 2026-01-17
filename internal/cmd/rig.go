@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/deps"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/ids"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
@@ -591,7 +592,7 @@ func runRigReset(cmd *cobra.Command, args []string) error {
 
 // runResetStale resets in_progress issues whose assigned agent no longer has a session.
 func runResetStale(bd *beads.Beads, townRoot string, dryRun bool) error {
-	agents := agent.ForTownPath(townRoot)
+	agents := agent.Default()
 
 	// Get all in_progress issues
 	issues, err := bd.List(beads.ListOptions{
@@ -622,8 +623,8 @@ func runResetStale(bd *beads.Beads, townRoot string, dryRun bool) error {
 		}
 
 		// Check if agent is running (session exists AND process alive)
-		agentID, err := sessionNameToAgentID(sessionName)
-		if err != nil {
+		agentID := ids.ParseSessionName(sessionName)
+		if agentID.Role == "" {
 			continue // Couldn't parse session name
 		}
 		if agents.Exists(agentID) {
@@ -946,7 +947,7 @@ func runRigShutdown(cmd *cobra.Command, args []string) error {
 	}
 
 	// 2. Stop the refinery
-	agents := factory.Agents(townRoot)
+	agents := factory.Agents()
 	refineryID := agent.RefineryAddress(rigName)
 	if agents.Exists(refineryID) {
 		fmt.Printf("  Stopping refinery...\n")
@@ -1021,7 +1022,7 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	agents := agent.ForTownPath(townRoot)
+	agents := agent.Default()
 
 	// Header
 	fmt.Printf("%s\n", style.Bold.Render(rigName))
@@ -1221,7 +1222,7 @@ func runRigStop(cmd *cobra.Command, args []string) error {
 		}
 
 		// 2. Stop the refinery
-		agents := factory.Agents(townRoot)
+		agents := factory.Agents()
 		refineryID := agent.RefineryAddress(rigName)
 		if agents.Exists(refineryID) {
 			fmt.Printf("  Stopping refinery...\n")
@@ -1352,7 +1353,7 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 		}
 
 		// 2. Stop the refinery
-		agents := factory.Agents(townRoot)
+		agents := factory.Agents()
 		refineryID := agent.RefineryAddress(rigName)
 		if agents.Exists(refineryID) {
 			fmt.Printf("    Stopping refinery...\n")

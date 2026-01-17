@@ -13,7 +13,7 @@ import (
 // Start/Stop operations are handled via factory.Start()/factory.Agents().Stop().
 type Manager struct {
 	stateManager *agent.StateManager[Witness]
-	agents       agent.Agents
+	agents       agent.AgentObserver // Only needs Exists() for status checks
 	rigName      string
 	rigPath      string
 	address      agent.AgentID
@@ -23,7 +23,10 @@ type Manager struct {
 // NewManager creates a new witness manager for a rig.
 // The manager handles status queries and state reconciliation.
 // Lifecycle operations (Start/Stop) should use factory.Start()/factory.Agents().Stop().
-func NewManager(agents agent.Agents, r *rig.Rig, _ string) *Manager {
+//
+// The agents parameter only needs to implement AgentObserver (Exists, GetInfo, List).
+// In production, pass factory.Agents(). In tests, use agent.NewObserverDouble().
+func NewManager(agents agent.AgentObserver, r *rig.Rig, _ string) *Manager {
 	stateFactory := func() *Witness {
 		return &Witness{
 			RigName: r.Name,

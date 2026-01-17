@@ -4,11 +4,18 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/ids"
 )
 
-// Double is an in-memory test double for the Sessions interface.
-// It implements the same contract as real tmux but without subprocess overhead.
+// Double is a FAKE with SPY capabilities for the Sessions interface.
+//
+// Test Double Taxonomy (Meszaros/Fowler):
+//   - FAKE: Working in-memory implementation (no real tmux subprocess)
+//   - SPY: Records method calls for verification (ControlLog, NudgeLog)
+//
 // Use conformance tests to verify it matches real tmux behavior.
+// For error injection, wrap with a stub that intercepts specific methods.
 type Double struct {
 	mu             sync.RWMutex
 	sessions       map[string]*doubleSession
@@ -16,7 +23,7 @@ type Double struct {
 }
 
 type doubleSession struct {
-	name       string
+	name       string // session name
 	workDir    string
 	command    string
 	env        map[string]string
@@ -255,12 +262,12 @@ func (d *Double) GetStartCommand(id SessionID) (string, error) {
 
 // --- Management ---
 
-// List returns all session IDs.
+// List returns all SessionIDs.
 func (d *Double) List() ([]SessionID, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	ids := make([]SessionID, 0, len(d.sessions))
+	var ids []SessionID
 	for name := range d.sessions {
 		ids = append(ids, SessionID(name))
 	}
@@ -278,6 +285,22 @@ func (d *Double) SetEnv(id SessionID, key, value string) error {
 	}
 
 	sess.env[key] = value
+	return nil
+}
+
+// SetEnvVars sets multiple environment variables in a session.
+func (d *Double) SetEnvVars(id SessionID, vars map[string]string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	sess, exists := d.sessions[string(id)]
+	if !exists {
+		return errors.New("session not found: " + string(id))
+	}
+
+	for k, v := range vars {
+		sess.env[k] = v
+	}
 	return nil
 }
 
@@ -450,4 +473,9 @@ func (d *Double) GetCurrentSession() SessionID {
 	defer d.mu.RUnlock()
 
 	return SessionID(d.currentSession)
+}
+
+// SessionIDForAgent converts an agent address to its SessionID.
+func (d *Double) SessionIDForAgent(id ids.AgentID) SessionID {
+	return SessionID(SessionNameFromAgentID(id))
 }

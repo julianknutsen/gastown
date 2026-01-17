@@ -106,7 +106,7 @@ func TestAddressToAgentID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.address, func(t *testing.T) {
-			got := string(addressToAgentID(tt.address))
+			got := addressToAgentID(tt.address).String()
 			if got != tt.want {
 				t.Errorf("addressToAgentID(%q) = %q, want %q", tt.address, got, tt.want)
 			}

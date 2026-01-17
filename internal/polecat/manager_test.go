@@ -968,7 +968,7 @@ func TestReconcilePoolWith_CallsStopForNamesWithoutDirs(t *testing.T) {
 	foundFuriosa := false
 	for _, call := range stopCalls {
 		// Extract name from AgentID (format: "rig/polecat/name")
-		name := extractPolecatName(string(call.ID))
+		name := extractPolecatName(call.ID.String())
 		if name == "furiosa" {
 			foundFuriosa = true
 		}

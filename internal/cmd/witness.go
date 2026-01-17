@@ -208,16 +208,28 @@ func splitEnvOverride(s string) []string {
 	return nil
 }
 
+// parseEnvOverrides converts a slice of KEY=VALUE strings into a map.
+// Invalid entries (without =) are silently skipped.
+func parseEnvOverrides(overrides []string) map[string]string {
+	result := make(map[string]string)
+	for _, override := range overrides {
+		if parts := splitEnvOverride(override); len(parts) == 2 {
+			result[parts[0]] = parts[1]
+		}
+	}
+	return result
+}
+
 func runWitnessStop(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
-	townRoot, err := workspace.FindFromCwdOrError()
+	_, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
 	// Use factory.Agents().Stop() with WitnessAddress
-	agents := factory.Agents(townRoot)
+	agents := factory.Agents()
 	id := agent.WitnessAddress(rigName)
 
 	if !agents.Exists(id) {
@@ -246,9 +258,11 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting status: %w", err)
 	}
 
-	// Check actual session state via manager (more reliable than state file)
-	sessionRunning := mgr.IsRunning()
-	sessionName := mgr.SessionName()
+	// Check actual session state (more reliable than state file)
+	agents := factory.Agents()
+	witnessID := agent.WitnessAddress(rigName)
+	sessionRunning := agents.Exists(witnessID)
+	sessionName := witnessSessionName(rigName)
 
 	// Reconcile state: session is the source of truth for background mode
 	if sessionRunning && w.State != agent.StateRunning {

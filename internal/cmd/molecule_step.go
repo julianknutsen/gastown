@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -297,7 +296,7 @@ func handleStepContinue(cwd, townRoot, _ string, nextStep *beads.Issue, dryRun b
 	fmt.Printf("%s Next step pinned: %s\n", style.Bold.Render("📌"), nextStep.ID)
 
 	// Respawn the pane
-	if !tmux.IsInsideTmux() {
+	if os.Getenv("TMUX") == "" {
 		// Not in tmux - just print next action
 		fmt.Printf("\n%s Not in tmux - start new session with 'gt prime'\n",
 			style.Dim.Render("ℹ"))
@@ -313,7 +312,7 @@ func handleStepContinue(cwd, townRoot, _ string, nextStep *beads.Issue, dryRun b
 	fmt.Printf("\n%s Respawning for next step...\n", style.Bold.Render("🔄"))
 
 	// Respawn - original command is reused, new session discovers pinned work via hooks
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 	return agents.Respawn(selfID)
 }
 

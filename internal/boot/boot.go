@@ -66,15 +66,14 @@ func New(townRoot, aiRuntime string) (*Boot, error) {
 
 	// Build agents with boot env vars
 	t := tmux.NewTmux()
-	sess := session.NewTownSessions(t, townRoot)
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:     constants.RoleBoot,
 		TownRoot: townRoot,
 	})
 
 	return &Boot{
-		agents:    agent.New(sess, agent.FromPreset(aiRuntime).WithEnvVars(envVars)),
-		id:        agent.AgentID(constants.RoleBoot),
+		agents:    agent.New(t, agent.FromPreset(aiRuntime).WithEnvVars(envVars)),
+		id:        agent.BootAddress,
 		townRoot:  townRoot,
 		workDir:   workDir,
 		aiRuntime: aiRuntime,
@@ -85,7 +84,7 @@ func New(townRoot, aiRuntime string) (*Boot, error) {
 func NewWithAgents(agents agent.Agents, townRoot, workDir string) *Boot {
 	return &Boot{
 		agents:   agents,
-		id:       agent.AgentID(constants.RoleBoot),
+		id:       agent.BootAddress,
 		townRoot: townRoot,
 		workDir:  workDir,
 	}

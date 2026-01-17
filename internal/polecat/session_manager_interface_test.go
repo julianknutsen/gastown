@@ -29,7 +29,7 @@ func TestStop_TerminatesSession(t *testing.T) {
 	agents.CreateAgent(testPolecat("Toast"))
 
 	r := &rig.Rig{Name: "testrig", Path: root}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	// Stop the agent
 	err := m.Stop("Toast", false)
@@ -50,7 +50,7 @@ func TestStop_ForceSkipsGracefulShutdown(t *testing.T) {
 	agents.CreateAgent(testPolecat("Toast"))
 
 	r := &rig.Rig{Name: "testrig", Path: root}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	// Force stop
 	err := m.Stop("Toast", true)
@@ -69,7 +69,7 @@ func TestIsRunning_ReturnsTrue(t *testing.T) {
 	agents.CreateAgent(testPolecat("Toast"))
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	running, err := m.IsRunning("Toast")
 	if err != nil {
@@ -85,7 +85,7 @@ func TestIsRunning_ReturnsFalse(t *testing.T) {
 	// Don't create the agent
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	running, err := m.IsRunning("Toast")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestCapture_WhenAgentExists_Succeeds(t *testing.T) {
 	agents.CreateAgent(testPolecat("Toast"))
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	// Capture should succeed (returns empty from Double)
 	_, err := m.Capture("Toast", 50)
@@ -115,7 +115,7 @@ func TestCapture_WhenAgentNotExists_ReturnsError(t *testing.T) {
 	// Don't create the agent
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	_, err := m.Capture("Toast", 50)
 	if err != ErrSessionNotFound {
@@ -128,7 +128,7 @@ func TestInject_WhenAgentExists_Succeeds(t *testing.T) {
 	agents.CreateAgent(testPolecat("Toast"))
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	message := "Hello, polecat!"
 	err := m.Inject("Toast", message)
@@ -148,7 +148,7 @@ func TestInject_WhenAgentNotExists_ReturnsError(t *testing.T) {
 	// Don't create the agent
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	err := m.Inject("Toast", "hello")
 	if err != ErrSessionNotFound {
@@ -165,7 +165,7 @@ func TestList_FiltersByRigPrefix(t *testing.T) {
 	agents.CreateAgent(agent.MayorAddress)                      // Not a polecat
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	infos, err := m.List()
 	if err != nil {
@@ -198,7 +198,7 @@ func TestStatus_WhenAgentExists_ReturnsRunning(t *testing.T) {
 	agents.CreateAgent(testPolecat("Toast"))
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	info, err := m.Status("Toast")
 	if err != nil {
@@ -224,7 +224,7 @@ func TestStatus_WhenAgentNotExists_ReturnsNotRunning(t *testing.T) {
 	// Don't create the agent
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	info, err := m.Status("Toast")
 	if err != nil {
@@ -243,7 +243,7 @@ func TestStopAll_StopsAllSessions(t *testing.T) {
 	agents.CreateAgent(testPolecat("Max"))
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	err := m.StopAll(false)
 	if err != nil {
@@ -261,7 +261,7 @@ func TestStopAll_EmptyList_Succeeds(t *testing.T) {
 	// No agents added
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	err := m.StopAll(false)
 	if err != nil {
@@ -274,7 +274,7 @@ func TestStopAll_Force_SkipsGracefulShutdown(t *testing.T) {
 	agents.CreateAgent(testPolecat("Toast"))
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	err := m.StopAll(true) // force=true
 	if err != nil {
@@ -299,7 +299,7 @@ func TestAttach_WhenAgentExists_Succeeds(t *testing.T) {
 	agents.CreateAgent(testPolecat("Toast"))
 
 	r := &rig.Rig{Name: "testrig", Path: root}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	// Attach should succeed (agent.Double returns nil for Attach)
 	err := m.Attach("Toast")
@@ -313,7 +313,7 @@ func TestAttach_WhenAgentNotExists_ReturnsError(t *testing.T) {
 	// Don't create the agent
 
 	r := &rig.Rig{Name: "testrig", Path: "/tmp"}
-	m := NewSessionManager(agents, r, "", "")
+	m := NewSessionManager(agents, r, "")
 
 	err := m.Attach("Toast")
 	if err != ErrSessionNotFound {

@@ -321,7 +321,7 @@ func runSlingFormula(args []string) error {
 		return nil
 	}
 
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 	if err := agents.Nudge(agentID, prompt); err != nil {
 		// Graceful fallback
 		fmt.Printf("%s Could not nudge: %v\n", style.Dim.Render("○"), err)

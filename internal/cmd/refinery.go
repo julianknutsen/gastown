@@ -326,7 +326,7 @@ func runRefineryStop(cmd *cobra.Command, args []string) error {
 	}
 
 	// Use factory.Agents().Stop() with RefineryAddress
-	agents := factory.Agents(townRoot)
+	agents := factory.Agents()
 	id := agent.RefineryAddress(rigName)
 
 	if !agents.Exists(id) {
@@ -504,7 +504,7 @@ func runRefineryAttach(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if session exists
-	agents := factory.Agents(townRoot)
+	agents := factory.Agents()
 	refineryID := agent.RefineryAddress(rigName)
 	if !agents.Exists(refineryID) {
 		// Auto-start if not running
@@ -729,4 +729,38 @@ func runRefineryBlocked(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// =============================================================================
+// Auto-Start Helper (testable)
+// =============================================================================
+
+// AutoStartResult describes what happened during an auto-start check.
+type AutoStartResult struct {
+	AlreadyRunning bool  // true if agent was already running
+	Started        bool  // true if agent was started
+	Err            error // non-nil if start failed
+}
+
+// AgentExistsChecker checks if an agent exists.
+type AgentExistsChecker interface {
+	Exists(id agent.AgentID) bool
+}
+
+// AgentAutoStarter starts an agent.
+type AgentAutoStarter func(id agent.AgentID) error
+
+// ensureAgentRunning checks if an agent is running and starts it if not.
+// This helper encapsulates the auto-start pattern for testing.
+func ensureAgentRunning(id agent.AgentID, checker AgentExistsChecker, starter AgentAutoStarter) AutoStartResult {
+	if checker.Exists(id) {
+		return AutoStartResult{AlreadyRunning: true}
+	}
+
+	err := starter(id)
+	if err != nil {
+		return AutoStartResult{Err: err}
+	}
+
+	return AutoStartResult{Started: true}
 }

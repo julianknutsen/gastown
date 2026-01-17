@@ -98,7 +98,7 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 
 	// Check if session exists using agents interface
 	crewID := agent.CrewAddress(r.Name, name)
-	agents := factory.Agents(townRoot)
+	agents := factory.Agents()
 	hasSession := agents.Exists(crewID)
 	if debug {
 		fmt.Printf("[DEBUG] hasSession=%v\n", hasSession)

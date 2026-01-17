@@ -27,14 +27,13 @@ import (
 // Start() starts a singleton agent with full production setup.
 // =============================================================================
 
-// Agents returns an Agents interface for a town.
+// Agents returns an Agents interface.
 // Use this for operations like Stop, Nudge, Capture that work with any AgentID.
 // The returned interface doesn't have role-specific configuration - use Start()
 // for starting agents with proper env vars and settings.
-func Agents(townRoot string) agent.Agents {
+func Agents() agent.Agents {
 	t := tmux.NewTmux()
-	sess := session.NewTownSessions(t, townRoot)
-	return agent.New(sess, agent.Claude())
+	return agent.New(t, agent.Claude())
 }
 
 // StartOption configures Start() behavior for specific roles.
@@ -86,6 +85,48 @@ func WithEnvOverrides(overrides map[string]string) StartOption {
 //	factory.Start(townRoot, agent.PolecatAddress("myrig", "toast"), aiRuntime)
 //	factory.Start(townRoot, agent.CrewAddress("myrig", "joe"), aiRuntime, WithTopic("patrol"))
 func Start(townRoot string, id agent.AgentID, aiRuntime string, opts ...StartOption) (agent.AgentID, error) {
+	// Build env vars for production agent creation
+	role, rigName, worker := id.Parse()
+	envCfg := config.AgentEnvConfig{
+		Role:     role,
+		TownRoot: townRoot,
+	}
+	if rigName != "" {
+		envCfg.Rig = rigName
+		envCfg.BeadsNoDaemon = true
+	}
+	if worker != "" {
+		envCfg.AgentName = worker
+	}
+	envVars := config.AgentEnv(envCfg)
+
+	// Create tmux
+	t := tmux.NewTmux()
+	agents := agent.New(t, agent.FromPreset(aiRuntime).WithEnvVars(envVars))
+
+	// Build session configurer callback - passed to StartWithAgents for OnCreated
+	themer := buildSessionConfigurer(id, envVars, t)
+
+	return StartWithAgents(agents, themer, townRoot, id, aiRuntime, opts...)
+}
+
+// StartWithAgents is the testable version of Start().
+// It accepts an injected Agents implementation and an optional theming callback.
+//
+// The themer callback can be nil for tests that don't need tmux theming.
+//
+// Usage in tests:
+//
+//	agents := agent.NewDouble()
+//	id, err := factory.StartWithAgents(agents, nil, townRoot, agent.MayorAddress, "claude")
+func StartWithAgents(
+	agents agent.Agents,
+	themer agent.OnSessionCreated,
+	townRoot string,
+	id agent.AgentID,
+	aiRuntime string,
+	opts ...StartOption,
+) (agent.AgentID, error) {
 	// Apply options
 	cfg := &startConfig{}
 	for _, opt := range opts {
@@ -97,7 +138,7 @@ func Start(townRoot string, id agent.AgentID, aiRuntime string, opts ...StartOpt
 	// Compute workDir
 	workDir, err := WorkDirForID(townRoot, id)
 	if err != nil {
-		return "", err
+		return agent.AgentID{}, err
 	}
 
 	// Build env vars from parsed components
@@ -122,29 +163,28 @@ func Start(townRoot string, id agent.AgentID, aiRuntime string, opts ...StartOpt
 	// Ensure runtime settings exist
 	runtimeConfig := config.LoadRuntimeConfig(townRoot)
 	if err := runtime.EnsureSettingsForRole(workDir, role, runtimeConfig); err != nil {
-		return "", fmt.Errorf("ensuring runtime settings: %w", err)
+		return agent.AgentID{}, fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
 	// Build startup command
 	startupCmd := buildCommand(role, aiRuntime, cfg)
 
-	// Create agents with production configuration
-	agents := createAgentsForID(townRoot, aiRuntime, envVars)
-
-	// Kill existing session if requested
+	// Kill existing session if requested.
+	// Error is intentionally ignored - the session may not exist, or may
+	// already be stopped. We proceed with starting regardless.
 	if cfg.killExisting {
 		_ = agents.Stop(id, true)
 	}
 
-	// Build StartConfig with OnCreated callback for theming
+	// Build StartConfig with OnCreated callback for theming (may be nil in tests)
 	startCfg := agent.StartConfig{
 		WorkDir:   workDir,
 		Command:   startupCmd,
 		EnvVars:   envVars,
-		OnCreated: buildSessionConfigurer(id, envVars),
+		OnCreated: themer,
 	}
 	if err := agents.StartWithConfig(id, startCfg); err != nil {
-		return "", err
+		return agent.AgentID{}, err
 	}
 
 	// Wait for agent to be ready
@@ -169,16 +209,18 @@ func buildCommand(role, aiRuntime string, cfg *startConfig) string {
 	return cmd
 }
 
-// buildSessionConfigurer returns OnCreated callback for tmux setup (theming, hooks).
-// ALL agents need this - town-level and rig-level alike.
-func buildSessionConfigurer(id agent.AgentID, envVars map[string]string) agent.OnSessionCreated {
+// buildSessionConfigurer returns a callback for tmux setup (env vars, theming, hooks).
+// This callback is passed to StartConfig.OnCreated and receives the SessionID
+// after the session is created.
+//
+// The callback captures the tmux instance to perform tmux-specific operations
+// like theming, hooks, and bindings using the SessionID.
+func buildSessionConfigurer(id agent.AgentID, envVars map[string]string, t *tmux.Tmux) agent.OnSessionCreated {
 	role, rigName, worker := id.Parse()
 
-	return func(_ session.Sessions, sessID session.SessionID) error {
-		t := tmux.NewTmux()
-
-		// Set env vars
-		if err := t.SetEnvVars(sessID, envVars); err != nil {
+	return func(sessionID session.SessionID) error {
+		// Set env vars via the front door (tmux translates internally)
+		if err := t.SetEnvVars(sessionID, envVars); err != nil {
 			return fmt.Errorf("setting env vars: %w", err)
 		}
 
@@ -189,10 +231,17 @@ func buildSessionConfigurer(id agent.AgentID, envVars map[string]string) agent.O
 		var themeRig, themeWorker string
 		var theme tmux.Theme
 		if rigName == "" {
-			// Town-level: no rig, worker is the role name
+			// Town-level: no rig, worker is the role name, use role-specific theme
 			themeRig = ""
 			themeWorker = strings.Title(role)
-			theme = tmux.DefaultTheme()
+			switch role {
+			case constants.RoleMayor:
+				theme = tmux.MayorTheme()
+			case constants.RoleDeacon:
+				theme = tmux.DeaconTheme()
+			default:
+				theme = tmux.DefaultTheme()
+			}
 		} else {
 			themeRig = rigName
 			if worker != "" {
@@ -203,45 +252,25 @@ func buildSessionConfigurer(id agent.AgentID, envVars map[string]string) agent.O
 			theme = tmux.AssignTheme(rigName)
 		}
 
-		// Apply theming
-		if err := t.ConfigureGasTownSession(sessID, theme, themeRig, themeWorker, role); err != nil {
+		// Apply theming via the front door (tmux translates internally)
+		if err := t.ConfigureGasTownSession(sessionID, theme, themeRig, themeWorker, role); err != nil {
 			return fmt.Errorf("configuring session: %w", err)
 		}
 
 		// Role-specific hooks (only for rig-level named agents)
 		switch role {
 		case constants.RolePolecat:
-			if err := t.SetPaneDiedHook(sessID, fmt.Sprintf("%s/%s", rigName, worker)); err != nil {
+			if err := t.SetPaneDiedHook(sessionID, fmt.Sprintf("%s/%s", rigName, worker)); err != nil {
 				return fmt.Errorf("setting pane died hook: %w", err)
 			}
 		case constants.RoleCrew:
-			if err := t.SetCrewCycleBindings(string(sessID)); err != nil {
+			// SetCrewCycleBindings sets global bindings (session param unused)
+			if err := t.SetCrewCycleBindings(""); err != nil {
 				return fmt.Errorf("setting crew bindings: %w", err)
 			}
 		}
 
 		return nil
-	}
-}
-
-// createAgentsForID creates an Agents implementation with production configuration.
-func createAgentsForID(townRoot, aiRuntime string, envVars map[string]string) agent.Agents {
-	t := tmux.NewTmux()
-	sess := session.NewTownSessions(t, townRoot)
-	return agent.New(sess, agent.FromPreset(aiRuntime).WithEnvVars(envVars))
-}
-
-// WorkDirForRole computes the working directory for a singleton agent role.
-func WorkDirForRole(townRoot, role string) (string, error) {
-	switch role {
-	case constants.RoleMayor:
-		return filepath.Join(townRoot, constants.RoleMayor), nil
-	case constants.RoleDeacon:
-		return filepath.Join(townRoot, constants.RoleDeacon), nil
-	case constants.RoleBoot:
-		return filepath.Join(townRoot, "deacon", "dogs", constants.RoleBoot), nil
-	default:
-		return "", fmt.Errorf("unknown singleton role: %s", role)
 	}
 }
 
@@ -352,72 +381,21 @@ func crewWorkDir(townRoot, rigName, crewName string) string {
 // for theming and hooks. Singleton agents use Create() instead.
 // =============================================================================
 
-// SessionConfigurer configures a tmux session after creation.
-// Created as a closure capturing the tmux instance at factory creation time.
-type SessionConfigurer func(rigName, workerName, role, sessionName string) error
-
 // Factory creates properly configured agent managers.
 // It holds shared dependencies and configuration.
 type Factory struct {
-	sess             session.Sessions  // Core session operations
-	configureSession SessionConfigurer // Closure capturing tmux instance (nil in tests)
-	townRoot         string
+	sess     session.Sessions // Core session operations
+	townRoot string
 }
 
 // New creates a production Factory with real tmux and sessions.
 func New(townRoot string) *Factory {
-	t := tmux.NewTmux()
-
-	// Create closure capturing t - no nil checks needed, t is always valid here
-	configureSession := func(rigName, workerName, role, sessionName string) error {
-		actualID := session.SessionID(sessionName)
-
-		envVars := config.AgentEnv(config.AgentEnvConfig{
-			Role:          role,
-			Rig:           rigName,
-			AgentName:     workerName,
-			TownRoot:      townRoot,
-			BeadsNoDaemon: true,
-		})
-		if err := t.SetEnvVars(actualID, envVars); err != nil {
-			return fmt.Errorf("setting env vars: %w", err)
-		}
-
-		if err := t.ConfigureGasTownSession(actualID, tmux.AssignTheme(rigName), rigName, workerName, role); err != nil {
-			return fmt.Errorf("configuring session: %w", err)
-		}
-
-		// Role-specific hooks
-		switch role {
-		case constants.RolePolecat:
-			if err := t.SetPaneDiedHook(actualID, fmt.Sprintf("%s/%s", rigName, workerName)); err != nil {
-				return fmt.Errorf("setting pane died hook: %w", err)
-			}
-		case constants.RoleCrew:
-			if err := t.SetCrewCycleBindings(string(actualID)); err != nil {
-				return fmt.Errorf("setting crew bindings: %w", err)
-			}
-		}
-
-		return nil
-	}
-
 	return &Factory{
-		sess:             session.NewTownSessions(t, townRoot),
-		configureSession: configureSession,
-		townRoot:         townRoot,
+		sess:     tmux.NewTmux(),
+		townRoot: townRoot,
 	}
 }
 
-// NewWithSessions creates a Factory with an injected Sessions for testing.
-// No tmux configuration happens - configureSession is nil.
-func NewWithSessions(townRoot string, sess session.Sessions) *Factory {
-	return &Factory{
-		sess:             sess,
-		configureSession: nil,
-		townRoot:         townRoot,
-	}
-}
 
 // =============================================================================
 // Rig-Level Agent Creation
@@ -439,7 +417,7 @@ func (f *Factory) RefineryManager(r *rig.Rig, aiRuntime string) *refinery.Manage
 // PolecatSessionManager creates a properly configured polecat.SessionManager.
 func (f *Factory) PolecatSessionManager(r *rig.Rig, aiRuntime string) *polecat.SessionManager {
 	agents := agent.New(f.sess, agent.FromPreset(aiRuntime))
-	return polecat.NewSessionManager(agents, r, aiRuntime, f.townRoot)
+	return polecat.NewSessionManager(agents, r, f.townRoot)
 }
 
 // CrewManager creates a properly configured crew.Manager.

@@ -113,7 +113,7 @@ func TriggerPendingSpawns(townRoot string, timeout time.Duration) ([]TriggerResu
 		return nil, nil
 	}
 
-	agents := agent.ForTown(townRoot)
+	agents := agent.Default()
 	var results []TriggerResult
 
 	for _, ps := range pending {

@@ -41,7 +41,7 @@ func NewRouter(workDir string) *Router {
 	return &Router{
 		workDir:  workDir,
 		townRoot: townRoot,
-		agents:   agent.ForTown(townRoot),
+		agents:   agent.Default(),
 	}
 }
 
@@ -50,7 +50,7 @@ func NewRouterWithTownRoot(workDir, townRoot string) *Router {
 	return &Router{
 		workDir:  workDir,
 		townRoot: townRoot,
-		agents:   agent.ForTown(townRoot),
+		agents:   agent.Default(),
 	}
 }
 
@@ -866,7 +866,7 @@ func (r *Router) GetMailbox(address string) (*Mailbox, error) {
 // Supports mayor/, rig/polecat, and rig/refinery addresses.
 func (r *Router) notifyRecipient(msg *Message) error {
 	agentID := addressToAgentID(msg.To)
-	if agentID == "" {
+	if agentID.Role == "" {
 		return nil // Unable to determine agent ID
 	}
 
@@ -903,7 +903,7 @@ func addressToAgentID(address string) agent.AgentID {
 	// Rig-based address: "rig/target"
 	parts := strings.SplitN(addr, "/", 2)
 	if len(parts) != 2 || parts[1] == "" {
-		return ""
+		return agent.AgentID{}
 	}
 
 	rig := parts[0]
