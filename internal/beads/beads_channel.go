@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -162,7 +161,8 @@ func (b *Beads) CreateChannelBead(name string, subscribers []string, createdBy s
 	}
 
 	// Default actor from BD_ACTOR env var for provenance tracking
-	if actor := os.Getenv("BD_ACTOR"); actor != "" {
+	// Uses getActor() to respect isolated mode (tests)
+	if actor := b.getActor(); actor != "" {
 		args = append(args, "--actor="+actor)
 	}
 
