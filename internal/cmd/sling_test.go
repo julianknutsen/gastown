@@ -703,3 +703,55 @@ func TestLooksLikeBeadID(t *testing.T) {
 		})
 	}
 }
+
+// TestActorStringFallback tests that ActorString returns useful fallbacks
+// when the role is unknown, which happens when slinging from rig root.
+// Fixes: gt-spt3u - gt sling should work from rig root when explicit target is provided
+func TestActorStringFallback(t *testing.T) {
+	tests := []struct {
+		name     string
+		roleInfo RoleInfo
+		want     string
+	}{
+		{
+			name: "unknown role with rig returns rig name",
+			roleInfo: RoleInfo{
+				Role: RoleUnknown,
+				Rig:  "gastown",
+			},
+			want: "gastown",
+		},
+		{
+			name: "unknown role without rig returns human",
+			roleInfo: RoleInfo{
+				Role: RoleUnknown,
+			},
+			want: "human",
+		},
+		{
+			name: "known role returns normal actor string",
+			roleInfo: RoleInfo{
+				Role:    RolePolecat,
+				Rig:     "gastown",
+				Polecat: "nux",
+			},
+			want: "gastown/polecats/nux",
+		},
+		{
+			name: "mayor role returns mayor",
+			roleInfo: RoleInfo{
+				Role: RoleMayor,
+			},
+			want: "mayor",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.roleInfo.ActorString()
+			if got != tt.want {
+				t.Errorf("ActorString() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
