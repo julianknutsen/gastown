@@ -33,12 +33,25 @@ var polecatCmd = &cobra.Command{
 	Use:     "polecat",
 	Aliases: []string{"polecats"},
 	GroupID: GroupAgents,
-	Short:   "Manage polecats in rigs",
+	Short:   "Manage polecats (ephemeral workers, one task then nuked)",
 	RunE:    requireSubcommand,
 	Long: `Manage polecat lifecycle in rigs.
 
-Polecats are worker agents that operate in their own git worktrees.
-Use the subcommands to add, remove, list, wake, and sleep polecats.`,
+Polecats are EPHEMERAL workers: spawned for one task, nuked when done.
+There is NO idle state. A polecat is either:
+  - Working: Actively doing assigned work
+  - Stalled: Session crashed mid-work (needs Witness intervention)
+  - Zombie: Finished but gt done failed (needs cleanup)
+
+Self-cleaning model: When work completes, the polecat runs 'gt done',
+which pushes the branch, submits to the merge queue, and exits. The
+Witness then nukes the sandbox. Polecats don't wait for more work.
+
+Session vs sandbox: The Claude session cycles frequently (handoffs,
+compaction). The git worktree (sandbox) persists until nuke. Work
+survives session restarts.
+
+Cats build features. Dogs clean up messes.`,
 }
 
 var polecatListCmd = &cobra.Command{

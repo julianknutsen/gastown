@@ -309,9 +309,49 @@ ONE exception where branches are created. But the rule still applies:
 - `bd sync` - Sync beads changes
 
 ### Communication
-- `gt mail send <addr> -s "Subject" -m "Message"` - Send mail
+- `gt mail send <addr> -s "Subject" -m "Message"` - Send mail (async, queued)
 - `gt mail send mayor/ -s "Subject" -m "Message"` - To Mayor
 - `gt mail send --human -s "Subject" -m "Message"` - To overseer
+- `gt nudge <target> "message"` - Wake an agent and send immediate message
+
+### gt nudge: Waking Agents
+
+`gt nudge` is the **core mechanism for inter-agent communication**. It sends a message
+directly to another agent's Claude Code session via tmux.
+
+**When to use nudge vs mail:**
+| Use Case | Tool | Why |
+|----------|------|-----|
+| Wake a sleeping agent | `gt nudge` | Immediate delivery to their session |
+| Send task for later | `gt mail send` | Queued, they'll see it on next check |
+| Both: assign + wake | `gt mail send` then `gt nudge` | Mail carries payload, nudge wakes them |
+
+**Common patterns:**
+```bash
+# Wake another crew member (full path: rig/crew/name)
+gt nudge {{ .RigName }}/crew/peer "Check your mail - PR review waiting"
+
+# Wake a polecat (full path: rig/polecats/name)
+gt nudge {{ .RigName }}/polecats/alpha "Work available on hook"
+
+# Nudge with notification flag (also sends tmux bell)
+gt mail send {{ .RigName }}/peer -s "Urgent" -m "..." --notify
+
+# Nudge patrol agents
+gt nudge witness "Check polecat health"
+gt nudge deacon "Session started"
+gt nudge mayor "Status update needed"
+```
+
+**Target shortcuts:**
+- `mayor` → gt-mayor session
+- `deacon` → gt-deacon session
+- `witness` → gt-{{ .RigName }}-witness session
+- `refinery` → gt-{{ .RigName }}-refinery session
+- `channel:<name>` → All members of a named channel
+
+**Important:** `gt nudge` is the ONLY reliable way to send text to Claude sessions.
+Raw `tmux send-keys` is unreliable. Always use `gt nudge` for agent-to-agent communication.
 
 ## No Witness Monitoring
 
