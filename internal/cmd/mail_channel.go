@@ -352,6 +352,23 @@ func runChannelSubscribe(cmd *cobra.Command, args []string) error {
 
 	b := beads.New(townRoot)
 
+	// Check channel exists and current subscription status
+	_, fields, err := b.GetChannelBead(name)
+	if err != nil {
+		return fmt.Errorf("getting channel: %w", err)
+	}
+	if fields == nil {
+		return fmt.Errorf("channel not found: %s", name)
+	}
+
+	// Check if already subscribed
+	for _, s := range fields.Subscribers {
+		if s == subscriber {
+			fmt.Printf("%s is already subscribed to channel %q\n", subscriber, name)
+			return nil
+		}
+	}
+
 	if err := b.SubscribeToChannel(name, subscriber); err != nil {
 		return fmt.Errorf("subscribing to channel: %w", err)
 	}
@@ -374,6 +391,28 @@ func runChannelUnsubscribe(cmd *cobra.Command, args []string) error {
 	}
 
 	b := beads.New(townRoot)
+
+	// Check channel exists and current subscription status
+	_, fields, err := b.GetChannelBead(name)
+	if err != nil {
+		return fmt.Errorf("getting channel: %w", err)
+	}
+	if fields == nil {
+		return fmt.Errorf("channel not found: %s", name)
+	}
+
+	// Check if actually subscribed
+	found := false
+	for _, s := range fields.Subscribers {
+		if s == subscriber {
+			found = true
+			break
+		}
+	}
+	if !found {
+		fmt.Printf("%s is not subscribed to channel %q\n", subscriber, name)
+		return nil
+	}
 
 	if err := b.UnsubscribeFromChannel(name, subscriber); err != nil {
 		return fmt.Errorf("unsubscribing from channel: %w", err)
@@ -402,9 +441,13 @@ func runChannelSubscribers(cmd *cobra.Command, args []string) error {
 	}
 
 	if channelJSON {
+		subs := fields.Subscribers
+		if subs == nil {
+			subs = []string{}
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(fields.Subscribers)
+		return enc.Encode(subs)
 	}
 
 	if len(fields.Subscribers) == 0 {
