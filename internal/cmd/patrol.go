@@ -103,6 +103,19 @@ func runPatrolDigest(cmd *cobra.Command, args []string) error {
 
 	dateStr := targetDate.Format("2006-01-02")
 
+	// Idempotency check: see if digest already exists for this date
+	existingID, err := findExistingPatrolDigest(dateStr)
+	if err != nil {
+		// Non-fatal: continue with creation attempt
+		if patrolDigestVerbose {
+			fmt.Fprintf(os.Stderr, "[patrol] warning: failed to check existing digest: %v\n", err)
+		}
+	} else if existingID != "" {
+		fmt.Printf("%s Patrol digest already exists for %s (bead: %s)\n",
+			style.Dim.Render("○"), dateStr, existingID)
+		return nil
+	}
+
 	// Query ephemeral patrol digest beads for target date
 	cycles, err := queryPatrolDigests(targetDate)
 	if err != nil {
@@ -303,6 +316,40 @@ func createPatrolDigestBead(digest PatrolDigest) (string, error) {
 	_ = closeCmd.Run() // Best effort
 
 	return digestID, nil
+}
+
+// findExistingPatrolDigest checks if a patrol digest already exists for the given date.
+// Returns the bead ID if found, empty string if not found.
+func findExistingPatrolDigest(dateStr string) (string, error) {
+	expectedTitle := fmt.Sprintf("Patrol Report %s", dateStr)
+
+	// Query event beads with patrol.digest category
+	listCmd := exec.Command("bd", "list",
+		"--type=event",
+		"--json",
+		"--limit=50", // Recent events only
+	)
+	listOutput, err := listCmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	var events []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+
+	if err := json.Unmarshal(listOutput, &events); err != nil {
+		return "", err
+	}
+
+	for _, evt := range events {
+		if evt.Title == expectedTitle {
+			return evt.ID, nil
+		}
+	}
+
+	return "", nil
 }
 
 // deletePatrolDigests deletes ephemeral patrol digest beads for a target date.
