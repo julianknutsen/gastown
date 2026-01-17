@@ -56,26 +56,6 @@ func isTrackedByConvoy(beadID string) string {
 	return convoyID
 }
 
-// filterEnvExcluding returns a copy of the environment with specified keys removed.
-// This is used to prevent rig-specific environment variables from affecting
-// commands that need to run in a different context (e.g., HQ beads).
-func filterEnvExcluding(env []string, excludeKeys ...string) []string {
-	result := make([]string, 0, len(env))
-	for _, e := range env {
-		exclude := false
-		for _, key := range excludeKeys {
-			if strings.HasPrefix(e, key+"=") {
-				exclude = true
-				break
-			}
-		}
-		if !exclude {
-			result = append(result, e)
-		}
-	}
-	return result
-}
-
 // createAutoConvoy creates an auto-convoy for a single issue and tracks it.
 // Returns the created convoy ID.
 func createAutoConvoy(beadID, beadTitle string) (string, error) {
@@ -105,13 +85,8 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 		createArgs = append(createArgs, "--force")
 	}
 
-	// Clear BEADS_DIR so bd discovers the database from townBeads directory
-	// instead of using the rig's beads (which has a different prefix)
-	cleanEnv := filterEnvExcluding(os.Environ(), "BEADS_DIR")
-
 	createCmd := exec.Command("bd", append([]string{"--no-daemon"}, createArgs...)...)
 	createCmd.Dir = townBeads
-	createCmd.Env = cleanEnv
 	createCmd.Stderr = os.Stderr
 
 	if err := createCmd.Run(); err != nil {
@@ -123,7 +98,6 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 	depArgs := []string{"--no-daemon", "dep", "add", convoyID, trackBeadID, "--type=tracks"}
 	depCmd := exec.Command("bd", depArgs...)
 	depCmd.Dir = townBeads
-	depCmd.Env = cleanEnv
 	depCmd.Stderr = os.Stderr
 
 	if err := depCmd.Run(); err != nil {
