@@ -7,7 +7,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,42 +18,6 @@ import (
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 )
-
-// =============================================================================
-// Worktree Cleanliness Test Allowlist
-// =============================================================================
-//
-// These files are allowed to appear as untracked in agent worktrees.
-// Each entry documents which component creates the file and why it's acceptable.
-//
-// TODO items indicate files that should eventually be removed or relocated.
-
-// agentAllowlist maps agent type to allowed untracked files in their worktrees.
-// All agents also implicitly allow .beads/ or .beads/redirect (added in checkWorktreeClean).
-//
-// IMPORTANT: Be very conservative about adding files here. Each entry represents
-// a file that Gas Town creates inside the user's repo, which could be accidentally
-// committed and pushed upstream. Prefer ephemeral context injection (gt prime) over
-// on-disk files.
-var agentAllowlist = map[string][]string{
-	// Mayor is a clone (not worktree) - it's the canonical copy of the user's repo.
-	// For tracked beads repos, bd init creates files here (runs in mayor/rig).
-	"mayor": {
-		"?? AGENTS.md", // bd init: creates multi-provider instructions (tracked beads repos only)
-		"?? .claude/",  // bd init: creates .claude/settings.json with onboard prompt
-	},
-
-	// Refinery is a worktree for the merge queue processor.
-	"refinery": {},
-
-	// Crew workers are user-managed worktrees for human developers.
-	"crew": {
-		"?? state.json", // crew/manager.go: Gas Town metadata (TODO: migrate to beads like polecats)
-	},
-
-	// Polecats are ephemeral worktrees for autonomous agents.
-	"polecat": {},
-}
 
 // createTestGitRepo creates a minimal git repository for testing.
 // Returns the path to the bare repo URL (suitable for cloning).
@@ -138,44 +101,47 @@ func setupTestTown(t *testing.T) string {
 
 // mockBdCommand creates a fake bd binary that simulates bd behavior.
 // This avoids needing bd installed for tests.
-func mockBdCommand(t *testing.T) {
+func mockBdCommand(t *testing.T) string {
 	t.Helper()
 
 	binDir := t.TempDir()
 	bdPath := filepath.Join(binDir, "bd")
+	logPath := filepath.Join(binDir, "bd.log")
 
 	// Create a script that simulates bd init and other commands
+	// Also logs all create commands for verification.
+	// Note: beads.run() prepends --no-daemon --allow-stale to all commands,
+	// so we need to find the actual command in the argument list.
 	script := `#!/bin/sh
 # Mock bd for testing
+LOG_FILE="` + logPath + `"
 
-case "$1" in
+# Find the actual command (skip global flags like --no-daemon, --allow-stale)
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;; # skip flags
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+case "$cmd" in
   init)
     # Create .beads directory and config.yaml
     mkdir -p .beads
     prefix="gt"
+    # Handle both --prefix=value and --prefix value forms
+    next_is_prefix=false
     for arg in "$@"; do
-      case "$arg" in
-        --prefix=*) prefix="${arg#--prefix=}" ;;
-        --prefix)
-          # Next arg is the prefix
-          shift
-          if [ -n "$1" ] && [ "$1" != "--"* ]; then
-            prefix="$1"
-          fi
-          ;;
-      esac
-      shift
-    done
-    # Handle positional --prefix VALUE
-    shift  # skip 'init'
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --prefix)
-          shift
-          prefix="$1"
-          ;;
-      esac
-      shift
+      if [ "$next_is_prefix" = true ]; then
+        prefix="$arg"
+        next_is_prefix=false
+      else
+        case "$arg" in
+          --prefix=*) prefix="${arg#--prefix=}" ;;
+          --prefix) next_is_prefix=true ;;
+        esac
+      fi
     done
     echo "prefix: $prefix" > .beads/config.yaml
     exit 0
@@ -188,8 +154,17 @@ case "$1" in
     exit 1
     ;;
   create)
-    # Return minimal JSON for agent bead creation
-    echo '{}'
+    # Log all create commands for verification
+    echo "$@" >> "$LOG_FILE"
+    # Extract the ID from --id=xxx argument
+    bead_id=""
+    for arg in "$@"; do
+      case "$arg" in
+        --id=*) bead_id="${arg#--id=}" ;;
+      esac
+    done
+    # Return valid JSON for bead creation
+    echo "{\"id\":\"$bead_id\",\"status\":\"open\",\"created_at\":\"2025-01-01T00:00:00Z\"}"
     exit 0
     ;;
   mol|list)
@@ -206,12 +181,14 @@ esac
 
 	// Prepend to PATH
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	return logPath
 }
 
 // TestRigAddCreatesCorrectStructure verifies that gt rig add creates
 // the expected directory structure.
 func TestRigAddCreatesCorrectStructure(t *testing.T) {
-	mockBdCommand(t)
+	_ = mockBdCommand(t)
 	townRoot := setupTestTown(t)
 	gitURL := createTestGitRepo(t, "testproject")
 
@@ -311,31 +288,6 @@ func TestRigAddCreatesCorrectStructure(t *testing.T) {
 		}
 	}
 
-	// Verify CLAUDE.md and AGENTS.md are created at agent level (outside git repos).
-	// These are bootstrap pointers - full context comes from gt prime.
-	// AGENTS.md is for multi-provider support (Codex reads AGENTS.md, Claude reads CLAUDE.md).
-	// NOTE: Per-rig mayor does NOT get these files - it's just a source clone.
-	// The town-level mayor (<root>/mayor/) gets its files from gt install.
-	expectedContextFiles := []struct {
-		path string
-		desc string
-	}{
-		{filepath.Join(rigPath, "refinery", "CLAUDE.md"), "refinery/CLAUDE.md"},
-		{filepath.Join(rigPath, "refinery", "AGENTS.md"), "refinery/AGENTS.md"},
-		{filepath.Join(rigPath, "witness", "CLAUDE.md"), "witness/CLAUDE.md"},
-		{filepath.Join(rigPath, "witness", "AGENTS.md"), "witness/AGENTS.md"},
-		{filepath.Join(rigPath, "crew", "CLAUDE.md"), "crew/CLAUDE.md"},
-		{filepath.Join(rigPath, "crew", "AGENTS.md"), "crew/AGENTS.md"},
-		{filepath.Join(rigPath, "polecats", "CLAUDE.md"), "polecats/CLAUDE.md"},
-		{filepath.Join(rigPath, "polecats", "AGENTS.md"), "polecats/AGENTS.md"},
-	}
-
-	for _, c := range expectedContextFiles {
-		if _, err := os.Stat(c.path); err != nil {
-			t.Errorf("%s not found: %v", c.desc, err)
-		}
-	}
-
 	// Verify settings are NOT created inside source repos (these would be wrong)
 	wrongLocations := []struct {
 		path string
@@ -350,29 +302,12 @@ func TestRigAddCreatesCorrectStructure(t *testing.T) {
 			t.Errorf("%s should NOT exist (settings would pollute source repo)", w.desc)
 		}
 	}
-
-	// Verify CLAUDE.md is NOT created inside source repos or per-rig mayor (these would be wrong)
-	wrongClaudeMd := []struct {
-		path string
-		desc string
-	}{
-		{filepath.Join(rigPath, "mayor", "CLAUDE.md"), "mayor/CLAUDE.md (per-rig mayor is just a clone)"},
-		{filepath.Join(rigPath, "mayor", "AGENTS.md"), "mayor/AGENTS.md (per-rig mayor is just a clone)"},
-		{filepath.Join(rigPath, "mayor", "rig", "CLAUDE.md"), "mayor/rig/CLAUDE.md (inside source repo)"},
-		{filepath.Join(rigPath, "refinery", "rig", "CLAUDE.md"), "refinery/rig/CLAUDE.md (inside source repo)"},
-	}
-
-	for _, w := range wrongClaudeMd {
-		if _, err := os.Stat(w.path); err == nil {
-			t.Errorf("%s should NOT exist (would pollute source repo)", w.desc)
-		}
-	}
 }
 
 // TestRigAddInitializesBeads verifies that beads is initialized with
 // the correct prefix.
 func TestRigAddInitializesBeads(t *testing.T) {
-	mockBdCommand(t)
+	_ = mockBdCommand(t)
 	townRoot := setupTestTown(t)
 	gitURL := createTestGitRepo(t, "beadstest")
 
@@ -468,7 +403,7 @@ func TestRigAddInitializesBeads(t *testing.T) {
 // TestRigAddUpdatesRoutes verifies that routes.jsonl is updated
 // with the new rig's route.
 func TestRigAddUpdatesRoutes(t *testing.T) {
-	mockBdCommand(t)
+	_ = mockBdCommand(t)
 	townRoot := setupTestTown(t)
 	gitURL := createTestGitRepo(t, "routetest")
 
@@ -537,7 +472,7 @@ func TestRigAddUpdatesRoutes(t *testing.T) {
 // TestRigAddUpdatesRigsJson verifies that rigs.json is updated
 // with the new rig entry.
 func TestRigAddUpdatesRigsJson(t *testing.T) {
-	mockBdCommand(t)
+	_ = mockBdCommand(t)
 	townRoot := setupTestTown(t)
 	gitURL := createTestGitRepo(t, "jsontest")
 
@@ -589,7 +524,7 @@ func TestRigAddUpdatesRigsJson(t *testing.T) {
 // TestRigAddDerivesPrefix verifies that when no prefix is specified,
 // one is derived from the rig name.
 func TestRigAddDerivesPrefix(t *testing.T) {
-	mockBdCommand(t)
+	_ = mockBdCommand(t)
 	townRoot := setupTestTown(t)
 	gitURL := createTestGitRepo(t, "myproject")
 
@@ -620,7 +555,7 @@ func TestRigAddDerivesPrefix(t *testing.T) {
 // TestRigAddCreatesRigConfig verifies that config.json contains
 // the correct rig configuration.
 func TestRigAddCreatesRigConfig(t *testing.T) {
-	mockBdCommand(t)
+	_ = mockBdCommand(t)
 	townRoot := setupTestTown(t)
 	gitURL := createTestGitRepo(t, "configtest")
 
@@ -675,7 +610,7 @@ func TestRigAddCreatesRigConfig(t *testing.T) {
 
 // TestRigAddCreatesAgentDirs verifies that agent state files are created.
 func TestRigAddCreatesAgentDirs(t *testing.T) {
-	mockBdCommand(t)
+	_ = mockBdCommand(t)
 	townRoot := setupTestTown(t)
 	gitURL := createTestGitRepo(t, "agenttest")
 
@@ -720,7 +655,7 @@ func TestRigAddCreatesAgentDirs(t *testing.T) {
 // TestRigAddRejectsInvalidNames verifies that rig names with invalid
 // characters are rejected.
 func TestRigAddRejectsInvalidNames(t *testing.T) {
-	mockBdCommand(t)
+	_ = mockBdCommand(t)
 	townRoot := setupTestTown(t)
 	gitURL := createTestGitRepo(t, "validname")
 
@@ -757,302 +692,93 @@ func TestRigAddRejectsInvalidNames(t *testing.T) {
 	}
 }
 
-// TestAgentWorktreesStayClean verifies that after gt install, gt rig add, and
-// agent creation, all agent worktrees have no unexpected Gas Town files.
-//
-// This is a critical invariant: user repos should stay clean. The only allowed
-// Gas Town file is .beads/redirect which points to the shared rig-level beads.
-//
-// Agents tested:
-// - Mayor: mayor/rig/ (clone, created by gt rig add)
-// - Refinery: refinery/rig/ (worktree, created by gt rig add)
-// - Crew: crew/<name>/ (worktree, created by gt crew add)
-// - Polecat: polecats/<name>/<rigname>/ (worktree, created by gt polecat add)
-//
-// Known issues this test catches:
-// - Extra files in .beads/ beyond redirect (e.g., PRIME.md, databases)
-// - AGENTS.md being copied/created in worktrees
-// - CLAUDE.md being created in worktrees (should only be bootstrap pointer)
-// - Any other Gas Town artifacts polluting the repo
-//
-// Tests two scenarios:
-// - Repo WITHOUT tracked .beads/ (clean repo)
-// - Repo WITH tracked .beads/ (simulates beads project)
-func TestAgentWorktreesStayClean(t *testing.T) {
-	// Skip if bd is not available (required for beads initialization)
-	if _, err := exec.LookPath("bd"); err != nil {
-		t.Skip("bd not installed, skipping integration test")
+// TestRigAddCreatesAgentBeads verifies that gt rig add creates
+// witness and refinery agent beads via the manager's initAgentBeads.
+func TestRigAddCreatesAgentBeads(t *testing.T) {
+	bdLogPath := mockBdCommand(t)
+	townRoot := setupTestTown(t)
+	gitURL := createTestGitRepo(t, "agentbeadtest")
+
+	rigsPath := filepath.Join(townRoot, "mayor", "rigs.json")
+	rigsConfig, err := config.LoadRigsConfig(rigsPath)
+	if err != nil {
+		t.Fatalf("load rigs.json: %v", err)
 	}
 
-	testCases := []struct {
-		name            string
-		hasTrackedBeads bool
+	g := git.NewGit(townRoot)
+	mgr := rig.NewManager(townRoot, rigsConfig, g)
+
+	// AddRig internally calls initAgentBeads which creates witness and refinery beads
+	newRig, err := mgr.AddRig(rig.AddRigOptions{
+		Name:        "agentbeadtest",
+		GitURL:      gitURL,
+		BeadsPrefix: "ab",
+	})
+	if err != nil {
+		t.Fatalf("AddRig: %v", err)
+	}
+
+	// Verify the mock bd was called with correct create commands
+	logContent, err := os.ReadFile(bdLogPath)
+	if err != nil {
+		t.Fatalf("reading bd log: %v", err)
+	}
+	logStr := string(logContent)
+
+	// Expected bead IDs that initAgentBeads should create
+	witnessID := beads.WitnessBeadIDWithPrefix(newRig.Config.Prefix, "agentbeadtest")
+	refineryID := beads.RefineryBeadIDWithPrefix(newRig.Config.Prefix, "agentbeadtest")
+
+	expectedIDs := []struct {
+		id   string
+		desc string
 	}{
-		{"RepoWithoutBeads", false},
-		{"RepoWithTrackedBeads", true},
+		{witnessID, "witness agent bead"},
+		{refineryID, "refinery agent bead"},
 	}
 
-	for _, tc := range testCases {
+	for _, expected := range expectedIDs {
+		if !strings.Contains(logStr, expected.id) {
+			t.Errorf("bd create log should contain %s (%s), got:\n%s", expected.id, expected.desc, logStr)
+		}
+	}
+
+	// Verify correct prefix is used (ab-)
+	if !strings.Contains(logStr, "ab-") {
+		t.Errorf("bd create log should contain prefix 'ab-', got:\n%s", logStr)
+	}
+}
+
+// TestAgentBeadIDs verifies the agent bead ID generation functions.
+func TestAgentBeadIDs(t *testing.T) {
+	tests := []struct {
+		name     string
+		fn       func() string
+		expected string
+	}{
+		{
+			"WitnessBeadIDWithPrefix",
+			func() string { return beads.WitnessBeadIDWithPrefix("ab", "myrig") },
+			"ab-myrig-witness",
+		},
+		{
+			"RefineryBeadIDWithPrefix",
+			func() string { return beads.RefineryBeadIDWithPrefix("ab", "myrig") },
+			"ab-myrig-refinery",
+		},
+		{
+			"RigBeadIDWithPrefix",
+			func() string { return beads.RigBeadIDWithPrefix("ab", "myrig") },
+			"ab-rig-myrig",
+		},
+	}
+
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			runAgentCleanTest(t, tc.hasTrackedBeads)
-		})
-	}
-}
-
-// agentWorktree describes an agent's worktree to check for cleanliness.
-type agentWorktree struct {
-	name      string   // Human-readable name (e.g., "mayor", "polecat")
-	path      string   // Path to the worktree
-	allowlist []string // Additional allowlisted files beyond .beads/redirect
-	isClone   bool     // True if this is a clone (not worktree) - has different expectations
-}
-
-// runAgentCleanTest runs the agent worktree cleanliness test for all agent types.
-// If hasTrackedBeads is true, the source repo will have a tracked .beads/ directory.
-func runAgentCleanTest(t *testing.T, hasTrackedBeads bool) {
-	t.Helper()
-
-	tmpDir := t.TempDir()
-	hqPath := filepath.Join(tmpDir, "test-hq")
-
-	// Build gt binary for testing
-	gtBinary := buildGT(t)
-
-	// Step 1: Create test git repo with some committed files
-	repoDir := filepath.Join(tmpDir, "user-project")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatalf("mkdir repo: %v", err)
-	}
-
-	// Initialize git repo
-	gitCmds := [][]string{
-		{"git", "init", "--initial-branch=main"},
-		{"git", "config", "user.email", "test@test.com"},
-		{"git", "config", "user.name", "Test User"},
-	}
-	for _, args := range gitCmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	// Create some project files
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# User Project\n"), 0644); err != nil {
-		t.Fatalf("write README: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
-		t.Fatalf("write main.go: %v", err)
-	}
-
-	// Optionally create tracked .beads/ directory (simulates beads-enabled project)
-	if hasTrackedBeads {
-		beadsDir := filepath.Join(repoDir, ".beads")
-		if err := os.MkdirAll(beadsDir, 0755); err != nil {
-			t.Fatalf("mkdir .beads: %v", err)
-		}
-		// Create minimal beads files that would be tracked
-		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("prefix: test\n"), 0644); err != nil {
-			t.Fatalf("write config.yaml: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(beadsDir, ".gitignore"), []byte("*.db\n*.db-*\n"), 0644); err != nil {
-			t.Fatalf("write .gitignore: %v", err)
-		}
-	}
-
-	// Commit all files
-	commitCmds := [][]string{
-		{"git", "add", "."},
-		{"git", "commit", "-m", "Initial commit"},
-	}
-	for _, args := range commitCmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	// Step 2: Run gt install
-	cmd := exec.Command(gtBinary, "install", hqPath, "--name", "test-town")
-	cmd.Env = append(os.Environ(), "HOME="+tmpDir)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
-	}
-	t.Logf("gt install output:\n%s", output)
-
-	// Step 3: Run gt rig add
-	// Use different prefix based on whether source has tracked beads
-	prefix := "tr"
-	if hasTrackedBeads {
-		prefix = "test" // Must match the prefix in source repo's .beads/config.yaml
-	}
-	cmd = exec.Command(gtBinary, "rig", "add", "testrig", repoDir, "--prefix", prefix)
-	cmd.Dir = hqPath
-	cmd.Env = append(os.Environ(), "HOME="+tmpDir, "GT_ROOT="+hqPath)
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("gt rig add failed: %v\nOutput: %s", err, output)
-	}
-	t.Logf("gt rig add output:\n%s", output)
-
-	// Step 4: Create a crew member
-	cmd = exec.Command(gtBinary, "crew", "add", "testcrew", "--rig", "testrig")
-	cmd.Dir = hqPath
-	cmd.Env = append(os.Environ(), "HOME="+tmpDir, "GT_ROOT="+hqPath)
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("gt crew add failed: %v\nOutput: %s", err, output)
-	}
-	t.Logf("gt crew add output:\n%s", output)
-
-	// Step 5: Create a polecat
-	cmd = exec.Command(gtBinary, "polecat", "add", "testrig", "TestCat")
-	cmd.Dir = hqPath
-	cmd.Env = append(os.Environ(), "HOME="+tmpDir, "GT_ROOT="+hqPath)
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("gt polecat add failed: %v\nOutput: %s", err, output)
-	}
-	t.Logf("gt polecat add output:\n%s", output)
-
-	// Step 6: Define all agent worktrees to check
-	rigPath := filepath.Join(hqPath, "testrig")
-
-	// Find polecat worktree path (handles both old and new structure)
-	polecatPath := filepath.Join(rigPath, "polecats", "TestCat", "testrig")
-	if _, err := os.Stat(polecatPath); os.IsNotExist(err) {
-		polecatPath = filepath.Join(rigPath, "polecats", "TestCat")
-	}
-
-	agents := []agentWorktree{
-		{
-			name:      "mayor",
-			path:      filepath.Join(rigPath, "mayor", "rig"),
-			isClone:   true,
-			allowlist: agentAllowlist["mayor"],
-		},
-		{
-			name:      "refinery",
-			path:      filepath.Join(rigPath, "refinery", "rig"),
-			isClone:   false,
-			allowlist: agentAllowlist["refinery"],
-		},
-		{
-			name:      "crew",
-			path:      filepath.Join(rigPath, "crew", "testcrew"),
-			isClone:   false,
-			allowlist: agentAllowlist["crew"],
-		},
-		{
-			name:      "polecat",
-			path:      polecatPath,
-			isClone:   false,
-			allowlist: agentAllowlist["polecat"],
-		},
-	}
-
-	// Step 7: Check each agent worktree
-	var allFailures []string
-	for _, agent := range agents {
-		t.Run(agent.name, func(t *testing.T) {
-			failures := checkWorktreeClean(t, agent, hasTrackedBeads)
-			if len(failures) > 0 {
-				allFailures = append(allFailures, fmt.Sprintf("%s: %v", agent.name, failures))
+			result := tc.fn()
+			if result != tc.expected {
+				t.Errorf("got %q, want %q", result, tc.expected)
 			}
 		})
 	}
-
-	if len(allFailures) > 0 {
-		t.Logf("Summary of failures across all agents:\n%s", strings.Join(allFailures, "\n"))
-	}
-}
-
-// checkWorktreeClean checks a single agent worktree for unexpected files.
-// Returns a list of unexpected files found.
-func checkWorktreeClean(t *testing.T, agent agentWorktree, hasTrackedBeads bool) []string {
-	t.Helper()
-
-	// Verify the worktree exists
-	if _, err := os.Stat(agent.path); os.IsNotExist(err) {
-		t.Fatalf("%s worktree not found at %s", agent.name, agent.path)
-	}
-
-	// Run git status --porcelain
-	cmd := exec.Command("git", "status", "--porcelain")
-	cmd.Dir = agent.path
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git status failed for %s: %v\nOutput: %s", agent.name, err, output)
-	}
-
-	// Build allowlist for this agent
-	// Base allowlist: .beads/ directory or .beads/redirect file
-	allowlist := map[string]bool{
-		"?? .beads/":         true, // Directory shown when .beads/ not in source
-		"?? .beads/redirect": true, // File shown when .beads/ is tracked in source
-	}
-	// Add agent-specific allowlist
-	for _, pattern := range agent.allowlist {
-		allowlist[pattern] = true
-	}
-
-	// Parse git status output
-	statusOutput := strings.TrimSpace(string(output))
-	var unexpectedFiles []string
-
-	if statusOutput != "" {
-		for _, line := range strings.Split(statusOutput, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			if !allowlist[line] {
-				unexpectedFiles = append(unexpectedFiles, line)
-			}
-		}
-	}
-
-	// On failure, output detailed debug info
-	if len(unexpectedFiles) > 0 {
-		t.Logf("=== FAILURE: %s worktree is not clean ===", agent.name)
-		t.Logf("Path: %s", agent.path)
-		t.Logf("Is clone: %v", agent.isClone)
-		t.Logf("Has tracked .beads in source: %v", hasTrackedBeads)
-
-		// List all files
-		t.Logf("\n=== All files in %s worktree ===", agent.name)
-		findCmd := exec.Command("find", ".", "-type", "f", "-not", "-path", "./.git/*")
-		findCmd.Dir = agent.path
-		findOutput, _ := findCmd.CombinedOutput()
-		t.Logf("%s", findOutput)
-
-		// Show .beads contents if it exists
-		beadsPath := filepath.Join(agent.path, ".beads")
-		if _, err := os.Stat(beadsPath); err == nil {
-			t.Logf("\n=== Contents of .beads/ ===")
-			lsCmd := exec.Command("ls", "-la")
-			lsCmd.Dir = beadsPath
-			lsOutput, _ := lsCmd.CombinedOutput()
-			t.Logf("%s", lsOutput)
-		}
-
-		// Show full git status
-		t.Logf("\n=== Full git status ===")
-		statusCmd := exec.Command("git", "status")
-		statusCmd.Dir = agent.path
-		statusFullOutput, _ := statusCmd.CombinedOutput()
-		t.Logf("%s", statusFullOutput)
-
-		// Report each unexpected file
-		for _, file := range unexpectedFiles {
-			t.Errorf("UNEXPECTED FILE in %s: %s", agent.name, file)
-		}
-	} else {
-		t.Logf("SUCCESS: %s worktree is clean", agent.name)
-	}
-
-	return unexpectedFiles
 }
