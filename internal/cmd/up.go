@@ -77,7 +77,8 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 
 	// 2. Deacon (Claude agent)
-	if _, err := factory.Start(townRoot, agent.DeaconAddress, ""); err != nil {
+	deaconAgent, _ := config.ResolveRoleAgentName("deacon", townRoot, "")
+	if _, err := factory.Start(townRoot, agent.DeaconAddress, deaconAgent); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			printStatus("Deacon", true, "running")
 		} else {
@@ -89,7 +90,8 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 
 	// 3. Mayor (Claude agent)
-	if _, err := factory.Start(townRoot, agent.MayorAddress, ""); err != nil {
+	mayorAgent, _ := config.ResolveRoleAgentName("mayor", townRoot, "")
+	if _, err := factory.Start(townRoot, agent.MayorAddress, mayorAgent); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			printStatus("Mayor", true, "running")
 		} else {
