@@ -363,6 +363,12 @@ func (t *Tmux) Exists(id session.SessionID) (bool, error) {
 	return true, nil
 }
 
+// HasSession checks if a session with the given name exists.
+// This is a convenience wrapper around Exists for string session names.
+func (t *Tmux) HasSession(name string) (bool, error) {
+	return t.Exists(session.SessionID(name))
+}
+
 // List returns all session IDs.
 func (t *Tmux) List() ([]session.SessionID, error) {
 	out, err := t.run("list-sessions", "-F", "#{session_name}")
