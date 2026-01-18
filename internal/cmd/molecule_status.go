@@ -339,9 +339,8 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 			// IMPORTANT: Don't use ParseAgentFieldsFromDescription - the description
 			// field may contain stale data, causing the wrong issue to be hooked.
 			if agentBead.HookBead != "" {
-				// Fetch the bead on the hook using routing - the hook bead may
-				// have a different prefix (e.g., hq- wisp assigned to gt- agent)
-				hookBead, err = b.ShowWithRouting(agentBead.HookBead)
+				// Fetch the bead on the hook
+				hookBead, err = b.Show(agentBead.HookBead)
 				if err != nil {
 					// Hook bead referenced but not found - report error but continue
 					hookBead = nil

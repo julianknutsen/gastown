@@ -394,64 +394,6 @@ func (b *Beads) Show(id string) (*Issue, error) {
 	return issues[0], nil
 }
 
-// ShowWithRouting returns detailed information about an issue using bd's
-// prefix-based routing. Unlike Show(), this method does NOT set BEADS_DIR,
-// allowing bd to use routes.jsonl to resolve cross-database references
-// (e.g., hq- wisps from a rig-level agent).
-func (b *Beads) ShowWithRouting(id string) (*Issue, error) {
-	out, err := b.runWithRouting("show", id, "--json")
-	if err != nil {
-		return nil, err
-	}
-
-	// bd show --json returns an array with one element
-	var issues []*Issue
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return nil, fmt.Errorf("parsing bd show output: %w", err)
-	}
-
-	if len(issues) == 0 {
-		return nil, ErrNotFound
-	}
-
-	return issues[0], nil
-}
-
-// runWithRouting executes a bd command without setting BEADS_DIR, allowing
-// bd to use routes.jsonl for prefix-based routing. Use this for ID-based
-// commands (show, update, etc.) that may reference beads in other databases.
-func (b *Beads) runWithRouting(args ...string) ([]byte, error) {
-	fullArgs := append([]string{"--no-daemon"}, args...)
-	cmd := exec.Command("bd", fullArgs...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Dir = b.workDir
-
-	// Remove BEADS_DIR from environment to enable routing.
-	// bd will find .beads from cmd.Dir and use routes.jsonl for routing.
-	env := os.Environ()
-	filteredEnv := make([]string, 0, len(env))
-	for _, e := range env {
-		if !strings.HasPrefix(e, "BEADS_DIR=") {
-			filteredEnv = append(filteredEnv, e)
-		}
-	}
-	cmd.Env = filteredEnv
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		return nil, b.wrapError(err, stderr.String(), args)
-	}
-
-	if stdout.Len() == 0 && stderr.Len() > 0 {
-		return nil, b.wrapError(fmt.Errorf("command produced no output"), stderr.String(), args)
-	}
-
-	return stdout.Bytes(), nil
-}
-
 // ShowMultiple fetches multiple issues by ID in a single bd call.
 // Returns a map of ID to Issue. Missing IDs are not included in the map.
 func (b *Beads) ShowMultiple(ids []string) (map[string]*Issue, error) {
