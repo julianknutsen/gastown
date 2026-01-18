@@ -186,7 +186,7 @@ func TestIdentityToAgentID_Mayor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("identityToAgentID('mayor') error: %v", err)
 	}
-	if result != "mayor" {
+	if result.String() != "mayor" {
 		t.Errorf("identityToAgentID('mayor') = %q, expected 'mayor'", result)
 	}
 }
@@ -207,7 +207,7 @@ func TestIdentityToAgentID_Witness(t *testing.T) {
 			t.Errorf("identityToAgentID(%q) error: %v", tc.identity, err)
 			continue
 		}
-		if string(result) != tc.expected {
+		if result.String() != tc.expected {
 			t.Errorf("identityToAgentID(%q) = %q, expected %q", tc.identity, result, tc.expected)
 		}
 	}

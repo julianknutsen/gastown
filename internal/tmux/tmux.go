@@ -273,6 +273,16 @@ func getAllDescendants(pid string) []string {
 	return result
 }
 
+// KillSession terminates a tmux session by name.
+// Returns nil if the session was successfully killed or was already gone.
+func (t *Tmux) KillSession(name string) error {
+	_, err := t.run("kill-session", "-t", name)
+	if errors.Is(err, ErrSessionNotFound) {
+		return nil
+	}
+	return err
+}
+
 // KillSessionWithProcesses explicitly kills all processes in a session before terminating it.
 // This prevents orphan processes that survive tmux kill-session due to SIGHUP being ignored.
 //

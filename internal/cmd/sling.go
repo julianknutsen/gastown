@@ -187,6 +187,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 	// Determine target agent (self or specified)
 	var targetAgent string
+	var hookWorkDir string // Clone path for polecat spawns (used for molecule attachment)
 
 	if len(args) > 1 {
 		target := args[1]
@@ -239,6 +240,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 					return fmt.Errorf("spawning polecat: %w", spawnErr)
 				}
 				targetAgent = spawnInfo.AgentID()
+				hookWorkDir = spawnInfo.ClonePath
 
 				// Wake witness and refinery to monitor the new polecat
 				wakeRigAgents(townRoot, rigName)
@@ -267,11 +269,10 @@ func runSling(cmd *cobra.Command, args []string) error {
 							return fmt.Errorf("spawning polecat to replace dead polecat: %w", spawnErr)
 						}
 						targetAgent = spawnInfo.AgentID()
-						targetPane = spawnInfo.Pane
 						hookWorkDir = spawnInfo.ClonePath
 
 						// Wake witness and refinery to monitor the new polecat
-						wakeRigAgents(rigName)
+						wakeRigAgents(townRoot, rigName)
 					} else {
 						return fmt.Errorf("resolving target: %w", err)
 					}

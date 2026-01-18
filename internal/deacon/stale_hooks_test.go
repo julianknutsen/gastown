@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/agent"
+	"github.com/steveyegge/gastown/internal/ids"
 )
 
 // mockAgentChecker is a test implementation of AgentChecker.
@@ -13,7 +14,7 @@ type mockAgentChecker struct {
 }
 
 func (m *mockAgentChecker) Exists(id agent.AgentID) bool {
-	return m.agents[string(id)]
+	return m.agents[id.String()]
 }
 
 func TestStaleHookConfig_AgentChecker(t *testing.T) {
@@ -33,15 +34,15 @@ func TestStaleHookConfig_AgentChecker(t *testing.T) {
 	}
 
 	// Verify the mock works as expected
-	if !cfg.AgentChecker.Exists("gastown/witness") {
+	if !cfg.AgentChecker.Exists(ids.ParseAddress("gastown/witness")) {
 		t.Error("expected witness agent to be alive")
 	}
 
-	if cfg.AgentChecker.Exists("gastown/polecats/max") {
+	if cfg.AgentChecker.Exists(ids.ParseAddress("gastown/polecats/max")) {
 		t.Error("expected max agent to be dead")
 	}
 
-	if cfg.AgentChecker.Exists("nonexistent") {
+	if cfg.AgentChecker.Exists(ids.ParseAddress("nonexistent")) {
 		t.Error("expected nonexistent agent to return false")
 	}
 }

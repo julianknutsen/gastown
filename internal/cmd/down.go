@@ -95,6 +95,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 		// By default, tmux exits when there are no sessions (exit-empty on).
 		// This ensures the server stays running for subsequent `gt up`.
 		// Ignore errors - if there's no server, nothing to configure.
+		t := tmux.NewTmux()
 		_ = t.SetExitEmpty(false)
 	}
 	allOK := true

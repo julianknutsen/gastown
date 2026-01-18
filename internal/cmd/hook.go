@@ -282,7 +282,7 @@ func runHookShow(cmd *cobra.Command, args []string) error {
 		target = args[0]
 	} else {
 		// Auto-detect current agent from context
-		agentID, _, _, err := resolveSelfTarget()
+		agentID, err := resolveSelfTarget()
 		if err != nil {
 			return fmt.Errorf("auto-detecting agent (use explicit argument): %w", err)
 		}
