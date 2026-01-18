@@ -70,12 +70,7 @@ func verifyFormulaExists(formulaName string) error {
 }
 
 // runSlingFormula handles standalone formula slinging.
-// Flow: cook → wisp → spawn (if rig target) → attach to hook → nudge
-//
-// When target is a rig, we create the wisp BEFORE spawning the polecat so we can
-// pass HookBead atomically at spawn time. This ensures the polecat's agent bead
-// always has a valid hook_bead from the start, avoiding race conditions where
-// gt prime might run before the hook is set.
+// Flow: cook → wisp → attach to hook → nudge
 func runSlingFormula(args []string) error {
 	formulaName := args[0]
 
@@ -92,52 +87,78 @@ func runSlingFormula(args []string) error {
 		target = args[1]
 	}
 
-	// Check if target is a rig early - we need to know this to reorder operations
-	var targetIsRig bool
-	var rigName string
-	if target != "" && target != "." {
-		if _, isDog := IsDogTarget(target); !isDog {
-			rigName, targetIsRig = IsRigName(target)
-		}
-	}
-
 	// Resolve target agent
 	var targetAgent string
-	var wispRootID string
 
-	// For dry run, handle all target types and return early
-	if slingDryRun {
-		if target == "" {
-			targetAgent, err = resolveSelfTarget()
-			if err != nil {
-				return err
-			}
-		} else if target == "." {
+	if target != "" {
+		// Resolve "." to current agent identity (like git's "." meaning current directory)
+		if target == "." {
 			targetAgent, err = resolveSelfTarget()
 			if err != nil {
 				return fmt.Errorf("resolving self for '.' target: %w", err)
 			}
 		} else if dogName, isDog := IsDogTarget(target); isDog {
-			if dogName == "" {
-				fmt.Printf("Would dispatch to idle dog in kennel\n")
+			if slingDryRun {
+				if dogName == "" {
+					fmt.Printf("Would dispatch to idle dog in kennel\n")
+				} else {
+					fmt.Printf("Would dispatch to dog '%s'\n", dogName)
+				}
+				targetAgent = fmt.Sprintf("deacon/dogs/%s", dogName)
+				if dogName == "" {
+					targetAgent = "deacon/dogs/<idle>"
+				}
 			} else {
-				fmt.Printf("Would dispatch to dog '%s'\n", dogName)
+				// Dispatch to dog
+				dispatchInfo, dispatchErr := DispatchToDog(dogName, slingCreate)
+				if dispatchErr != nil {
+					return fmt.Errorf("dispatching to dog: %w", dispatchErr)
+				}
+				targetAgent = dispatchInfo.AgentID
+				fmt.Printf("Dispatched to dog %s\n", dispatchInfo.DogName)
 			}
-			targetAgent = fmt.Sprintf("deacon/dogs/%s", dogName)
-			if dogName == "" {
-				targetAgent = "deacon/dogs/<idle>"
+		} else if rigName, isRig := IsRigName(target); isRig {
+			// Check if target is a rig name (auto-spawn polecat)
+			if slingDryRun {
+				// Dry run - just indicate what would happen
+				fmt.Printf("Would spawn fresh polecat in rig '%s'\n", rigName)
+				targetAgent = fmt.Sprintf("%s/polecats/<new>", rigName)
+			} else {
+				// Spawn a fresh polecat in the rig
+				fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
+				spawnOpts := SlingSpawnOptions{
+					Force:   slingForce,
+					Account: slingAccount,
+					Create:  slingCreate,
+					Agent:   slingAgent,
+				}
+				spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
+				if spawnErr != nil {
+					return fmt.Errorf("spawning polecat: %w", spawnErr)
+				}
+				targetAgent = spawnInfo.AgentID()
+
+				// Wake witness and refinery to monitor the new polecat
+				wakeRigAgents(townRoot, rigName)
 			}
-			// Dogs are goroutines, not tmux sessions - no pane to nudge
-		} else if targetIsRig {
-			fmt.Printf("Would spawn fresh polecat in rig '%s'\n", rigName)
-			targetAgent = fmt.Sprintf("%s/polecats/<new>", rigName)
 		} else {
+			// Slinging to an existing agent
 			targetAgent, err = resolveTargetAgent(target)
 			if err != nil {
 				return fmt.Errorf("resolving target: %w", err)
 			}
 		}
-		fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, targetAgent)
+	} else {
+		// Slinging to self
+		targetAgent, err = resolveSelfTarget()
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, targetAgent)
+
+	if slingDryRun {
 		fmt.Printf("Would cook formula: %s\n", formulaName)
 		fmt.Printf("Would create wisp and pin to: %s\n", targetAgent)
 		for _, v := range slingVars {
@@ -147,125 +168,37 @@ func runSlingFormula(args []string) error {
 		return nil
 	}
 
-	// For rig targets, create wisp BEFORE spawning polecat so we can pass HookBead
-	if targetIsRig {
-		fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, rigName)
-
-		// Step 1: Cook the formula (ensures proto exists)
-		fmt.Printf("  Cooking formula...\n")
-		cookArgs := []string{"--no-daemon", "cook", formulaName}
-		cookCmd := exec.Command("bd", cookArgs...)
-		cookCmd.Stderr = os.Stderr
-		if err := cookCmd.Run(); err != nil {
-			return fmt.Errorf("cooking formula: %w", err)
-		}
-
-		// Step 2: Create wisp instance BEFORE spawning polecat
-		fmt.Printf("  Creating wisp...\n")
-		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName}
-		for _, v := range slingVars {
-			wispArgs = append(wispArgs, "--var", v)
-		}
-		wispArgs = append(wispArgs, "--json")
-
-		wispCmd := exec.Command("bd", wispArgs...)
-		wispCmd.Stderr = os.Stderr
-		wispOut, err := wispCmd.Output()
-		if err != nil {
-			return fmt.Errorf("creating wisp: %w", err)
-		}
-
-		wispRootID, err = parseWispIDFromJSON(wispOut)
-		if err != nil {
-			return fmt.Errorf("parsing wisp output: %w", err)
-		}
-		fmt.Printf("%s Wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
-
-		// Step 3: Spawn polecat WITH HookBead set atomically
-		fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
-		spawnOpts := SlingSpawnOptions{
-			Force:    slingForce,
-			Account:  slingAccount,
-			Create:   slingCreate,
-			Agent:    slingAgent,
-			HookBead: wispRootID, // Set atomically at spawn time
-		}
-		spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
-		if spawnErr != nil {
-			return fmt.Errorf("spawning polecat: %w", spawnErr)
-		}
-		targetAgent = spawnInfo.AgentID()
-
-		// Wake witness and refinery to monitor the new polecat
-		wakeRigAgents(townRoot, rigName)
-	} else {
-		// Non-rig targets: resolve target first, then cook/wisp
-		if target == "" {
-			targetAgent, err = resolveSelfTarget()
-			if err != nil {
-				return err
-			}
-		} else if target == "." {
-			targetAgent, err = resolveSelfTarget()
-			if err != nil {
-				return fmt.Errorf("resolving self for '.' target: %w", err)
-			}
-		} else if dogName, isDog := IsDogTarget(target); isDog {
-			dispatchInfo, dispatchErr := DispatchToDog(dogName, slingCreate)
-			if dispatchErr != nil {
-				return fmt.Errorf("dispatching to dog: %w", dispatchErr)
-			}
-			targetAgent = dispatchInfo.AgentID
-			// Dogs are goroutines, not tmux sessions - no pane to nudge
-			// Work discovery happens via gt prime / bd show
-			fmt.Printf("Dispatched to dog %s\n", dispatchInfo.DogName)
-		} else {
-			// Slinging to an existing agent
-			targetAgent, err = resolveTargetAgent(target)
-			if err != nil {
-				return fmt.Errorf("resolving target: %w", err)
-			}
-		}
-
-		fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, targetAgent)
-
-		// Step 1: Cook the formula (ensures proto exists)
-		fmt.Printf("  Cooking formula...\n")
-		cookArgs := []string{"--no-daemon", "cook", formulaName}
-		cookCmd := exec.Command("bd", cookArgs...)
-		cookCmd.Stderr = os.Stderr
-		if err := cookCmd.Run(); err != nil {
-			return fmt.Errorf("cooking formula: %w", err)
-		}
-
-		// Step 2: Create wisp instance (ephemeral)
-		fmt.Printf("  Creating wisp...\n")
-		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName}
-		for _, v := range slingVars {
-			wispArgs = append(wispArgs, "--var", v)
-		}
-		wispArgs = append(wispArgs, "--json")
-
-		wispCmd := exec.Command("bd", wispArgs...)
-		wispCmd.Stderr = os.Stderr
-		wispOut, err := wispCmd.Output()
-		if err != nil {
-			return fmt.Errorf("creating wisp: %w", err)
-		}
-
-		wispRootID, err = parseWispIDFromJSON(wispOut)
-		if err != nil {
-			return fmt.Errorf("parsing wisp output: %w", err)
-		}
-		fmt.Printf("%s Wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
+	// Step 1: Cook the formula (ensures proto exists)
+	fmt.Printf("  Cooking formula...\n")
+	cookArgs := []string{"--no-daemon", "cook", formulaName}
+	cookCmd := exec.Command("bd", cookArgs...)
+	cookCmd.Stderr = os.Stderr
+	if err := cookCmd.Run(); err != nil {
+		return fmt.Errorf("cooking formula: %w", err)
 	}
 
-	// Record the attached molecule in the wisp's description.
-	// This is required for gt hook to recognize the molecule attachment.
-	if err := storeAttachedMoleculeInBead(wispRootID, wispRootID); err != nil {
-		// Warn but don't fail - polecat can still work through steps
-		fmt.Printf("%s Could not store attached_molecule: %v\n", style.Dim.Render("Warning:"), err)
+	// Step 2: Create wisp instance (ephemeral)
+	fmt.Printf("  Creating wisp...\n")
+	wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName}
+	for _, v := range slingVars {
+		wispArgs = append(wispArgs, "--var", v)
 	}
+	wispArgs = append(wispArgs, "--json")
+
+	wispCmd := exec.Command("bd", wispArgs...)
+	wispCmd.Stderr = os.Stderr // Show wisp errors to user
+	wispOut, err := wispCmd.Output()
+	if err != nil {
+		return fmt.Errorf("creating wisp: %w", err)
+	}
+
+	// Parse wisp output to get the root ID
+	wispRootID, err := parseWispIDFromJSON(wispOut)
+	if err != nil {
+		return fmt.Errorf("parsing wisp output: %w", err)
+	}
+
+	fmt.Printf("%s Wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
 
 	// Record the attached molecule in the wisp's description.
 	// This is required for gt hook to recognize the molecule attachment.
