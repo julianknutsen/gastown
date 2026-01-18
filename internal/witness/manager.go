@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -68,8 +69,11 @@ func (m *Manager) Status() (*Witness, error) {
 	}
 
 	// Reconcile state with reality (don't persist, just report accurately)
-	if w.IsRunning() && !m.agents.Exists(m.address) {
+	agentExists := m.agents.Exists(m.address)
+	if w.IsRunning() && !agentExists {
 		w.SetStopped() // Agent crashed
+	} else if !w.IsRunning() && agentExists {
+		w.SetRunning(time.Now()) // Agent started via factory.Start()
 	}
 
 	// Update monitored polecats list (still useful for display)

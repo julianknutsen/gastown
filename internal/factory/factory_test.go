@@ -302,7 +302,7 @@ func TestStartWithAgents_Basic(t *testing.T) {
 
 	agents := agent.NewDouble() // FAKE: working in-memory implementation
 
-	id, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, "claude")
+	id, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, WithAgent("claude"))
 
 	// STATE VERIFICATION: check the result, not how we got there
 	require.NoError(t, err)
@@ -319,7 +319,7 @@ func TestStartWithAgents_SetsCorrectWorkDir(t *testing.T) {
 	agents := agent.NewDouble()
 	id := agent.WitnessAddress("testrig")
 
-	_, err := StartWithAgents(agents, nil, townRoot, id, "claude")
+	_, err := StartWithAgents(agents, nil, townRoot, id, WithAgent("claude"))
 
 	require.NoError(t, err)
 	assert.Equal(t, witnessDir, agents.GetWorkDir(id))
@@ -330,7 +330,7 @@ func TestStartWithAgents_SetsCorrectEnvVars(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755))
 
 	agents := agent.NewDouble()
-	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, "claude")
+	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, WithAgent("claude"))
 
 	require.NoError(t, err)
 	cmd := agents.GetCommand(agent.MayorAddress)
@@ -348,7 +348,7 @@ func TestStartWithAgents_CrewAgent_SetsRigAndWorkerEnvVars(t *testing.T) {
 	agents := agent.NewDouble()
 	id := agent.CrewAddress("testrig", "emma")
 
-	_, err := StartWithAgents(agents, nil, townRoot, id, "claude")
+	_, err := StartWithAgents(agents, nil, townRoot, id, WithAgent("claude"))
 
 	require.NoError(t, err)
 	cmd := agents.GetCommand(id)
@@ -366,7 +366,7 @@ func TestStartWithAgents_WithTopic(t *testing.T) {
 	agents := agent.NewDouble()
 	id := agent.CrewAddress("testrig", "emma")
 
-	_, err := StartWithAgents(agents, nil, townRoot, id, "claude", WithTopic("patrol"))
+	_, err := StartWithAgents(agents, nil, townRoot, id, WithAgent("claude"), WithTopic("patrol"))
 
 	require.NoError(t, err)
 	cmd := agents.GetCommand(id)
@@ -378,7 +378,7 @@ func TestStartWithAgents_WithInteractive(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755))
 
 	agents := agent.NewDouble()
-	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, "claude", WithInteractive())
+	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, WithAgent("claude"), WithInteractive())
 
 	require.NoError(t, err)
 	cmd := agents.GetCommand(agent.MayorAddress)
@@ -393,7 +393,7 @@ func TestStartWithAgents_WithKillExisting(t *testing.T) {
 	agents := agent.NewDouble()            // FAKE with spy capability
 	agents.CreateAgent(agent.MayorAddress) // Pre-existing session
 
-	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, "claude", WithKillExisting())
+	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, WithAgent("claude"), WithKillExisting())
 
 	// STATE VERIFICATION: agent exists after operation
 	require.NoError(t, err)
@@ -413,7 +413,7 @@ func TestStartWithAgents_AlreadyRunning(t *testing.T) {
 	agents := agent.NewDouble()
 	agents.CreateAgent(agent.MayorAddress) // Already running
 
-	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, "claude")
+	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, WithAgent("claude"))
 
 	// Without WithKillExisting, should fail with ErrAlreadyRunning
 	assert.ErrorIs(t, err, agent.ErrAlreadyRunning)
@@ -426,7 +426,7 @@ func TestStartWithAgents_WithEnvOverrides(t *testing.T) {
 	agents := agent.NewDouble()
 	overrides := map[string]string{"CUSTOM_VAR": "custom_value"}
 
-	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, "claude", WithEnvOverrides(overrides))
+	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, WithAgent("claude"), WithEnvOverrides(overrides))
 
 	require.NoError(t, err)
 	cmd := agents.GetCommand(agent.MayorAddress)
@@ -437,7 +437,7 @@ func TestStartWithAgents_InvalidAgentID(t *testing.T) {
 	townRoot := t.TempDir()
 	agents := agent.NewDouble()
 
-	_, err := StartWithAgents(agents, nil, townRoot, agent.AgentID{Role: "invalid"}, "claude")
+	_, err := StartWithAgents(agents, nil, townRoot, agent.AgentID{Role: "invalid"}, WithAgent("claude"))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown role")
@@ -448,7 +448,7 @@ func TestStartWithAgents_PolecatRequiresRigAndWorker(t *testing.T) {
 	agents := agent.NewDouble()
 
 	// Malformed polecat ID (missing worker)
-	_, err := StartWithAgents(agents, nil, townRoot, agent.AgentID{Role: "polecat", Rig: "testrig"}, "claude")
+	_, err := StartWithAgents(agents, nil, townRoot, agent.AgentID{Role: "polecat", Rig: "testrig"}, WithAgent("claude"))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "requires rig and worker name")
@@ -463,7 +463,7 @@ func TestStartWithAgents_StartError_Propagates(t *testing.T) {
 	stub := agent.NewAgentsStub(agents) // STUB: wraps fake, injects errors
 	stub.StartErr = assert.AnError      // Inject canned error
 
-	_, err := StartWithAgents(stub, nil, townRoot, agent.MayorAddress, "claude")
+	_, err := StartWithAgents(stub, nil, townRoot, agent.MayorAddress, WithAgent("claude"))
 
 	// STATE VERIFICATION: error propagated correctly
 	assert.Error(t, err)
@@ -480,7 +480,7 @@ func TestStartWithAgents_CallsOnCreatedCallback(t *testing.T) {
 		return nil
 	}
 
-	_, err := StartWithAgents(agents, themer, townRoot, agent.MayorAddress, "claude")
+	_, err := StartWithAgents(agents, themer, townRoot, agent.MayorAddress, WithAgent("claude"))
 
 	require.NoError(t, err)
 	// Verify callback was passed (Double records it but doesn't execute real callbacks)
@@ -495,7 +495,7 @@ func TestStartWithAgents_RefineryAgent(t *testing.T) {
 	agents := agent.NewDouble()
 	id := agent.RefineryAddress("testrig")
 
-	_, err := StartWithAgents(agents, nil, townRoot, id, "claude")
+	_, err := StartWithAgents(agents, nil, townRoot, id, WithAgent("claude"))
 
 	require.NoError(t, err)
 	assert.True(t, agents.Exists(id))
@@ -510,7 +510,7 @@ func TestStartWithAgents_PolecatAgent(t *testing.T) {
 	agents := agent.NewDouble()
 	id := agent.PolecatAddress("testrig", "Toast")
 
-	_, err := StartWithAgents(agents, nil, townRoot, id, "claude")
+	_, err := StartWithAgents(agents, nil, townRoot, id, WithAgent("claude"))
 
 	require.NoError(t, err)
 	assert.True(t, agents.Exists(id))
@@ -527,7 +527,7 @@ func TestStartWithAgents_DeaconAgent(t *testing.T) {
 
 	agents := agent.NewDouble()
 
-	id, err := StartWithAgents(agents, nil, townRoot, agent.DeaconAddress, "claude")
+	id, err := StartWithAgents(agents, nil, townRoot, agent.DeaconAddress, WithAgent("claude"))
 
 	require.NoError(t, err)
 	assert.Equal(t, agent.DeaconAddress, id)
@@ -542,7 +542,7 @@ func TestStartWithAgents_BootAgent(t *testing.T) {
 
 	agents := agent.NewDouble()
 
-	id, err := StartWithAgents(agents, nil, townRoot, agent.BootAddress, "claude")
+	id, err := StartWithAgents(agents, nil, townRoot, agent.BootAddress, WithAgent("claude"))
 
 	require.NoError(t, err)
 	assert.Equal(t, agent.BootAddress, id)

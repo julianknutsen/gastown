@@ -80,8 +80,11 @@ func (m *Manager) Status() (*Refinery, error) {
 	}
 
 	// Reconcile state with reality (don't persist, just report accurately)
-	if ref.IsRunning() && !m.agents.Exists(m.address) {
+	agentExists := m.agents.Exists(m.address)
+	if ref.IsRunning() && !agentExists {
 		ref.SetStopped() // Agent crashed
+	} else if !ref.IsRunning() && agentExists {
+		ref.SetRunning(time.Now()) // Agent started via factory.Start()
 	}
 
 	return ref, nil
@@ -502,6 +505,43 @@ Reason: %s
 Please review the feedback and address the issues before resubmitting.`,
 			mr.Branch, mr.IssueID, reason),
 		Priority: mail.PriorityNormal,
+	}
+	_ = router.Send(msg) // best-effort notification
+}
+
+// notifyWorkerConflict sends a conflict notification to a polecat.
+func (m *Manager) notifyWorkerConflict(mr *MergeRequest) {
+	router := mail.NewRouter(m.RigPath())
+	msg := &mail.Message{
+		From:    fmt.Sprintf("%s/refinery", m.rig.Name),
+		To:      fmt.Sprintf("%s/%s", m.rig.Name, mr.Worker),
+		Subject: "Merge conflict - rebase required",
+		Body: fmt.Sprintf(`Your branch %s has conflicts with %s.
+
+Please rebase your changes:
+  git fetch origin
+  git rebase origin/%s
+  git push -f
+
+Then the Refinery will retry the merge.`,
+			mr.Branch, mr.TargetBranch, mr.TargetBranch),
+		Priority: mail.PriorityHigh,
+	}
+	_ = router.Send(msg) // best-effort notification
+}
+
+// notifyWorkerMerged sends a success notification to a polecat.
+func (m *Manager) notifyWorkerMerged(mr *MergeRequest) {
+	router := mail.NewRouter(m.RigPath())
+	msg := &mail.Message{
+		From:    fmt.Sprintf("%s/refinery", m.rig.Name),
+		To:      fmt.Sprintf("%s/%s", m.rig.Name, mr.Worker),
+		Subject: "Work merged successfully",
+		Body: fmt.Sprintf(`Your branch %s has been merged to %s.
+
+Issue: %s
+Thank you for your contribution!`,
+			mr.Branch, mr.TargetBranch, mr.IssueID),
 	}
 	_ = router.Send(msg) // best-effort notification
 }

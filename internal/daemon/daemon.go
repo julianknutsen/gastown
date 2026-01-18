@@ -45,6 +45,12 @@ type Daemon struct {
 	// Mass death detection: track recent session deaths
 	deathsMu     sync.Mutex
 	recentDeaths []sessionDeath
+
+	// Deacon startup tracking: prevents race condition where newly started
+	// sessions are immediately killed by the heartbeat check.
+	// See: https://github.com/steveyegge/gastown/issues/567
+	// Note: Only accessed from heartbeat loop goroutine - no sync needed.
+	deaconLastStarted time.Time
 }
 
 // sessionDeath records a detected session death for mass death analysis.
@@ -58,6 +64,11 @@ const (
 	massDeathWindow    = 30 * time.Second // Time window to detect mass death
 	massDeathThreshold = 3                // Number of deaths to trigger alert
 )
+
+// deaconGracePeriod is the time to wait after starting a Deacon before checking heartbeat.
+// The Deacon needs time to initialize Claude, run SessionStart hooks, execute gt prime,
+// run a patrol cycle, and write a fresh heartbeat. 5 minutes is conservative.
+const deaconGracePeriod = 5 * time.Minute
 
 // New creates a new daemon instance.
 func New(config *Config) (*Daemon, error) {
@@ -123,7 +134,7 @@ func (d *Daemon) Run() error {
 
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
+	signal.Notify(sigChan, daemonSignals()...)
 
 	// Fixed recovery-focused heartbeat (no activity-based backoff)
 	// Normal wake is handled by feed subscription (bd activity --follow)
@@ -158,9 +169,9 @@ func (d *Daemon) Run() error {
 			return d.shutdown(state)
 
 		case sig := <-sigChan:
-			if sig == syscall.SIGUSR1 {
-				// SIGUSR1: immediate lifecycle processing (from gt handoff)
-				d.logger.Println("Received SIGUSR1, processing lifecycle requests immediately")
+			if isLifecycleSignal(sig) {
+				// Lifecycle signal: immediate lifecycle processing (from gt handoff)
+				d.logger.Println("Received lifecycle signal, processing lifecycle requests immediately")
 				d.processLifecycleRequests()
 			} else {
 				d.logger.Printf("Received signal %v, shutting down", sig)
@@ -328,6 +339,9 @@ func (d *Daemon) ensureDeaconRunning() {
 		return
 	}
 
+	// Track when we started the Deacon to prevent race condition in checkDeaconHeartbeat.
+	// The heartbeat file will still be stale until the Deacon runs a full patrol cycle.
+	d.deaconLastStarted = time.Now()
 	d.logger.Println("Deacon started successfully")
 }
 
@@ -335,6 +349,16 @@ func (d *Daemon) ensureDeaconRunning() {
 // This is a belt-and-suspenders fallback in case Boot doesn't detect stuck states.
 // Uses the heartbeat file that the Deacon updates on each patrol cycle.
 func (d *Daemon) checkDeaconHeartbeat() {
+	// Grace period: don't check heartbeat for newly started sessions.
+	// This prevents the race condition where we start a Deacon, then immediately
+	// see a stale heartbeat (from before the crash) and kill the session we just started.
+	// See: https://github.com/steveyegge/gastown/issues/567
+	if !d.deaconLastStarted.IsZero() && time.Since(d.deaconLastStarted) < deaconGracePeriod {
+		d.logger.Printf("Deacon started recently (%s ago), skipping heartbeat check",
+			time.Since(d.deaconLastStarted).Round(time.Second))
+		return
+	}
+
 	hb := deacon.ReadHeartbeat(d.config.TownRoot)
 	if hb == nil {
 		// No heartbeat file - Deacon hasn't started a cycle yet
