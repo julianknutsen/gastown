@@ -380,12 +380,13 @@ func TestImplementation_Nudge_MultipleCalls_AllRecorded(t *testing.T) {
 func TestImplementation_StartupHook_CalledOnStart(t *testing.T) {
 	procs := session.NewDouble()
 
-	hookCalled := false
+	// Use channel for proper synchronization instead of time.Sleep
+	hookDone := make(chan struct{})
 	var hookedSessionID session.SessionID
 	cfg := &agent.Config{
 		StartupHook: func(sess session.Sessions, id session.SessionID) error {
-			hookCalled = true
 			hookedSessionID = id
+			close(hookDone)
 			return nil
 		},
 	}
@@ -395,10 +396,14 @@ func TestImplementation_StartupHook_CalledOnStart(t *testing.T) {
 	err := agents.StartWithConfig(id, startCfg("/tmp", "echo hello"))
 	require.NoError(t, err)
 
-	// Give the goroutine time to execute
-	time.Sleep(100 * time.Millisecond)
+	// Wait for hook to complete with timeout
+	select {
+	case <-hookDone:
+		// Hook was called
+	case <-time.After(5 * time.Second):
+		t.Fatal("startup hook was not called within timeout")
+	}
 
-	assert.True(t, hookCalled, "startup hook should be called")
 	assert.Equal(t, procs.SessionIDForAgent(id), hookedSessionID)
 }
 
