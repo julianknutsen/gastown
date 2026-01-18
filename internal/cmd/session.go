@@ -262,9 +262,8 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-	polecatAgentName, _ := config.ResolveRoleAgentName("polecat", townRoot, r.Path)
 	polecatID := agent.PolecatAddress(rigName, polecatName)
-	if _, err := factory.Start(townRoot, polecatID, polecatAgentName); err != nil {
+	if _, err := factory.Start(townRoot, polecatID, ""); err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
 
@@ -517,11 +516,10 @@ func runSessionRestart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Start fresh session using factory.Start()
+	// Start fresh session using factory.Start() (agent resolved automatically)
 	fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-	polecatAgentName, _ := config.ResolveRoleAgentName("polecat", townRoot, r.Path)
 	polecatID := agent.PolecatAddress(rigName, polecatName)
-	if _, err := factory.Start(townRoot, polecatID, polecatAgentName); err != nil {
+	if _, err := factory.Start(townRoot, polecatID, ""); err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
 

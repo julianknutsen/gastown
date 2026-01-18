@@ -41,10 +41,22 @@ type StartOption func(*startConfig)
 
 // startConfig holds optional Start() configuration.
 type startConfig struct {
+	agent        string            // Agent alias override (--agent flag)
 	topic        string            // Crew: startup topic for /resume beacon
 	interactive  bool              // Crew: remove --dangerously-skip-permissions
 	killExisting bool              // Stop existing session first
 	envOverrides map[string]string // Additional env vars (e.g., witness overrides)
+}
+
+// WithAgent sets the agent alias override (e.g., from --agent flag).
+// If not set, the agent is resolved from config based on the AgentID's role.
+// Passing an empty string is a no-op, making it safe to use with optional overrides.
+func WithAgent(agent string) StartOption {
+	return func(c *startConfig) {
+		if agent != "" {
+			c.agent = agent
+		}
+	}
 }
 
 // WithTopic sets the startup topic for crew agents.
@@ -75,6 +87,18 @@ func WithEnvOverrides(overrides map[string]string) StartOption {
 	}
 }
 
+// resolveAgentForID resolves the agent alias for an AgentID from config.
+// This is the internal auto-resolution that happens when aiRuntime is empty.
+func resolveAgentForID(townRoot string, id agent.AgentID) string {
+	role, rigName, _ := id.Parse()
+	rigPath := ""
+	if rigName != "" {
+		rigPath = filepath.Join(townRoot, rigName)
+	}
+	agentName, _ := config.ResolveRoleAgentName(role, townRoot, rigPath)
+	return agentName
+}
+
 // Start starts any agent with full production setup.
 // Works for all agent types: singletons, rig-level, and named workers.
 //
@@ -82,13 +106,30 @@ func WithEnvOverrides(overrides map[string]string) StartOption {
 // from the old per-role managers which returned immediately after session creation.
 // The blocking behavior ensures callers can interact with the agent immediately.
 //
+// Agent resolution: If aiRuntime is empty, the agent is automatically resolved
+// from config based on the AgentID's role. Use WithAgent() to override.
+//
 // Usage:
 //
-//	factory.Start(townRoot, agent.MayorAddress, aiRuntime)
-//	factory.Start(townRoot, agent.WitnessAddress("myrig"), aiRuntime)
-//	factory.Start(townRoot, agent.PolecatAddress("myrig", "toast"), aiRuntime)
-//	factory.Start(townRoot, agent.CrewAddress("myrig", "joe"), aiRuntime, WithTopic("patrol"))
+//	factory.Start(townRoot, agent.MayorAddress, "")                              // Auto-resolve
+//	factory.Start(townRoot, agent.WitnessAddress("myrig"), "")                   // Auto-resolve
+//	factory.Start(townRoot, agent.PolecatAddress("myrig", "toast"), "")          // Auto-resolve
+//	factory.Start(townRoot, agent.CrewAddress("myrig", "joe"), "", WithTopic("patrol"))
+//	factory.Start(townRoot, agent.MayorAddress, "", WithAgent("custom"))         // Override
 func Start(townRoot string, id agent.AgentID, aiRuntime string, opts ...StartOption) (agent.AgentID, error) {
+	// Apply options first to check for WithAgent override
+	cfg := &startConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	// Resolve agent name: WithAgent() > explicit aiRuntime > auto-resolve from config
+	if cfg.agent != "" {
+		aiRuntime = cfg.agent
+	} else if aiRuntime == "" {
+		aiRuntime = resolveAgentForID(townRoot, id)
+	}
+
 	// Build env vars for production agent creation
 	role, rigName, worker := id.Parse()
 	envCfg := config.AgentEnvConfig{
@@ -135,6 +176,13 @@ func StartWithAgents(
 	cfg := &startConfig{}
 	for _, opt := range opts {
 		opt(cfg)
+	}
+
+	// Resolve agent name: WithAgent() > explicit aiRuntime > auto-resolve from config
+	if cfg.agent != "" {
+		aiRuntime = cfg.agent
+	} else if aiRuntime == "" {
+		aiRuntime = resolveAgentForID(townRoot, id)
 	}
 
 	role, rigName, worker := id.Parse()

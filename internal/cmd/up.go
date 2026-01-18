@@ -77,8 +77,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 
 	// 2. Deacon (Claude agent)
-	deaconAgent, _ := config.ResolveRoleAgentName("deacon", townRoot, "")
-	if _, err := factory.Start(townRoot, agent.DeaconAddress, deaconAgent); err != nil {
+	if _, err := factory.Start(townRoot, agent.DeaconAddress, ""); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			printStatus("Deacon", true, "running")
 		} else {
@@ -90,8 +89,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 
 	// 3. Mayor (Claude agent)
-	mayorAgent, _ := config.ResolveRoleAgentName("mayor", townRoot, "")
-	if _, err := factory.Start(townRoot, agent.MayorAddress, mayorAgent); err != nil {
+	if _, err := factory.Start(townRoot, agent.MayorAddress, ""); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			printStatus("Mayor", true, "running")
 		} else {
@@ -105,17 +103,15 @@ func runUp(cmd *cobra.Command, args []string) error {
 	// 4. Witnesses (one per rig)
 	rigs := discoverRigs(townRoot)
 	for _, rigName := range rigs {
-		_, r, err := getRig(rigName)
-		if err != nil {
+		if _, _, err := getRig(rigName); err != nil {
 			printStatus(fmt.Sprintf("Witness (%s)", rigName), false, err.Error())
 			allOK = false
 			continue
 		}
 
 		witnessID := agent.WitnessAddress(rigName)
-		witnessAgentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
 		sessionName := fmt.Sprintf("gt-%s-witness", rigName)
-		if _, err := factory.Start(townRoot, witnessID, witnessAgentName); err != nil {
+		if _, err := factory.Start(townRoot, witnessID, ""); err != nil {
 			if err == agent.ErrAlreadyRunning {
 				printStatus(fmt.Sprintf("Witness (%s)", rigName), true, sessionName)
 			} else {
@@ -129,17 +125,15 @@ func runUp(cmd *cobra.Command, args []string) error {
 
 	// 5. Refineries (one per rig)
 	for _, rigName := range rigs {
-		_, r, err := getRig(rigName)
-		if err != nil {
+		if _, _, err := getRig(rigName); err != nil {
 			printStatus(fmt.Sprintf("Refinery (%s)", rigName), false, err.Error())
 			allOK = false
 			continue
 		}
 
 		refineryID := agent.RefineryAddress(rigName)
-		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
 		sessionName := fmt.Sprintf("gt-%s-refinery", rigName)
-		if _, err := factory.Start(townRoot, refineryID, refineryAgentName); err != nil {
+		if _, err := factory.Start(townRoot, refineryID, ""); err != nil {
 			if err == agent.ErrAlreadyRunning {
 				printStatus(fmt.Sprintf("Refinery (%s)", rigName), true, sessionName)
 			} else {
@@ -343,13 +337,10 @@ func startCrewFromSettings(townRoot, rigName string) ([]string, map[string]error
 	// Parse startup preference and determine which crew to start
 	toStart := parseCrewStartupPreference(settings.Crew.Startup, crewNames)
 
-	// Resolve agent name for crew
-	crewAgentName, _ := config.ResolveRoleAgentName("crew", townRoot, rigPath)
-
-	// Start each crew member using factory.Start
+	// Start each crew member using factory.Start (agent resolved automatically)
 	for _, crewName := range toStart {
 		crewID := agent.CrewAddress(rigName, crewName)
-		if _, err := factory.Start(townRoot, crewID, crewAgentName); err != nil {
+		if _, err := factory.Start(townRoot, crewID, ""); err != nil {
 			if err == agent.ErrAlreadyRunning {
 				started = append(started, crewName)
 			} else {
@@ -442,13 +433,6 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 		return started, errors
 	}
 
-	// Get rig for agent name resolution
-	townRoot, r, err := getRig(rigName)
-	if err != nil {
-		return started, errors
-	}
-	polecatAgentName, _ := config.ResolveRoleAgentName("polecat", townRoot, r.Path)
-
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -473,9 +457,9 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 			continue
 		}
 
-		// This polecat has work - start it using factory.Start()
+		// This polecat has work - start it using factory.Start() (agent resolved automatically)
 		polecatID := agent.PolecatAddress(rigName, polecatName)
-		if _, err := factory.Start(townRoot, polecatID, polecatAgentName); err != nil {
+		if _, err := factory.Start(townRoot, polecatID, ""); err != nil {
 			if err == agent.ErrAlreadyRunning {
 				started = append(started, polecatName)
 			} else {

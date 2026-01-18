@@ -319,8 +319,7 @@ func (d *Daemon) runDegradedBootTriage(b *boot.Boot) {
 // ensureDeaconRunning ensures the Deacon is running.
 // Uses factory.Start for consistent startup behavior (WaitForShellReady, GUPP, etc.).
 func (d *Daemon) ensureDeaconRunning() {
-	agentName, _ := config.ResolveRoleAgentName("deacon", d.config.TownRoot, "")
-	if _, err := factory.Start(d.config.TownRoot, agent.DeaconAddress, agentName); err != nil {
+	if _, err := factory.Start(d.config.TownRoot, agent.DeaconAddress, ""); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			// Deacon is running - nothing to do
 			return
@@ -400,10 +399,9 @@ func (d *Daemon) ensureWitnessRunning(rigName string) {
 	// factory.Start() handles: zombie detection, session creation, env vars, theming,
 	// startup readiness waits, and crucially - startup/propulsion nudges (GUPP).
 	// It returns ErrAlreadyRunning if Claude is already running in tmux.
-	agentName, _ := config.ResolveRoleAgentName("witness", d.config.TownRoot, "")
 	witnessID := agent.WitnessAddress(rigName)
 
-	if _, err := factory.Start(d.config.TownRoot, witnessID, agentName); err != nil {
+	if _, err := factory.Start(d.config.TownRoot, witnessID, ""); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			// Already running - nothing to do
 			return
@@ -436,11 +434,9 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 	// factory.Start() handles: zombie detection, session creation, env vars, theming,
 	// WaitForClaudeReady, and crucially - startup/propulsion nudges (GUPP).
 	// It returns ErrAlreadyRunning if Claude is already running in tmux.
-	rigPath := filepath.Join(d.config.TownRoot, rigName)
-	agentName, _ := config.ResolveRoleAgentName("refinery", d.config.TownRoot, rigPath)
 	refineryID := agent.RefineryAddress(rigName)
 
-	if _, err := factory.Start(d.config.TownRoot, refineryID, agentName); err != nil {
+	if _, err := factory.Start(d.config.TownRoot, refineryID, ""); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			// Already running - nothing to do
 			return
@@ -823,11 +819,9 @@ func (d *Daemon) restartPolecatAgent(rigName, polecatName string) error {
 		return fmt.Errorf("cannot restart polecat: %s", reason)
 	}
 
-	// Use factory.Start() with AgentID for consistent startup
-	rigPath := filepath.Join(d.config.TownRoot, rigName)
-	aiRuntime, _ := config.ResolveRoleAgentName("polecat", d.config.TownRoot, rigPath)
+	// Use factory.Start() with AgentID for consistent startup (agent resolved automatically)
 	polecatID := agent.PolecatAddress(rigName, polecatName)
-	_, err := factory.Start(d.config.TownRoot, polecatID, aiRuntime)
+	_, err := factory.Start(d.config.TownRoot, polecatID, "")
 	return err
 }
 

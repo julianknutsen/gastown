@@ -5,7 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
-	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -98,10 +97,9 @@ func runMayorStart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-	agentName := config.ResolveAgentForRole("mayor", townRoot, "", mayorAgentOverride)
 
 	fmt.Println("Starting Mayor session...")
-	if _, err := factory.Start(townRoot, agent.MayorAddress, agentName); err != nil {
+	if _, err := factory.Start(townRoot, agent.MayorAddress, "", factory.WithAgent(mayorAgentOverride)); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			return fmt.Errorf("Mayor session already running. Attach with: gt mayor attach")
 		}
@@ -148,8 +146,7 @@ func runMayorAttach(cmd *cobra.Command, args []string) error {
 	if !agents.Exists(id) {
 		// Auto-start if not running
 		fmt.Println("Mayor session not running, starting...")
-		agentName := config.ResolveAgentForRole("mayor", townRoot, "", mayorAgentOverride)
-		if _, err := factory.Start(townRoot, agent.MayorAddress, agentName); err != nil {
+		if _, err := factory.Start(townRoot, agent.MayorAddress, "", factory.WithAgent(mayorAgentOverride)); err != nil {
 			return err
 		}
 	}

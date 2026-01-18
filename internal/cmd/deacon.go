@@ -409,9 +409,8 @@ func runDeaconStart(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Starting Deacon session...")
 
-	// Resolve agent name (with optional override) and start
-	agentName, _ := config.ResolveRoleAgentName("deacon", townRoot, deaconAgentOverride)
-	if _, err := factory.Start(townRoot, agent.DeaconAddress, agentName); err != nil {
+	// Start deacon (agent resolved automatically, with optional override)
+	if _, err := factory.Start(townRoot, agent.DeaconAddress, "", factory.WithAgent(deaconAgentOverride)); err != nil {
 		return fmt.Errorf("starting deacon: %w", err)
 	}
 

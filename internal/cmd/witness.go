@@ -161,15 +161,9 @@ func getWitnessManager(rigName string, agentOverride string, envOverrides ...str
 func runWitnessStart(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
-	townRoot, r, err := getRig(rigName)
+	townRoot, _, err := getRig(rigName)
 	if err != nil {
 		return err
-	}
-
-	// Resolve agent name (with optional override)
-	agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
-	if witnessAgentOverride != "" {
-		agentName = witnessAgentOverride
 	}
 
 	// Convert env overrides from []string to map
@@ -182,15 +176,16 @@ func runWitnessStart(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Starting witness for %s...\n", rigName)
 
-	// Build start options
+	// Build start options (agent resolved automatically, with optional override)
 	var opts []factory.StartOption
+	opts = append(opts, factory.WithAgent(witnessAgentOverride))
 	if len(envOverrides) > 0 {
 		opts = append(opts, factory.WithEnvOverrides(envOverrides))
 	}
 
 	// Use factory.Start() with WitnessAddress
 	id := agent.WitnessAddress(rigName)
-	if _, err := factory.Start(townRoot, id, agentName, opts...); err != nil {
+	if _, err := factory.Start(townRoot, id, "", opts...); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			fmt.Printf("%s Witness is already running\n", style.Dim.Render("⚠"))
 			fmt.Printf("  %s\n", style.Dim.Render("Use 'gt witness attach' to connect"))

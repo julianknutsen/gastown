@@ -496,9 +496,6 @@ func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, wor
 	polecatGit := git.NewGit(r.Path)
 	polecatMgr := polecat.NewManager(agents, r, polecatGit)
 
-	// Resolve agent name for factory.Start()
-	polecatAgentName, _ := config.ResolveRoleAgentName("polecat", townRoot, r.Path)
-
 	// Pair workers with tasks (round-robin if more tasks than workers)
 	workerIdx := 0
 	for _, task := range tasks {
@@ -528,7 +525,7 @@ func spawnSwarmWorkersFromBeads(r *rig.Rig, townRoot string, swarmID string, wor
 			fmt.Printf("  %s already running, injecting task...\n", worker)
 		} else {
 			fmt.Printf("  Starting %s...\n", worker)
-			if _, err := factory.Start(townRoot, polecatID, polecatAgentName); err != nil {
+			if _, err := factory.Start(townRoot, polecatID, ""); err != nil {
 				style.PrintWarning("  couldn't start %s: %v", worker, err)
 				continue
 			}

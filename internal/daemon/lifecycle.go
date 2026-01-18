@@ -340,41 +340,31 @@ func (d *Daemon) restartAgent(identity string) error {
 
 	switch parsed.RoleType {
 	case "mayor":
-		agentName, _ := config.ResolveRoleAgentName("mayor", d.config.TownRoot, "")
-		_, err := factory.Start(d.config.TownRoot, agentpkg.MayorAddress, agentName)
+		_, err := factory.Start(d.config.TownRoot, agentpkg.MayorAddress, "")
 		return err
 
 	case "deacon":
-		agentName, _ := config.ResolveRoleAgentName("deacon", d.config.TownRoot, "")
-		_, err := factory.Start(d.config.TownRoot, agentpkg.DeaconAddress, agentName)
+		_, err := factory.Start(d.config.TownRoot, agentpkg.DeaconAddress, "")
 		return err
 
 	case "witness":
-		rigPath := filepath.Join(d.config.TownRoot, parsed.RigName)
-		agentName, _ := config.ResolveRoleAgentName("witness", d.config.TownRoot, rigPath)
 		witnessID := agentpkg.WitnessAddress(parsed.RigName)
-		_, err := factory.Start(d.config.TownRoot, witnessID, agentName)
+		_, err := factory.Start(d.config.TownRoot, witnessID, "")
 		return err
 
 	case "refinery":
-		rigPath := filepath.Join(d.config.TownRoot, parsed.RigName)
-		agentName, _ := config.ResolveRoleAgentName("refinery", d.config.TownRoot, rigPath)
 		refineryID := agentpkg.RefineryAddress(parsed.RigName)
-		_, err := factory.Start(d.config.TownRoot, refineryID, agentName)
+		_, err := factory.Start(d.config.TownRoot, refineryID, "")
 		return err
 
 	case "crew":
-		rigPath := filepath.Join(d.config.TownRoot, parsed.RigName)
-		agentName, _ := config.ResolveRoleAgentName("crew", d.config.TownRoot, rigPath)
 		crewID := agentpkg.CrewAddress(parsed.RigName, parsed.AgentName)
-		_, err := factory.Start(d.config.TownRoot, crewID, agentName)
+		_, err := factory.Start(d.config.TownRoot, crewID, "")
 		return err
 
 	case "polecat":
-		rigPath := filepath.Join(d.config.TownRoot, parsed.RigName)
-		agentName, _ := config.ResolveRoleAgentName("polecat", d.config.TownRoot, rigPath)
 		polecatID := agentpkg.PolecatAddress(parsed.RigName, parsed.AgentName)
-		_, err := factory.Start(d.config.TownRoot, polecatID, agentName)
+		_, err := factory.Start(d.config.TownRoot, polecatID, "")
 		return err
 
 	default:

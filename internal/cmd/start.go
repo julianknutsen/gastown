@@ -212,12 +212,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 // startCoreAgents starts Mayor and Deacon sessions.
 func startCoreAgents(townRoot string, agentOverride string) error {
-	// Resolve agent names: command line override takes precedence over config
-	mayorAgentName := config.ResolveAgentForRole("mayor", townRoot, "", agentOverride)
-	deaconAgentName := config.ResolveAgentForRole("deacon", townRoot, "", agentOverride)
-
-	// Start Mayor first (so Deacon sees it as up)
-	if _, err := factory.Start(townRoot, agent.MayorAddress, mayorAgentName); err != nil {
+	// Start Mayor first (so Deacon sees it as up) - agent resolved automatically, with optional override
+	if _, err := factory.Start(townRoot, agent.MayorAddress, "", factory.WithAgent(agentOverride)); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			fmt.Printf("  %s Mayor already running\n", style.Dim.Render("○"))
 		} else {
@@ -227,8 +223,8 @@ func startCoreAgents(townRoot string, agentOverride string) error {
 		fmt.Printf("  %s Mayor started\n", style.Bold.Render("✓"))
 	}
 
-	// Start Deacon (health monitor)
-	if _, err := factory.Start(townRoot, agent.DeaconAddress, deaconAgentName); err != nil {
+	// Start Deacon (health monitor) - agent resolved automatically, with optional override
+	if _, err := factory.Start(townRoot, agent.DeaconAddress, "", factory.WithAgent(agentOverride)); err != nil {
 		if err == agent.ErrAlreadyRunning {
 			fmt.Printf("  %s Deacon already running\n", style.Dim.Render("○"))
 		} else {
@@ -251,10 +247,9 @@ func startRigAgents(townRoot string) {
 	}
 
 	for _, r := range rigs {
-		// Start Witness
-		agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
+		// Start Witness (agent resolved automatically)
 		witnessID := agent.WitnessAddress(r.Name)
-		if _, err := factory.Start(townRoot, witnessID, agentName); err != nil {
+		if _, err := factory.Start(townRoot, witnessID, ""); err != nil {
 			if err == agent.ErrAlreadyRunning {
 				fmt.Printf("  %s %s witness already running\n", style.Dim.Render("○"), r.Name)
 			} else {
@@ -264,10 +259,9 @@ func startRigAgents(townRoot string) {
 			fmt.Printf("  %s %s witness started\n", style.Bold.Render("✓"), r.Name)
 		}
 
-		// Start Refinery
-		refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
+		// Start Refinery (agent resolved automatically)
 		refineryID := agent.RefineryAddress(r.Name)
-		if _, err := factory.Start(townRoot, refineryID, refineryAgentName); err != nil {
+		if _, err := factory.Start(townRoot, refineryID, ""); err != nil {
 			if errors.Is(err, agent.ErrAlreadyRunning) {
 				fmt.Printf("  %s %s refinery already running\n", style.Dim.Render("○"), r.Name)
 			} else {
@@ -314,19 +308,15 @@ func startConfiguredCrew(townRoot string) {
 // startCoreAgentsParallel starts Mayor and Deacon sessions in parallel using factory.Start().
 // The mutex is used to synchronize output with other parallel startup operations.
 func startCoreAgentsParallel(townRoot string, agentOverride string, mu *sync.Mutex) error {
-	// Resolve agent names: command line override takes precedence over config
-	mayorAgentName := config.ResolveAgentForRole("mayor", townRoot, "", agentOverride)
-	deaconAgentName := config.ResolveAgentForRole("deacon", townRoot, "", agentOverride)
-
 	var wg sync.WaitGroup
 	var firstErr error
 	var errMu sync.Mutex
 
-	// Start Mayor in goroutine
+	// Start Mayor in goroutine (agent resolved automatically, with optional override)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if _, err := factory.Start(townRoot, agent.MayorAddress, mayorAgentName); err != nil {
+		if _, err := factory.Start(townRoot, agent.MayorAddress, "", factory.WithAgent(agentOverride)); err != nil {
 			if errors.Is(err, agent.ErrAlreadyRunning) {
 				mu.Lock()
 				fmt.Printf("  %s Mayor already running\n", style.Dim.Render("○"))
@@ -348,11 +338,11 @@ func startCoreAgentsParallel(townRoot string, agentOverride string, mu *sync.Mut
 		}
 	}()
 
-	// Start Deacon in goroutine
+	// Start Deacon in goroutine (agent resolved automatically, with optional override)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if _, err := factory.Start(townRoot, agent.DeaconAddress, deaconAgentName); err != nil {
+		if _, err := factory.Start(townRoot, agent.DeaconAddress, "", factory.WithAgent(agentOverride)); err != nil {
 			if errors.Is(err, agent.ErrAlreadyRunning) {
 				mu.Lock()
 				fmt.Printf("  %s Deacon already running\n", style.Dim.Render("○"))
@@ -418,9 +408,8 @@ func startRigAgentsParallel(townRoot string, mu *sync.Mutex) {
 
 // startWitnessForRig starts the witness for a single rig and returns a status message.
 func startWitnessForRig(townRoot string, r *rig.Rig) string {
-	agentName, _ := config.ResolveRoleAgentName("witness", townRoot, r.Path)
 	witnessID := agent.WitnessAddress(r.Name)
-	if _, err := factory.Start(townRoot, witnessID, agentName); err != nil {
+	if _, err := factory.Start(townRoot, witnessID, ""); err != nil {
 		if errors.Is(err, agent.ErrAlreadyRunning) {
 			return fmt.Sprintf("  %s %s witness already running\n", style.Dim.Render("○"), r.Name)
 		}
@@ -431,9 +420,8 @@ func startWitnessForRig(townRoot string, r *rig.Rig) string {
 
 // startRefineryForRig starts the refinery for a single rig and returns a status message.
 func startRefineryForRig(townRoot string, r *rig.Rig) string {
-	refineryAgentName, _ := config.ResolveRoleAgentName("refinery", townRoot, r.Path)
 	refineryID := agent.RefineryAddress(r.Name)
-	if _, err := factory.Start(townRoot, refineryID, refineryAgentName); err != nil {
+	if _, err := factory.Start(townRoot, refineryID, ""); err != nil {
 		if errors.Is(err, agent.ErrAlreadyRunning) {
 			return fmt.Sprintf("  %s %s refinery already running\n", style.Dim.Render("○"), r.Name)
 		}
@@ -826,24 +814,17 @@ func runStartCrew(cmd *cobra.Command, args []string) error {
 		rigsConfig = &config.RigsConfig{Rigs: make(map[string]config.RigEntry)}
 	}
 
-	// Get rig
+	// Validate rig exists
 	g := git.NewGit(townRoot)
 	rigMgr := rig.NewManager(townRoot, rigsConfig, g)
-	r, err := rigMgr.GetRig(rigName)
-	if err != nil {
+	if _, err := rigMgr.GetRig(rigName); err != nil {
 		return fmt.Errorf("rig '%s' not found", rigName)
 	}
 
-	// Resolve agent name
-	agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
-	if startCrewAgentOverride != "" {
-		agentName = startCrewAgentOverride
-	}
-
-	// Use factory.Start() for crew
+	// Use factory.Start() for crew (agent resolved automatically, with optional override)
 	crewID := agent.CrewAddress(rigName, name)
 	sessionName := fmt.Sprintf("gt-%s-c-%s", rigName, name)
-	if _, err = factory.Start(townRoot, crewID, agentName); err != nil {
+	if _, err = factory.Start(townRoot, crewID, "", factory.WithAgent(startCrewAgentOverride)); err != nil {
 		if errors.Is(err, agent.ErrAlreadyRunning) {
 			fmt.Printf("%s Session already running: %s\n", style.Dim.Render("○"), sessionName)
 		} else {
@@ -916,19 +897,17 @@ func startCrewMember(rigName, crewName, townRoot string) error {
 		rigsConfig = &config.RigsConfig{Rigs: make(map[string]config.RigEntry)}
 	}
 
-	// Get rig
+	// Validate rig exists
 	g := git.NewGit(townRoot)
 	rigMgr := rig.NewManager(townRoot, rigsConfig, g)
-	r, err := rigMgr.GetRig(rigName)
-	if err != nil {
+	if _, err := rigMgr.GetRig(rigName); err != nil {
 		return fmt.Errorf("rig '%s' not found", rigName)
 	}
 
-	// Use factory.Start() for crew
-	agentName, _ := config.ResolveRoleAgentName("crew", townRoot, r.Path)
+	// Use factory.Start() for crew (agent resolved automatically)
 	crewID := agent.CrewAddress(rigName, crewName)
 
 	// Zombie sessions are detected and restarted automatically by factory.Start()
-	_, err = factory.Start(townRoot, crewID, agentName)
+	_, err = factory.Start(townRoot, crewID, "")
 	return err
 }
