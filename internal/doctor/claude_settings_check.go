@@ -39,7 +39,7 @@ type staleSettingsInfo struct {
 	sessionName    string        // tmux session name for cycling
 	missing        []string      // What's missing from the settings
 	wrongLocation  bool          // True if file is in wrong location (should be deleted)
-	missingFile    bool          // True if settings.local.json doesn't exist (needs agent restart)
+	missingFile    bool          // True if settings.json doesn't exist (needs agent restart)
 	gitStatus      gitFileStatus // Git status for wrong-location files (for safe deletion)
 }
 
@@ -56,7 +56,7 @@ func NewClaudeSettingsCheck() *ClaudeSettingsCheck {
 	}
 }
 
-// Run checks all Claude settings files for staleness or missing settings.local.json.
+// Run checks all Claude settings files for staleness or missing settings.json.
 func (c *ClaudeSettingsCheck) Run(ctx *CheckContext) *CheckResult {
 	c.staleSettings = nil
 
@@ -69,7 +69,7 @@ func (c *ClaudeSettingsCheck) Run(ctx *CheckContext) *CheckResult {
 	settingsFiles := c.findSettingsFiles(ctx.TownRoot)
 
 	for _, sf := range settingsFiles {
-		// Missing settings.local.json files need agent restart to create
+		// Missing settings.json files need agent restart to create
 		if sf.missingFile {
 			c.staleSettings = append(c.staleSettings, sf)
 			details = append(details, fmt.Sprintf("%s: missing (restart %s to create)", sf.path, sf.agentType))
@@ -115,7 +115,7 @@ func (c *ClaudeSettingsCheck) Run(ctx *CheckContext) *CheckResult {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusOK,
-			Message: "All Claude settings.local.json files are up to date",
+			Message: "All Claude settings.json files are up to date",
 		}
 	}
 
@@ -124,7 +124,7 @@ func (c *ClaudeSettingsCheck) Run(ctx *CheckContext) *CheckResult {
 	var fixHint string
 
 	if hasMissingFiles && !hasStaleFiles {
-		message = fmt.Sprintf("Found %d agent(s) missing settings.local.json", len(c.staleSettings))
+		message = fmt.Sprintf("Found %d agent(s) missing settings.json", len(c.staleSettings))
 		fixHint = "Run 'gt up --restart' to restart agents and create settings"
 	} else if hasStaleFiles && !hasMissingFiles {
 		message = fmt.Sprintf("Found %d stale Claude config file(s)", len(c.staleSettings))
@@ -152,7 +152,7 @@ func (c *ClaudeSettingsCheck) Run(ctx *CheckContext) *CheckResult {
 }
 
 // findSettingsFiles locates all .claude/settings.json files and identifies their agent type.
-// All settings.json files are now considered stale - we use settings.local.json instead.
+// All settings.json files are now considered stale - we use settings.json instead.
 // See: https://github.com/anthropics/claude-code/issues/12962
 func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettingsInfo {
 	var files []staleSettingsInfo
@@ -185,7 +185,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 		})
 	}
 
-	// Town-level: mayor - check for stale settings.json (should be settings.local.json)
+	// Town-level: mayor - check for stale settings.json (should be settings.json)
 	mayorStaleSettings := filepath.Join(townRoot, "mayor", ".claude", "settings.json")
 	if fileExists(mayorStaleSettings) {
 		files = append(files, staleSettingsInfo{
@@ -193,11 +193,11 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			agentType:     "mayor",
 			sessionName:   "hq-mayor",
 			wrongLocation: true,
-			missing:       []string{"stale settings.json (should be settings.local.json)"},
+			missing:       []string{"stale settings.json (should be settings.json)"},
 		})
 	}
-	// Check for correct settings.local.json
-	mayorSettings := filepath.Join(townRoot, "mayor", ".claude", "settings.local.json")
+	// Check for correct settings.json
+	mayorSettings := filepath.Join(townRoot, "mayor", ".claude", "settings.json")
 	mayorWorkDir := filepath.Join(townRoot, "mayor")
 	if fileExists(mayorSettings) {
 		files = append(files, staleSettingsInfo{
@@ -206,7 +206,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			sessionName: "hq-mayor",
 		})
 	} else if dirExists(mayorWorkDir) {
-		// Working directory exists but settings.local.json is missing
+		// Working directory exists but settings.json is missing
 		files = append(files, staleSettingsInfo{
 			path:        mayorSettings,
 			agentType:   "mayor",
@@ -215,7 +215,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 		})
 	}
 
-	// Town-level: deacon - check for stale settings.json (should be settings.local.json)
+	// Town-level: deacon - check for stale settings.json (should be settings.json)
 	deaconStaleSettings := filepath.Join(townRoot, "deacon", ".claude", "settings.json")
 	if fileExists(deaconStaleSettings) {
 		files = append(files, staleSettingsInfo{
@@ -223,11 +223,11 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			agentType:     "deacon",
 			sessionName:   "hq-deacon",
 			wrongLocation: true,
-			missing:       []string{"stale settings.json (should be settings.local.json)"},
+			missing:       []string{"stale settings.json (should be settings.json)"},
 		})
 	}
-	// Check for correct settings.local.json
-	deaconSettings := filepath.Join(townRoot, "deacon", ".claude", "settings.local.json")
+	// Check for correct settings.json
+	deaconSettings := filepath.Join(townRoot, "deacon", ".claude", "settings.json")
 	deaconWorkDir := filepath.Join(townRoot, "deacon")
 	if fileExists(deaconSettings) {
 		files = append(files, staleSettingsInfo{
@@ -236,7 +236,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			sessionName: "hq-deacon",
 		})
 	} else if dirExists(deaconWorkDir) {
-		// Working directory exists but settings.local.json is missing
+		// Working directory exists but settings.json is missing
 		files = append(files, staleSettingsInfo{
 			path:        deaconSettings,
 			agentType:   "deacon",
@@ -269,7 +269,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 		// Witness working directory is witness/ (no rig subdirectory - witness doesn't clone the repo)
 		// STALE: witness/.claude/settings.json (old filename)
 		// WRONG: witness/rig/.claude/* (inside source repo if it exists)
-		// CORRECT: witness/.claude/settings.local.json
+		// CORRECT: witness/.claude/settings.json
 		witnessStaleSettings := filepath.Join(rigPath, "witness", ".claude", "settings.json")
 		if fileExists(witnessStaleSettings) {
 			files = append(files, staleSettingsInfo{
@@ -278,13 +278,13 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 				rigName:       rigName,
 				sessionName:   fmt.Sprintf("gt-%s-witness", rigName),
 				wrongLocation: true,
-				missing:       []string{"stale settings.json (should be settings.local.json)"},
+				missing:       []string{"stale settings.json (should be settings.json)"},
 			})
 		}
 		// Settings inside witness/rig/ are wrong (inside source repo)
 		for _, wrongWitnessPath := range []string{
 			filepath.Join(rigPath, "witness", "rig", ".claude", "settings.json"),
-			filepath.Join(rigPath, "witness", "rig", ".claude", "settings.local.json"),
+			filepath.Join(rigPath, "witness", "rig", ".claude", "settings.json"),
 		} {
 			if fileExists(wrongWitnessPath) {
 				files = append(files, staleSettingsInfo{
@@ -297,8 +297,8 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 				})
 			}
 		}
-		// Correct location: witness/.claude/settings.local.json
-		witnessCorrectSettings := filepath.Join(rigPath, "witness", ".claude", "settings.local.json")
+		// Correct location: witness/.claude/settings.json
+		witnessCorrectSettings := filepath.Join(rigPath, "witness", ".claude", "settings.json")
 		witnessWorkDir := filepath.Join(rigPath, "witness")
 		if fileExists(witnessCorrectSettings) {
 			files = append(files, staleSettingsInfo{
@@ -308,7 +308,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 				sessionName: fmt.Sprintf("gt-%s-witness", rigName),
 			})
 		} else if dirExists(witnessWorkDir) {
-			// Working directory exists but settings.local.json is missing
+			// Working directory exists but settings.json is missing
 			files = append(files, staleSettingsInfo{
 				path:        witnessCorrectSettings,
 				agentType:   "witness",
@@ -321,7 +321,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 		// Check for refinery settings (same pattern as witness)
 		for _, staleRefineryPath := range []string{
 			filepath.Join(rigPath, "refinery", ".claude", "settings.json"),
-			filepath.Join(rigPath, "refinery", ".claude", "settings.local.json"),
+			filepath.Join(rigPath, "refinery", ".claude", "settings.json"),
 			filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.json"),
 		} {
 			if fileExists(staleRefineryPath) {
@@ -331,11 +331,11 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 					rigName:       rigName,
 					sessionName:   fmt.Sprintf("gt-%s-refinery", rigName),
 					wrongLocation: true,
-					missing:       []string{"stale settings (should be refinery/rig/.claude/settings.local.json)"},
+					missing:       []string{"stale settings (should be refinery/rig/.claude/settings.json)"},
 				})
 			}
 		}
-		refineryCorrectSettings := filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.local.json")
+		refineryCorrectSettings := filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.json")
 		refineryWorkDir := filepath.Join(rigPath, "refinery", "rig")
 		if fileExists(refineryCorrectSettings) {
 			files = append(files, staleSettingsInfo{
@@ -345,7 +345,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 				sessionName: fmt.Sprintf("gt-%s-refinery", rigName),
 			})
 		} else if dirExists(refineryWorkDir) {
-			// Working directory exists but settings.local.json is missing
+			// Working directory exists but settings.json is missing
 			files = append(files, staleSettingsInfo{
 				path:        refineryCorrectSettings,
 				agentType:   "refinery",
@@ -357,11 +357,11 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 
 		// Check for crew settings
 		// STALE: crew/.claude/settings.json (parent directory)
-		// STALE: crew/.claude/settings.local.json (parent directory)
+		// STALE: crew/.claude/settings.json (parent directory)
 		crewDir := filepath.Join(rigPath, "crew")
 		for _, staleCrewPath := range []string{
 			filepath.Join(crewDir, ".claude", "settings.json"),
-			filepath.Join(crewDir, ".claude", "settings.local.json"),
+			filepath.Join(crewDir, ".claude", "settings.json"),
 		} {
 			if fileExists(staleCrewPath) {
 				files = append(files, staleSettingsInfo{
@@ -373,7 +373,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 				})
 			}
 		}
-		// Check individual crew workers for stale settings.json (should be settings.local.json)
+		// Check individual crew workers for stale settings.json (should be settings.json)
 		if dirExists(crewDir) {
 			crewEntries, _ := os.ReadDir(crewDir)
 			for _, crewEntry := range crewEntries {
@@ -388,11 +388,11 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 						rigName:       rigName,
 						sessionName:   fmt.Sprintf("gt-%s-crew-%s", rigName, crewEntry.Name()),
 						wrongLocation: true,
-						missing:       []string{"stale settings.json (should be settings.local.json)"},
+						missing:       []string{"stale settings.json (should be settings.json)"},
 					})
 				}
-				// Check for correct settings.local.json in crew working directory
-				crewCorrectSettings := filepath.Join(crewDir, crewEntry.Name(), ".claude", "settings.local.json")
+				// Check for correct settings.json in crew working directory
+				crewCorrectSettings := filepath.Join(crewDir, crewEntry.Name(), ".claude", "settings.json")
 				crewWorkDir := filepath.Join(crewDir, crewEntry.Name())
 				if fileExists(crewCorrectSettings) {
 					files = append(files, staleSettingsInfo{
@@ -402,7 +402,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 						sessionName: fmt.Sprintf("gt-%s-crew-%s", rigName, crewEntry.Name()),
 					})
 				} else if dirExists(crewWorkDir) {
-					// Working directory exists but settings.local.json is missing
+					// Working directory exists but settings.json is missing
 					files = append(files, staleSettingsInfo{
 						path:        crewCorrectSettings,
 						agentType:   "crew",
@@ -416,11 +416,11 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 
 		// Check for polecat settings
 		// STALE: polecats/.claude/settings.json (parent directory)
-		// STALE: polecats/.claude/settings.local.json (parent directory)
+		// STALE: polecats/.claude/settings.json (parent directory)
 		polecatsDir := filepath.Join(rigPath, "polecats")
 		for _, stalePolecatPath := range []string{
 			filepath.Join(polecatsDir, ".claude", "settings.json"),
-			filepath.Join(polecatsDir, ".claude", "settings.local.json"),
+			filepath.Join(polecatsDir, ".claude", "settings.json"),
 		} {
 			if fileExists(stalePolecatPath) {
 				files = append(files, staleSettingsInfo{
@@ -442,7 +442,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 				// Check for stale settings in various locations
 				stalePaths := []string{
 					filepath.Join(polecatsDir, pcEntry.Name(), ".claude", "settings.json"),
-					filepath.Join(polecatsDir, pcEntry.Name(), ".claude", "settings.local.json"),
+					filepath.Join(polecatsDir, pcEntry.Name(), ".claude", "settings.json"),
 					filepath.Join(polecatsDir, pcEntry.Name(), rigName, ".claude", "settings.json"),
 				}
 				for _, stalePath := range stalePaths {
@@ -453,12 +453,12 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 							rigName:       rigName,
 							sessionName:   fmt.Sprintf("gt-%s-%s", rigName, pcEntry.Name()),
 							wrongLocation: true,
-							missing:       []string{"stale settings (should be settings.local.json in worktree)"},
+							missing:       []string{"stale settings (should be settings.json in worktree)"},
 						})
 					}
 				}
-				// Check for correct settings.local.json in polecat worktree
-				pcCorrectSettings := filepath.Join(polecatsDir, pcEntry.Name(), rigName, ".claude", "settings.local.json")
+				// Check for correct settings.json in polecat worktree
+				pcCorrectSettings := filepath.Join(polecatsDir, pcEntry.Name(), rigName, ".claude", "settings.json")
 				pcWorkDir := filepath.Join(polecatsDir, pcEntry.Name(), rigName)
 				if fileExists(pcCorrectSettings) {
 					files = append(files, staleSettingsInfo{
@@ -468,7 +468,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 						sessionName: fmt.Sprintf("gt-%s-%s", rigName, pcEntry.Name()),
 					})
 				} else if dirExists(pcWorkDir) {
-					// Worktree exists but settings.local.json is missing
+					// Worktree exists but settings.json is missing
 					files = append(files, staleSettingsInfo{
 						path:        pcCorrectSettings,
 						agentType:   "polecat",
@@ -622,7 +622,7 @@ func (c *ClaudeSettingsCheck) Fix(ctx *CheckContext) error {
 	t := tmux.NewTmux()
 
 	for _, sf := range c.staleSettings {
-		// Skip files that aren't stale (correct settings.local.json files)
+		// Skip files that aren't stale (correct settings.json files)
 		if !sf.wrongLocation && len(sf.missing) == 0 {
 			continue
 		}

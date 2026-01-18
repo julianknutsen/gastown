@@ -12,10 +12,8 @@ import (
 
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -185,15 +183,6 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 	if err := rig.CopyOverlay(m.rig.Path, crewPath); err != nil {
 		// Non-fatal - log warning but continue
 		fmt.Printf("Warning: could not copy overlay files: %v\n", err)
-	}
-
-	// Install runtime settings in the working directory.
-	// Claude Code does NOT traverse parent directories for settings.json.
-	// See: https://github.com/anthropics/claude-code/issues/12962
-	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(crewPath, "crew", runtimeConfig); err != nil {
-		// Non-fatal - log warning but continue
-		fmt.Printf("Warning: could not install runtime settings: %v\n", err)
 	}
 
 	// NOTE: Slash commands (.claude/commands/) are provisioned at town level by gt install.

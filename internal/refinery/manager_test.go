@@ -197,7 +197,7 @@ func setupTestManagerForStatus(t *testing.T) (*Manager, *agent.Double, string) {
 	// Create minimal Claude settings
 	claudeDir := filepath.Join(rigPath, "refinery", "rig", ".claude")
 	require.NoError(t, os.MkdirAll(claudeDir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(`{}`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{}`), 0644))
 
 	r := &rig.Rig{
 		Name: "testrig",

@@ -650,10 +650,10 @@ func TestAddWithOptions_NoFilesAddedToRepo(t *testing.T) {
 	// TRACKED files to the repo's directory structure. The user's code should stay pure.
 	//
 	// After polecat install, `git status` in the worktree should show no
-	// untracked files and no modifications, EXCEPT for .claude/settings.local.json
+	// untracked files and no modifications, EXCEPT for .claude/settings.json
 	// which we install for runtime hooks. This is gitignored by convention.
 	//
-	// Real repos gitignore .claude/ so our settings.local.json won't pollute the repo.
+	// Real repos gitignore .claude/ so our settings.json won't pollute the repo.
 
 	root := t.TempDir()
 
@@ -685,7 +685,7 @@ func TestAddWithOptions_NoFilesAddedToRepo(t *testing.T) {
 	}
 
 	// Create .gitignore with .claude/ and .beads/ (standard practice)
-	// .claude/ - Claude Code local state (settings.local.json)
+	// .claude/ - Claude Code local state (settings.json)
 	// .beads/ - Gas Town local state (redirect file)
 	gitignorePath := filepath.Join(mayorRig, ".gitignore")
 	if err := os.WriteFile(gitignorePath, []byte(".claude/\n.beads/\n"), 0644); err != nil {
@@ -746,7 +746,7 @@ func TestAddWithOptions_NoFilesAddedToRepo(t *testing.T) {
 	}
 
 	// Run git status in worktree - should show nothing (clean)
-	// .claude/settings.local.json is gitignored so won't appear
+	// .claude/settings.json is gitignored so won't appear
 	cmd = exec.Command("git", "status", "--porcelain")
 	cmd.Dir = polecat.ClonePath
 	out, err := cmd.CombinedOutput()
@@ -757,90 +757,6 @@ func TestAddWithOptions_NoFilesAddedToRepo(t *testing.T) {
 	status := string(out)
 	if status != "" {
 		t.Errorf("polecat worktree should be clean after install (no tracked files added to repo), but git status shows:\n%s", status)
-	}
-}
-
-func TestAddWithOptions_SettingsInstalledInWorktree(t *testing.T) {
-	// This test verifies that polecat creation installs .claude/settings.local.json
-	// INSIDE the worktree (not in the parent polecats/ directory) so that Claude Code
-	// can find the hooks. Claude Code does not traverse parent directories for settings.
-	//
-	// See: https://github.com/anthropics/claude-code/issues/12962
-
-	root := t.TempDir()
-
-	// Create mayor/rig directory structure
-	mayorRig := filepath.Join(root, "mayor", "rig")
-	if err := os.MkdirAll(mayorRig, 0755); err != nil {
-		t.Fatalf("mkdir mayor/rig: %v", err)
-	}
-
-	// Create rig-level .beads directory with redirect
-	rigBeads := filepath.Join(root, ".beads")
-	if err := os.MkdirAll(rigBeads, 0755); err != nil {
-		t.Fatalf("mkdir rig .beads: %v", err)
-	}
-	mayorBeads := filepath.Join(mayorRig, ".beads")
-	if err := os.MkdirAll(mayorBeads, 0755); err != nil {
-		t.Fatalf("mkdir mayor/rig/.beads: %v", err)
-	}
-	rigRedirect := filepath.Join(rigBeads, "redirect")
-	if err := os.WriteFile(rigRedirect, []byte("mayor/rig/.beads\n"), 0644); err != nil {
-		t.Fatalf("write rig redirect: %v", err)
-	}
-
-	// Initialize a git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = mayorRig
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
-
-	readmePath := filepath.Join(mayorRig, "README.md")
-	if err := os.WriteFile(readmePath, []byte("# Test Repo\n"), 0644); err != nil {
-		t.Fatalf("write README.md: %v", err)
-	}
-
-	mayorGit := git.NewGit(mayorRig)
-	if err := mayorGit.Add("."); err != nil {
-		t.Fatalf("git add: %v", err)
-	}
-	if err := mayorGit.Commit("Initial commit"); err != nil {
-		t.Fatalf("git commit: %v", err)
-	}
-
-	cmd = exec.Command("git", "remote", "add", "origin", mayorRig)
-	cmd.Dir = mayorRig
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git remote add: %v\n%s", err, out)
-	}
-	if err := mayorGit.Fetch("origin"); err != nil {
-		t.Fatalf("git fetch: %v", err)
-	}
-
-	// Create rig and polecat manager
-	r := &rig.Rig{
-		Name: "rig",
-		Path: root,
-	}
-	m := NewManager(nil, r, git.NewGit(root))
-
-	// Create polecat
-	polecat, err := m.AddWithOptions("TestSettings", AddOptions{})
-	if err != nil {
-		t.Fatalf("AddWithOptions: %v", err)
-	}
-
-	// Verify settings.local.json exists INSIDE the worktree
-	settingsPath := filepath.Join(polecat.ClonePath, ".claude", "settings.local.json")
-	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
-		t.Errorf("settings.local.json should exist at %s (inside worktree) for Claude Code to find hooks", settingsPath)
-	}
-
-	// Verify settings.json does NOT exist at the old location (polecats/.claude/)
-	oldSettingsPath := filepath.Join(root, "polecats", ".claude", "settings.json")
-	if _, err := os.Stat(oldSettingsPath); err == nil {
-		t.Errorf("settings.json should NOT exist at old location %s (Claude Code can't find it there)", oldSettingsPath)
 	}
 }
 

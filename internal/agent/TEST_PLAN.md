@@ -32,7 +32,7 @@ This document defines unit tests for all agent managers using `session.Double` a
 | S1: Creates session | Dir exists, no session | Start() | nil | Session exists, correct name |
 | S2: Already running | Session exists, process alive | Start() | ErrAlreadyRunning | Session unchanged |
 | S3: Zombie cleanup | Session exists, process dead | Start() | nil | Old session killed, new created |
-| S4: Creates settings | No .claude dir | Start() | nil | .claude/settings.local.json exists |
+| S4: Creates settings | No .claude dir | Start() | nil | .claude/settings.json exists |
 | S5: Settings failure | Dir not writable | Start() | error | No session created |
 
 #### Stop() Tests

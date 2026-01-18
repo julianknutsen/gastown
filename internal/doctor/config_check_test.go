@@ -97,16 +97,15 @@ func TestSessionHookCheck_UsesSessionStartScript(t *testing.T) {
 }
 
 func TestSessionHookCheck_Run(t *testing.T) {
-	t.Run("mayor bare gt prime warns", func(t *testing.T) {
+	t.Run("bare gt prime warns", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		// Settings must be at mayor/.claude/settings.local.json
-		claudeDir := filepath.Join(tmpDir, "mayor", ".claude")
+		claudeDir := filepath.Join(tmpDir, ".claude")
 		if err := os.MkdirAll(claudeDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
 		settings := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "gt prime"}]}]}}`
-		if err := os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(settings), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(settings), 0644); err != nil {
 			t.Fatal(err)
 		}
 
@@ -119,16 +118,15 @@ func TestSessionHookCheck_Run(t *testing.T) {
 		}
 	})
 
-	t.Run("mayor gt prime --hook passes", func(t *testing.T) {
+	t.Run("gt prime --hook passes", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		// Settings must be at mayor/.claude/settings.local.json
-		claudeDir := filepath.Join(tmpDir, "mayor", ".claude")
+		claudeDir := filepath.Join(tmpDir, ".claude")
 		if err := os.MkdirAll(claudeDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
 		settings := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "gt prime --hook"}]}]}}`
-		if err := os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(settings), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(settings), 0644); err != nil {
 			t.Fatal(err)
 		}
 
@@ -141,22 +139,20 @@ func TestSessionHookCheck_Run(t *testing.T) {
 		}
 	})
 
-	t.Run("witness settings with --hook passes", func(t *testing.T) {
+	t.Run("rig-level settings with --hook passes", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		// Create rig structure with witness
 		rigDir := filepath.Join(tmpDir, "myrig")
-		if err := os.MkdirAll(filepath.Join(rigDir, "witness"), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(rigDir, "crew"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		// Settings must be at witness/rig/.claude/settings.local.json
-		claudeDir := filepath.Join(rigDir, "witness", "rig", ".claude")
+		claudeDir := filepath.Join(rigDir, ".claude")
 		if err := os.MkdirAll(claudeDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
 		settings := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "gt prime --hook"}]}]}}`
-		if err := os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(settings), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(settings), 0644); err != nil {
 			t.Fatal(err)
 		}
 
@@ -165,26 +161,24 @@ func TestSessionHookCheck_Run(t *testing.T) {
 		result := check.Run(ctx)
 
 		if result.Status != StatusOK {
-			t.Errorf("expected StatusOK for witness settings, got %v: %v", result.Status, result.Details)
+			t.Errorf("expected StatusOK for rig-level settings, got %v: %v", result.Status, result.Details)
 		}
 	})
 
-	t.Run("witness bare gt prime warns", func(t *testing.T) {
+	t.Run("rig-level bare gt prime warns", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		// Create rig structure with witness
 		rigDir := filepath.Join(tmpDir, "myrig")
-		if err := os.MkdirAll(filepath.Join(rigDir, "witness"), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(rigDir, "polecats"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		// Settings must be at witness/rig/.claude/settings.local.json
-		claudeDir := filepath.Join(rigDir, "witness", "rig", ".claude")
+		claudeDir := filepath.Join(rigDir, ".claude")
 		if err := os.MkdirAll(claudeDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
 		settings := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "gt prime"}]}]}}`
-		if err := os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(settings), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(settings), 0644); err != nil {
 			t.Fatal(err)
 		}
 
@@ -193,20 +187,19 @@ func TestSessionHookCheck_Run(t *testing.T) {
 		result := check.Run(ctx)
 
 		if result.Status != StatusWarning {
-			t.Errorf("expected StatusWarning for witness bare gt prime, got %v", result.Status)
+			t.Errorf("expected StatusWarning for rig-level bare gt prime, got %v", result.Status)
 		}
 	})
 
 	t.Run("mixed valid and invalid hooks warns", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		// Settings must be at mayor/.claude/settings.local.json
-		claudeDir := filepath.Join(tmpDir, "mayor", ".claude")
+		claudeDir := filepath.Join(tmpDir, ".claude")
 		if err := os.MkdirAll(claudeDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
 		settings := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "gt prime --hook"}]}], "PreCompact": [{"hooks": [{"type": "command", "command": "gt prime"}]}]}}`
-		if err := os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(settings), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(settings), 0644); err != nil {
 			t.Fatal(err)
 		}
 
