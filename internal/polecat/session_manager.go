@@ -21,7 +21,8 @@ var (
 )
 
 // SessionManager handles polecat status and operations.
-// Start/Stop operations are handled via factory.Start()/factory.Agents().Stop().
+// Start operations are handled via factory.Start().
+// Stop operations go through this manager's Stop() method which syncs beads before stopping.
 type SessionManager struct {
 	agents   agent.Agents
 	rig      *rig.Rig
@@ -30,7 +31,8 @@ type SessionManager struct {
 
 // NewSessionManager creates a new polecat session manager for a rig.
 // The manager handles status queries and session operations.
-// Lifecycle operations (Start) should use factory.Start().
+// Start operations should use factory.Start().
+// Stop operations should use this manager's Stop() method (syncs beads first).
 func NewSessionManager(agents agent.Agents, r *rig.Rig, townRoot string) *SessionManager {
 	return &SessionManager{
 		agents:   agents,

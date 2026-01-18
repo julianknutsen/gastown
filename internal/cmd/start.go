@@ -274,7 +274,7 @@ func startRigAgents(townRoot string) {
 }
 
 // startConfiguredCrew starts crew members configured in rig settings.
-// Uses crew.Manager.Start() which handles zombie detection automatically.
+// Uses factory.Start() which handles zombie detection automatically.
 func startConfiguredCrew(townRoot string) {
 	rigs, err := discoverAllRigs(townRoot)
 	if err != nil {
