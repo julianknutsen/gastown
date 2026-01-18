@@ -25,9 +25,6 @@ type branchInfo struct {
 	Worker string // Worker name (polecat name)
 }
 
-// issuePattern matches issue IDs in branch names (e.g., "gt-xyz" or "gt-abc.1")
-var issuePattern = regexp.MustCompile(`([a-z]+-[a-z0-9]+(?:\.[0-9]+)?)`)
-
 // parseBranchName extracts issue ID and worker from a branch name.
 // Supports formats:
 //   - polecat/<worker>/<issue>  → issue=<issue>, worker=<worker>
@@ -67,6 +64,7 @@ func parseBranchName(branch string) branchInfo {
 
 	// Try to find an issue ID pattern in the branch name
 	// Common patterns: prefix-xxx, prefix-xxx.n (subtask)
+	issuePattern := regexp.MustCompile(`([a-z]+-[a-z0-9]+(?:\.[0-9]+)?)`)
 	if matches := issuePattern.FindStringSubmatch(branch); len(matches) > 1 {
 		info.Issue = matches[1]
 	}
@@ -169,27 +167,15 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 		description += fmt.Sprintf("\nworker: %s", worker)
 	}
 
-	// Check if MR bead already exists for this branch (idempotency)
-	var mrIssue *beads.Issue
-	existingMR, err := bd.FindMRForBranch(branch)
+	// Create MR bead (ephemeral wisp - will be cleaned up after merge)
+	mrIssue, err := bd.Create(beads.CreateOptions{
+		Title:       title,
+		Type:        "merge-request",
+		Priority:    priority,
+		Description: description,
+	})
 	if err != nil {
-		style.PrintWarning("could not check for existing MR: %v", err)
-		// Continue with creation attempt - Create will fail if duplicate
-	} else if existingMR != nil {
-		mrIssue = existingMR
-		fmt.Printf("%s MR already exists (idempotent)\n", style.Bold.Render("✓"))
-	} else {
-		// Create MR bead (ephemeral wisp - will be cleaned up after merge)
-		mrIssue, err = bd.Create(beads.CreateOptions{
-			Title:       title,
-			Type:        "merge-request",
-			Priority:    priority,
-			Description: description,
-			Ephemeral:   true,
-		})
-		if err != nil {
-			return fmt.Errorf("creating merge request bead: %w", err)
-		}
+		return fmt.Errorf("creating merge request bead: %w", err)
 	}
 
 	// Success output
@@ -214,7 +200,7 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 			fmt.Println(style.Dim.Render("  You may need to run 'gt handoff --shutdown' manually"))
 			return nil
 		}
-		// polecatCleanup may timeout while waiting, but MR was already created
+		// polecatCleanup blocks forever waiting for termination, so we never reach here
 	}
 
 	return nil
@@ -306,10 +292,6 @@ Please verify state and execute lifecycle action.
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	// Timeout after 5 minutes to prevent indefinite blocking
-	const maxCleanupWait = 5 * time.Minute
-	timeout := time.After(maxCleanupWait)
-
 	waitStart := time.Now()
 	for {
 		select {
@@ -318,14 +300,9 @@ Please verify state and execute lifecycle action.
 			fmt.Printf("%s Still waiting (%v elapsed)...\n", style.Dim.Render("◌"), elapsed)
 			if elapsed >= 2*time.Minute {
 				fmt.Println(style.Dim.Render("  Hint: If witness isn't responding, you may need to:"))
-				fmt.Println(style.Dim.Render("  - Check if witness is running: gt rig status"))
+				fmt.Println(style.Dim.Render("  - Check if witness is running"))
 				fmt.Println(style.Dim.Render("  - Use Ctrl+C to abort and manually exit"))
 			}
-		case <-timeout:
-			fmt.Printf("%s Timeout waiting for polecat retirement\n", style.WarningPrefix)
-			fmt.Println(style.Dim.Render("  The polecat may have already terminated, or witness is unresponsive."))
-			fmt.Println(style.Dim.Render("  You can verify with: gt polecat status"))
-			return nil // Don't fail the MR submission just because cleanup timed out
 		}
 	}
 }

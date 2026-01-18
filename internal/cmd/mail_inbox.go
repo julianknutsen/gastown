@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,23 +10,6 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/style"
 )
-
-// getMailbox returns the mailbox for the given address.
-func getMailbox(address string) (*mail.Mailbox, error) {
-	// All mail uses town beads (two-level architecture)
-	workDir, err := findMailWorkDir()
-	if err != nil {
-		return nil, fmt.Errorf("not in a Gas Town workspace: %w", err)
-	}
-
-	// Get mailbox
-	router := mail.NewRouter(workDir)
-	mailbox, err := router.GetMailbox(address)
-	if err != nil {
-		return nil, fmt.Errorf("getting mailbox: %w", err)
-	}
-	return mailbox, nil
-}
 
 func runMailInbox(cmd *cobra.Command, args []string) error {
 	// Determine which inbox to check (priority: --identity flag, positional arg, auto-detect)
@@ -40,9 +22,17 @@ func runMailInbox(cmd *cobra.Command, args []string) error {
 		address = detectSender()
 	}
 
-	mailbox, err := getMailbox(address)
+	// All mail uses town beads (two-level architecture)
+	workDir, err := findMailWorkDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Get mailbox
+	router := mail.NewRouter(workDir)
+	mailbox, err := router.GetMailbox(address)
+	if err != nil {
+		return fmt.Errorf("getting mailbox: %w", err)
 	}
 
 	// Get messages
@@ -103,17 +93,22 @@ func runMailInbox(cmd *cobra.Command, args []string) error {
 }
 
 func runMailRead(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return errors.New("msgID argument required")
-	}
 	msgID := args[0]
 
 	// Determine which inbox
 	address := detectSender()
 
-	mailbox, err := getMailbox(address)
+	// All mail uses town beads (two-level architecture)
+	workDir, err := findMailWorkDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Get mailbox and message
+	router := mail.NewRouter(workDir)
+	mailbox, err := router.GetMailbox(address)
+	if err != nil {
+		return fmt.Errorf("getting mailbox: %w", err)
 	}
 
 	msg, err := mailbox.Get(msgID)
@@ -169,7 +164,15 @@ func runMailPeek(cmd *cobra.Command, args []string) error {
 	// Determine which inbox
 	address := detectSender()
 
-	mailbox, err := getMailbox(address)
+	// All mail uses town beads (two-level architecture)
+	workDir, err := findMailWorkDir()
+	if err != nil {
+		return NewSilentExit(1) // Silent exit - no workspace
+	}
+
+	// Get mailbox
+	router := mail.NewRouter(workDir)
+	mailbox, err := router.GetMailbox(address)
 	if err != nil {
 		return NewSilentExit(1) // Silent exit - can't access mailbox
 	}
@@ -217,17 +220,22 @@ func runMailPeek(cmd *cobra.Command, args []string) error {
 }
 
 func runMailDelete(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return errors.New("msgID argument required")
-	}
 	msgID := args[0]
 
 	// Determine which inbox
 	address := detectSender()
 
-	mailbox, err := getMailbox(address)
+	// All mail uses town beads (two-level architecture)
+	workDir, err := findMailWorkDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Get mailbox
+	router := mail.NewRouter(workDir)
+	mailbox, err := router.GetMailbox(address)
+	if err != nil {
+		return fmt.Errorf("getting mailbox: %w", err)
 	}
 
 	if err := mailbox.Delete(msgID); err != nil {
@@ -242,9 +250,17 @@ func runMailArchive(cmd *cobra.Command, args []string) error {
 	// Determine which inbox
 	address := detectSender()
 
-	mailbox, err := getMailbox(address)
+	// All mail uses town beads (two-level architecture)
+	workDir, err := findMailWorkDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Get mailbox
+	router := mail.NewRouter(workDir)
+	mailbox, err := router.GetMailbox(address)
+	if err != nil {
+		return fmt.Errorf("getting mailbox: %w", err)
 	}
 
 	// Archive all specified messages
@@ -280,9 +296,17 @@ func runMailMarkRead(cmd *cobra.Command, args []string) error {
 	// Determine which inbox
 	address := detectSender()
 
-	mailbox, err := getMailbox(address)
+	// All mail uses town beads (two-level architecture)
+	workDir, err := findMailWorkDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Get mailbox
+	router := mail.NewRouter(workDir)
+	mailbox, err := router.GetMailbox(address)
+	if err != nil {
+		return fmt.Errorf("getting mailbox: %w", err)
 	}
 
 	// Mark all specified messages as read
@@ -318,9 +342,17 @@ func runMailMarkUnread(cmd *cobra.Command, args []string) error {
 	// Determine which inbox
 	address := detectSender()
 
-	mailbox, err := getMailbox(address)
+	// All mail uses town beads (two-level architecture)
+	workDir, err := findMailWorkDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Get mailbox
+	router := mail.NewRouter(workDir)
+	mailbox, err := router.GetMailbox(address)
+	if err != nil {
+		return fmt.Errorf("getting mailbox: %w", err)
 	}
 
 	// Mark all specified messages as unread
@@ -361,9 +393,17 @@ func runMailClear(cmd *cobra.Command, args []string) error {
 		address = detectSender()
 	}
 
-	mailbox, err := getMailbox(address)
+	// All mail uses town beads (two-level architecture)
+	workDir, err := findMailWorkDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Get mailbox
+	router := mail.NewRouter(workDir)
+	mailbox, err := router.GetMailbox(address)
+	if err != nil {
+		return fmt.Errorf("getting mailbox: %w", err)
 	}
 
 	// List all messages
@@ -382,10 +422,6 @@ func runMailClear(cmd *cobra.Command, args []string) error {
 	var errors []string
 	for _, msg := range messages {
 		if err := mailbox.Delete(msg.ID); err != nil {
-			// If file is already gone (race condition), ignore it and count as success
-			if os.IsNotExist(err) || strings.Contains(err.Error(), "no such file") {
-				continue
-			}
 			errors = append(errors, fmt.Sprintf("%s: %v", msg.ID, err))
 		} else {
 			deleted++

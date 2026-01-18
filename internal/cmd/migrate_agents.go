@@ -58,12 +58,12 @@ func init() {
 
 // migrationResult holds the result of a single bead migration.
 type migrationResult struct {
-	OldID      string
-	NewID      string
-	Status     string // "migrated", "skipped", "error"
-	Message    string
-	OldFields  *beads.AgentFields
-	WasDryRun  bool
+	OldID     string
+	NewID     string
+	Status    string // "migrated", "skipped", "error"
+	Message   string
+	OldFields *beads.AgentFields
+	WasDryRun bool
 }
 
 func runMigrateAgents(cmd *cobra.Command, args []string) error {
@@ -110,17 +110,17 @@ func runMigrateAgents(cmd *cobra.Command, args []string) error {
 
 	// Agents to migrate: town-level agents only
 	agentsToMigrate := []struct {
-		oldID   string
-		newID   string
-		desc    string
+		oldID string
+		newID string
+		desc  string
 	}{
 		{
-			oldID: beads.MayorBeadID(),  // gt-mayor
+			oldID: beads.MayorBeadID(),     // gt-mayor
 			newID: beads.MayorBeadIDTown(), // hq-mayor
 			desc:  "Mayor - global coordinator, handles cross-rig communication and escalations.",
 		},
 		{
-			oldID: beads.DeaconBeadID(),  // gt-deacon
+			oldID: beads.DeaconBeadID(),     // gt-deacon
 			newID: beads.DeaconBeadIDTown(), // hq-deacon
 			desc:  "Deacon (daemon beacon) - receives mechanical heartbeats, runs town plugins and monitoring.",
 		},

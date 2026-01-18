@@ -726,16 +726,15 @@ This is physics, not politeness. Gas Town is a steam engine - you are a piston.
 
 ## Session Close Protocol
 
-Before signaling completion:
+Before saying "done":
 1. git status (check what changed)
 2. git add <files> (stage code changes)
 3. bd sync (commit beads changes)
 4. git commit -m "..." (commit code)
 5. bd sync (commit any new beads changes)
 6. git push (push to remote)
-7. ` + "`gt done`" + ` (submit to merge queue and exit)
 
-**Polecats MUST call ` + "`gt done`" + ` - this submits work and exits the session.**
+**Work is not done until pushed.**
 `
 
 // ProvisionPrimeMD writes the Gas Town PRIME.md file to the specified beads directory.

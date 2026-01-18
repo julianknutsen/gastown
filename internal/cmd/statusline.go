@@ -53,17 +53,15 @@ func runStatusLine(cmd *cobra.Command, args []string) error {
 		role = os.Getenv("GT_ROLE")
 	}
 
-	// Get session names for comparison
-	mayorSession := getMayorSessionName()
-	deaconSession := getDeaconSessionName()
-
 	// Determine identity and output based on role
-	if role == "mayor" || statusLineSession == mayorSession {
+	// Check GT_ROLE first (authoritative), then fall back to session name prefix matching
+	// Session names include town suffix (e.g., "hq-mayor-abc123") so use prefix matching
+	if role == "mayor" || strings.HasPrefix(statusLineSession, "hq-mayor") {
 		return runMayorStatusLine(t)
 	}
 
 	// Deacon status line
-	if role == "deacon" || statusLineSession == deaconSession {
+	if role == "deacon" || strings.HasPrefix(statusLineSession, "hq-deacon") {
 		return runDeaconStatusLine(t)
 	}
 
@@ -158,17 +156,22 @@ func runWorkerStatusLine(t *tmux.Tmux, session, rigName, polecat, crew, issue st
 
 func runMayorStatusLine(t *tmux.Tmux) error {
 	// Count active sessions by listing tmux sessions
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return nil // Silent fail
 	}
 
 	// Get town root from mayor pane's working directory
+	// Find the actual mayor session (may have town suffix like "hq-mayor-abc123")
 	var townRoot string
-	mayorSession := getMayorSessionName()
-	paneDir, err := t.GetPaneWorkDir(mayorSession)
-	if err == nil && paneDir != "" {
-		townRoot, _ = workspace.Find(paneDir)
+	for _, s := range sessions {
+		if strings.HasPrefix(string(s), "hq-mayor") {
+			paneDir, err := t.GetPaneWorkDir(string(s))
+			if err == nil && paneDir != "" {
+				townRoot, _ = workspace.Find(paneDir)
+			}
+			break
+		}
 	}
 
 	// Load registered rigs to validate against
@@ -207,7 +210,8 @@ func runMayorStatusLine(t *tmux.Tmux) error {
 
 	// Single pass: track rig status AND agent health
 	for _, s := range sessions {
-		agent := categorizeSession(s)
+		sessionStr := string(s)
+		agent := categorizeSession(sessionStr)
 		if agent == nil {
 			continue
 		}
@@ -230,7 +234,7 @@ func runMayorStatusLine(t *tmux.Tmux) error {
 		if health := healthByType[agent.Type]; health != nil {
 			health.total++
 			// Detect working state via ✻ symbol
-			if isSessionWorking(t, s) {
+			if isSessionWorking(t, sessionStr) {
 				health.working++
 			}
 		}
@@ -383,17 +387,22 @@ func runMayorStatusLine(t *tmux.Tmux) error {
 // Shows: active rigs, polecat count, hook or mail preview
 func runDeaconStatusLine(t *tmux.Tmux) error {
 	// Count active rigs and polecats
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return nil // Silent fail
 	}
 
 	// Get town root from deacon pane's working directory
+	// Find the actual deacon session (may have town suffix like "hq-deacon-abc123")
 	var townRoot string
-	deaconSession := getDeaconSessionName()
-	paneDir, err := t.GetPaneWorkDir(deaconSession)
-	if err == nil && paneDir != "" {
-		townRoot, _ = workspace.Find(paneDir)
+	for _, s := range sessions {
+		if strings.HasPrefix(string(s), "hq-deacon") {
+			paneDir, err := t.GetPaneWorkDir(string(s))
+			if err == nil && paneDir != "" {
+				townRoot, _ = workspace.Find(paneDir)
+			}
+			break
+		}
 	}
 
 	// Load registered rigs to validate against
@@ -409,7 +418,7 @@ func runDeaconStatusLine(t *tmux.Tmux) error {
 
 	rigs := make(map[string]bool)
 	for _, s := range sessions {
-		agent := categorizeSession(s)
+		agent := categorizeSession(string(s))
 		if agent == nil {
 			continue
 		}
@@ -468,14 +477,14 @@ func runWitnessStatusLine(t *tmux.Tmux, rigName string) error {
 	}
 
 	// Count crew in this rig (crew are persistent, worth tracking)
-	sessions, err := t.ListSessions()
+	sessions, err := t.List()
 	if err != nil {
 		return nil // Silent fail
 	}
 
 	crewCount := 0
 	for _, s := range sessions {
-		agent := categorizeSession(s)
+		agent := categorizeSession(string(s))
 		if agent == nil {
 			continue
 		}
