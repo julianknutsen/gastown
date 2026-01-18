@@ -148,17 +148,19 @@ func (b *Beads) ClearMail(reason string) (*ClearMailResult, error) {
 	return result, nil
 }
 
-// AttachMolecule attaches a molecule to a pinned bead by updating its description.
+// AttachMolecule attaches a molecule to a bead by updating its description.
 // The moleculeID is the root issue ID of the molecule to attach.
+// Supports pinned beads and agent beads (type=agent).
 // Returns the updated issue.
 func (b *Beads) AttachMolecule(pinnedBeadID, moleculeID string) (*Issue, error) {
-	// Fetch the pinned bead
+	// Fetch the target bead
 	issue, err := b.Show(pinnedBeadID)
 	if err != nil {
 		return nil, fmt.Errorf("fetching pinned bead: %w", err)
 	}
 
-	if issue.Status != StatusPinned {
+	// Allow pinned beads and agent beads (agents are open, not pinned)
+	if issue.Status != StatusPinned && issue.Type != "agent" {
 		return nil, fmt.Errorf("issue %s is not pinned (status: %s)", pinnedBeadID, issue.Status)
 	}
 

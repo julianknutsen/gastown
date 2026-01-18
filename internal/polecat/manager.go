@@ -5,7 +5,6 @@ package polecat
 import (
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -49,11 +48,18 @@ type Manager struct {
 	beads    *beads.Beads
 	namePool *NamePool
 	agents   agent.Agents
+	fs       Filesystem
 }
 
 // NewManager creates a new polecat manager.
 // agents can be nil if not checking session state (e.g., just listing polecats).
 func NewManager(agents agent.Agents, r *rig.Rig, g *git.Git) *Manager {
+	return NewManagerWithFilesystem(agents, r, g, NewLocalFilesystem())
+}
+
+// NewManagerWithFilesystem creates a new polecat manager with a custom filesystem.
+// This is useful for testing or remote operations.
+func NewManagerWithFilesystem(agents agent.Agents, r *rig.Rig, g *git.Git, fs Filesystem) *Manager {
 	// Use the resolved beads directory to find where bd commands should run.
 	// For tracked beads: rig/.beads/redirect -> mayor/rig/.beads, so use mayor/rig
 	// For local beads: rig/.beads is the database, so use rig root
@@ -86,12 +92,66 @@ func NewManager(agents agent.Agents, r *rig.Rig, g *git.Git) *Manager {
 		beads:    beads.NewWithBeadsDir(beadsPath, resolvedBeads),
 		namePool: pool,
 		agents:   agents,
+		fs:       fs,
 	}
 }
 
 // agentID returns the AgentID for a polecat.
 func (m *Manager) agentID(name string) agent.AgentID {
 	return agent.PolecatAddress(m.rig.Name, name)
+}
+
+// RigName returns the rig name for this manager.
+func (m *Manager) RigName() string {
+	return m.rig.Name
+}
+
+// Exists checks if a polecat exists (exported for Backend interface).
+func (m *Manager) Exists(name string) bool {
+	return m.exists(name)
+}
+
+// SessionName returns the tmux session name for a polecat.
+func (m *Manager) SessionName(name string) string {
+	return fmt.Sprintf("gt-%s-%s", m.rig.Name, name)
+}
+
+// Start starts the polecat's session using the configured AI runtime.
+// The runtime is resolved from config based on the rig's role_agents setting.
+func (m *Manager) Start(name string) error {
+	if !m.exists(name) {
+		return ErrPolecatNotFound
+	}
+
+	id := m.agentID(name)
+	if m.agents.Exists(id) {
+		return agent.ErrAlreadyRunning
+	}
+
+	aiRuntime := m.resolveAIRuntimeName()
+	startCfg := agent.StartConfig{
+		WorkDir: m.clonePath(name),
+		Command: config.BuildAgentCommand(aiRuntime, ""),
+	}
+
+	if err := m.agents.StartWithConfig(id, startCfg); err != nil {
+		return fmt.Errorf("starting session: %w", err)
+	}
+
+	return m.agents.WaitReady(id)
+}
+
+// resolveAIRuntimeName returns the configured AI runtime for polecats in this rig.
+func (m *Manager) resolveAIRuntimeName() string {
+	townRoot, err := workspace.Find(m.rig.Path)
+	if err != nil || townRoot == "" {
+		return "claude"
+	}
+	name, _ := config.ResolveRoleAgentName("polecat", townRoot, m.rig.Path)
+	if name == "" {
+		return "claude"
+	}
+	return name
 }
 
 // assigneeID returns the beads assignee identifier for a polecat.
@@ -176,14 +236,14 @@ func (m *Manager) checkCleanupStatus(name string, status CleanupStatus, force bo
 func (m *Manager) repoBase() (*git.Git, error) {
 	// First check for shared bare repo (new architecture)
 	bareRepoPath := filepath.Join(m.rig.Path, ".repo.git")
-	if info, err := os.Stat(bareRepoPath); err == nil && info.IsDir() {
+	if m.fs.IsDir(bareRepoPath) {
 		// Bare repo exists - use it
 		return git.NewGitWithDir(bareRepoPath, ""), nil
 	}
 
 	// Fall back to mayor/rig (legacy architecture)
 	mayorPath := filepath.Join(m.rig.Path, "mayor", "rig")
-	if _, err := os.Stat(mayorPath); os.IsNotExist(err) {
+	if !m.fs.IsDir(mayorPath) {
 		return nil, fmt.Errorf("no repo base found (neither .repo.git nor mayor/rig exists)")
 	}
 	return git.NewGit(mayorPath), nil
@@ -201,16 +261,16 @@ func (m *Manager) polecatDir(name string) string {
 func (m *Manager) clonePath(name string) string {
 	// New structure: polecats/<name>/<rigname>/
 	newPath := filepath.Join(m.rig.Path, "polecats", name, m.rig.Name)
-	if info, err := os.Stat(newPath); err == nil && info.IsDir() {
+	if m.fs.IsDir(newPath) {
 		return newPath
 	}
 
 	// Old structure: polecats/<name>/ (backward compat)
 	oldPath := filepath.Join(m.rig.Path, "polecats", name)
-	if info, err := os.Stat(oldPath); err == nil && info.IsDir() {
+	if m.fs.IsDir(oldPath) {
 		// Check if this is actually a git worktree (has .git file or dir)
 		gitPath := filepath.Join(oldPath, ".git")
-		if _, err := os.Stat(gitPath); err == nil {
+		if m.fs.Exists(gitPath) {
 			return oldPath
 		}
 	}
@@ -221,8 +281,7 @@ func (m *Manager) clonePath(name string) string {
 
 // exists checks if a polecat exists.
 func (m *Manager) exists(name string) bool {
-	_, err := os.Stat(m.polecatDir(name))
-	return err == nil
+	return m.fs.Exists(m.polecatDir(name))
 }
 
 // AddOptions configures polecat creation.
@@ -269,7 +328,7 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 	}
 
 	// Create polecat directory (polecats/<name>/)
-	if err := os.MkdirAll(polecatDir, 0755); err != nil {
+	if err := m.fs.MkdirAll(polecatDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating polecat dir: %w", err)
 	}
 
@@ -303,10 +362,10 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 	// Ensure AGENTS.md exists - critical for polecats to "land the plane"
 	// Fall back to copy from mayor/rig if not in git (e.g., stale fetch, local-only file)
 	agentsMDPath := filepath.Join(clonePath, "AGENTS.md")
-	if _, err := os.Stat(agentsMDPath); os.IsNotExist(err) {
+	if !m.fs.Exists(agentsMDPath) {
 		srcPath := filepath.Join(m.rig.Path, "mayor", "rig", "AGENTS.md")
-		if srcData, readErr := os.ReadFile(srcPath); readErr == nil {
-			if writeErr := os.WriteFile(agentsMDPath, srcData, 0644); writeErr != nil {
+		if srcData, readErr := m.fs.ReadFile(srcPath); readErr == nil {
+			if writeErr := m.fs.WriteFile(agentsMDPath, srcData, 0644); writeErr != nil {
 				fmt.Printf("Warning: could not copy AGENTS.md: %v\n", writeErr)
 			}
 		}
@@ -441,31 +500,31 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 		// Best-effort: try to prune stale worktree entries from both possible repo locations.
 		// This handles edge cases where the repo base is corrupted but worktree entries exist.
 		bareRepoPath := filepath.Join(m.rig.Path, ".repo.git")
-		if info, statErr := os.Stat(bareRepoPath); statErr == nil && info.IsDir() {
+		if m.fs.IsDir(bareRepoPath) {
 			bareGit := git.NewGitWithDir(bareRepoPath, "")
 			_ = bareGit.WorktreePrune()
 		}
 		mayorRigPath := filepath.Join(m.rig.Path, "mayor", "rig")
-		if info, statErr := os.Stat(mayorRigPath); statErr == nil && info.IsDir() {
+		if m.fs.IsDir(mayorRigPath) {
 			mayorGit := git.NewGit(mayorRigPath)
 			_ = mayorGit.WorktreePrune()
 		}
 		// Fall back to direct removal if repo base not found
-		return os.RemoveAll(polecatDir)
+		return m.fs.RemoveAll(polecatDir)
 	}
 
 	// Try to remove as a worktree first (use force flag for worktree removal too)
 	if err := repoGit.WorktreeRemove(clonePath, force); err != nil {
 		// Fall back to direct removal if worktree removal fails
 		// (e.g., if this is an old-style clone, not a worktree)
-		if removeErr := os.RemoveAll(clonePath); removeErr != nil {
+		if removeErr := m.fs.RemoveAll(clonePath); removeErr != nil {
 			return fmt.Errorf("removing clone path: %w", removeErr)
 		}
 	} else {
 		// GT-1L3MY9: git worktree remove may leave untracked directories behind.
 		// Clean up any leftover files (overlay files, .beads/, setup hook outputs, etc.)
 		// Use RemoveAll to handle non-empty directories with untracked files.
-		_ = os.RemoveAll(clonePath)
+		_ = m.fs.RemoveAll(clonePath)
 	}
 
 	// Also remove the parent polecat directory
@@ -473,7 +532,7 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 	if polecatDir != clonePath {
 		// GT-1L3MY9: Clean up any orphaned files at polecat level.
 		// Use RemoveAll to handle non-empty directories with leftover files.
-		_ = os.RemoveAll(polecatDir)
+		_ = m.fs.RemoveAll(polecatDir)
 	}
 
 	// Prune any stale worktree entries (non-fatal: cleanup only)
@@ -581,7 +640,7 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	// Remove the old worktree (use force for git worktree removal)
 	if err := repoGit.WorktreeRemove(oldClonePath, true); err != nil {
 		// Fall back to direct removal
-		if removeErr := os.RemoveAll(oldClonePath); removeErr != nil {
+		if removeErr := m.fs.RemoveAll(oldClonePath); removeErr != nil {
 			return nil, fmt.Errorf("removing old clone path: %w", removeErr)
 		}
 	}
@@ -593,7 +652,7 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	_ = repoGit.Fetch("origin")
 
 	// Ensure polecat directory exists for new structure
-	if err := os.MkdirAll(polecatDir, 0755); err != nil {
+	if err := m.fs.MkdirAll(polecatDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating polecat dir: %w", err)
 	}
 
@@ -623,10 +682,10 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	// Ensure AGENTS.md exists - critical for polecats to "land the plane"
 	// Fall back to copy from mayor/rig if not in git (e.g., stale fetch, local-only file)
 	agentsMDPath := filepath.Join(newClonePath, "AGENTS.md")
-	if _, err := os.Stat(agentsMDPath); os.IsNotExist(err) {
+	if !m.fs.Exists(agentsMDPath) {
 		srcPath := filepath.Join(m.rig.Path, "mayor", "rig", "AGENTS.md")
-		if srcData, readErr := os.ReadFile(srcPath); readErr == nil {
-			if writeErr := os.WriteFile(agentsMDPath, srcData, 0644); writeErr != nil {
+		if srcData, readErr := m.fs.ReadFile(srcPath); readErr == nil {
+			if writeErr := m.fs.WriteFile(agentsMDPath, srcData, 0644); writeErr != nil {
 				fmt.Printf("Warning: could not copy AGENTS.md: %v\n", writeErr)
 			}
 		}
@@ -749,9 +808,10 @@ func (m *Manager) PoolStatus() (active int, names []string) {
 func (m *Manager) List() ([]*Polecat, error) {
 	polecatsDir := filepath.Join(m.rig.Path, "polecats")
 
-	entries, err := os.ReadDir(polecatsDir)
+	entries, err := m.fs.ReadDir(polecatsDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		// Check if directory doesn't exist
+		if !m.fs.Exists(polecatsDir) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("reading polecats dir: %w", err)

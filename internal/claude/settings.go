@@ -86,6 +86,20 @@ func EnsureSettingsForRole(workDir, role string) error {
 	return EnsureSettings(workDir, RoleTypeFor(role))
 }
 
+// SettingsContentFor returns the Claude settings JSON content for a given role.
+// Used for copying settings to remote machines.
+func SettingsContentFor(role string) ([]byte, error) {
+	roleType := RoleTypeFor(role)
+	var templateName string
+	switch roleType {
+	case Autonomous:
+		templateName = "config/settings-autonomous.json"
+	default:
+		templateName = "config/settings-interactive.json"
+	}
+	return configFS.ReadFile(templateName)
+}
+
 // EnsureSettingsForRoleAt is a convenience function that combines RoleTypeFor and EnsureSettingsAt.
 func EnsureSettingsForRoleAt(workDir, role, settingsDir, settingsFile string) error {
 	return EnsureSettingsAt(workDir, RoleTypeFor(role), settingsDir, settingsFile)

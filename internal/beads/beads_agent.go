@@ -184,14 +184,14 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 // the old agent bead exists as a closed bead, so we reopen and update it instead of
 // failing with a UNIQUE constraint error.
 //
-// NOTE: This does NOT handle tombstones. If the old bead was hard-deleted (creating
-// a tombstone), this function will fail. Use CloseAndClearAgentBead instead of DeleteAgentBead
-// when cleaning up agent beads to ensure they can be reopened later.
-//
+// This function also handles tombstones: if the old bead was hard-deleted (creating
+// a tombstone), we purge it and create fresh. Tombstones block creation but can't be
+// reopened, so we detect this case and remove them.
 //
 // The function:
 // 1. Tries to create the agent bead
-// 2. If UNIQUE constraint fails, reopens the existing bead and updates its fields
+// 2. If UNIQUE constraint fails, tries to reopen the existing bead
+// 3. If reopen fails (tombstone case), purges the tombstone and retries creation
 func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (*Issue, error) {
 	// First try to create the bead
 	issue, err := b.CreateAgentBead(id, title, fields)
@@ -209,6 +209,15 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 	if _, reopenErr := b.run("reopen", id, "--reason=re-spawning agent"); reopenErr != nil {
 		// If reopen fails, the bead might already be open - continue with update
 		if !strings.Contains(reopenErr.Error(), "already open") {
+			// If reopen fails with "not found" or similar, this is a tombstone.
+			// Purge the tombstone and retry creation.
+			if strings.Contains(reopenErr.Error(), "not found") || strings.Contains(reopenErr.Error(), "no issue found") {
+				if purgeErr := b.PurgeTombstone(id); purgeErr != nil {
+					return nil, fmt.Errorf("purging tombstone: %w (original error: %v)", purgeErr, err)
+				}
+				// Retry creation after purge
+				return b.CreateAgentBead(id, title, fields)
+			}
 			return nil, fmt.Errorf("reopening existing agent bead: %w (original error: %v)", reopenErr, err)
 		}
 	}

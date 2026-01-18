@@ -85,7 +85,16 @@ func FindOrError(startDir string) (string, error) {
 }
 
 // FindFromCwd locates the town root from the current working directory.
+// Checks GT_ROOT env var first (for remote polecats), then walks up from cwd.
 func FindFromCwd() (string, error) {
+	// Check GT_ROOT first (set by agent sessions, essential for remote polecats)
+	if townRoot := os.Getenv("GT_ROOT"); townRoot != "" {
+		// Verify it's actually a workspace
+		if _, statErr := os.Stat(filepath.Join(townRoot, PrimaryMarker)); statErr == nil {
+			return townRoot, nil
+		}
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("getting current directory: %w", err)
@@ -94,17 +103,18 @@ func FindFromCwd() (string, error) {
 }
 
 // FindFromCwdOrError is like FindFromCwd but returns an error if not found.
-// If getcwd fails (e.g., worktree deleted), falls back to GT_TOWN_ROOT env var.
+// Checks GT_ROOT env var first (for remote polecats), then walks up from cwd.
 func FindFromCwdOrError() (string, error) {
+	// Check GT_ROOT first (set by agent sessions, essential for remote polecats)
+	if townRoot := os.Getenv("GT_ROOT"); townRoot != "" {
+		// Verify it's actually a workspace
+		if _, statErr := os.Stat(filepath.Join(townRoot, PrimaryMarker)); statErr == nil {
+			return townRoot, nil
+		}
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
-		// Fallback: try GT_TOWN_ROOT env var (set by polecat sessions)
-		if townRoot := os.Getenv("GT_TOWN_ROOT"); townRoot != "" {
-			// Verify it's actually a workspace
-			if _, statErr := os.Stat(filepath.Join(townRoot, PrimaryMarker)); statErr == nil {
-				return townRoot, nil
-			}
-		}
 		return "", fmt.Errorf("getting current directory: %w", err)
 	}
 	return FindOrError(cwd)

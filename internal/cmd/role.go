@@ -219,6 +219,16 @@ func parseRoleString(s string) (Role, string, string) {
 		return RoleMayor, "", ""
 	case "deacon":
 		return RoleDeacon, "", ""
+	case "boot":
+		return RoleBoot, "", ""
+	case "witness":
+		return RoleWitness, "", ""
+	case "refinery":
+		return RoleRefinery, "", ""
+	case "polecat":
+		return RolePolecat, "", ""
+	case "crew":
+		return RoleCrew, "", ""
 	}
 
 	// Compound roles: rig/role or rig/polecats/name or rig/crew/name

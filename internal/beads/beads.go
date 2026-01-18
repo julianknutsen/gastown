@@ -215,6 +215,27 @@ func (b *Beads) Run(args ...string) ([]byte, error) {
 	return b.run(args...)
 }
 
+// PurgeTombstone removes a tombstone record directly from SQLite.
+// This is a workaround for bd's lack of a proper purge command.
+// Tombstones block new issue creation via UNIQUE constraint but can't be
+// reopened or deleted through normal bd commands.
+//
+// Use with caution: this bypasses bd's safety mechanisms.
+func (b *Beads) PurgeTombstone(id string) error {
+	beadsDir := b.beadsDir
+	if beadsDir == "" {
+		beadsDir = ResolveBeadsDir(b.workDir)
+	}
+	dbPath := filepath.Join(beadsDir, "beads.db")
+
+	// Use sqlite3 CLI to delete - avoids importing database/sql + driver
+	cmd := exec.Command("sqlite3", dbPath, fmt.Sprintf("DELETE FROM issues WHERE id = '%s' AND status = 'tombstone'", id))
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("purging tombstone %s: %w", id, err)
+	}
+	return nil
+}
+
 // wrapError wraps bd errors with context.
 // ZFC: Avoid parsing stderr to make decisions. Transport errors to agents instead.
 // Exception: ErrNotInstalled (exec.ErrNotFound) and ErrNotFound (issue lookup) are

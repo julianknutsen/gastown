@@ -42,6 +42,9 @@ type SlingSpawnOptions struct {
 // SpawnPolecatForSling creates a fresh polecat and optionally starts its session.
 // This is used by gt sling when the target is a rig name.
 // The caller (sling) handles hook attachment and nudging.
+//
+// Uses polecat.BackendFor() to automatically select local or remote backend
+// based on rig configuration.
 func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
 	// Find workspace
 	townRoot, err := workspace.FindFromCwdOrError()
@@ -63,70 +66,59 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		return nil, fmt.Errorf("rig '%s' not found", rigName)
 	}
 
-	// Get polecat manager (with agents for session-aware allocation)
+	// Get backend (local or remote based on rig config)
 	polecatGit := git.NewGit(r.Path)
 	agents := agent.Default()
-	polecatMgr := polecat.NewManager(agents, r, polecatGit)
+	backend := polecat.BackendFor(agents, r, polecatGit)
 
 	// Allocate a new polecat name
-	polecatName, err := polecatMgr.AllocateName()
+	polecatName, err := backend.AllocateName()
 	if err != nil {
 		return nil, fmt.Errorf("allocating polecat name: %w", err)
 	}
 	fmt.Printf("Allocated polecat: %s\n", polecatName)
-
-	// Check if polecat already exists (shouldn't happen - indicates stale state needing repair)
-	existingPolecat, err := polecatMgr.Get(polecatName)
 
 	// Build add options with hook_bead set atomically at spawn time
 	addOpts := polecat.AddOptions{
 		HookBead: opts.HookBead,
 	}
 
-	if err == nil {
-		// Stale state: polecat exists despite fresh name allocation - repair it
-		// Check for uncommitted work first
-		if !opts.Force {
-			pGit := git.NewGit(existingPolecat.ClonePath)
-			workStatus, checkErr := pGit.CheckUncommittedWork()
-			if checkErr == nil && !workStatus.Clean() {
-				return nil, fmt.Errorf("polecat '%s' has uncommitted work: %s\nUse --force to proceed anyway",
-					polecatName, workStatus.String())
-			}
-		}
+	// Check if polecat already exists (shouldn't happen - indicates stale state needing repair)
+	if backend.Exists(polecatName) {
+		// Stale state: polecat exists despite fresh name allocation - remove and recreate
 		fmt.Printf("Repairing stale polecat %s with fresh worktree...\n", polecatName)
-		if _, err = polecatMgr.RepairWorktreeWithOptions(polecatName, opts.Force, addOpts); err != nil {
-			return nil, fmt.Errorf("repairing stale polecat: %w", err)
+		if err := backend.Remove(polecatName, opts.Force); err != nil {
+			return nil, fmt.Errorf("removing stale polecat: %w", err)
 		}
-	} else if err == polecat.ErrPolecatNotFound {
-		// Create new polecat
-		fmt.Printf("Creating polecat %s...\n", polecatName)
-		if _, err = polecatMgr.AddWithOptions(polecatName, addOpts); err != nil {
-			return nil, fmt.Errorf("creating polecat: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("getting polecat: %w", err)
 	}
 
-	// Get polecat object for path info
-	polecatObj, err := polecatMgr.Get(polecatName)
+	// Create new polecat
+	fmt.Printf("Creating polecat %s...\n", polecatName)
+	polecatObj, err := backend.AddWithOptions(polecatName, addOpts)
 	if err != nil {
-		return nil, fmt.Errorf("getting polecat after creation: %w", err)
+		return nil, fmt.Errorf("creating polecat: %w", err)
 	}
 
-	// Check if already running using agents interface (agent auto-resolved)
+	// Start the session if not already running
+	// For agent override, use factory.Start which supports WithAgent option
 	id := agent.PolecatAddress(rigName, polecatName)
-	factoryAgents := factory.Agents()
+	factoryAgents := factory.AgentsFor(townRoot, id)
 	if !factoryAgents.Exists(id) {
 		fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-		if _, err := factory.Start(townRoot, id, factory.WithAgent(opts.Agent)); err != nil {
-			return nil, fmt.Errorf("starting session: %w", err)
+		if opts.Agent != "" {
+			// Use factory.Start for agent override support
+			if _, err := factory.Start(townRoot, id, factory.WithAgent(opts.Agent)); err != nil {
+				return nil, fmt.Errorf("starting session: %w", err)
+			}
+		} else {
+			// Use backend.Start for default agent resolution
+			if err := backend.Start(polecatName); err != nil {
+				return nil, fmt.Errorf("starting session: %w", err)
+			}
 		}
 	}
 
-	// Get session name using session manager
-	polecatSessMgr := factory.New(townRoot).PolecatSessionManager(r, opts.Agent)
-	sessionName := polecatSessMgr.SessionName(polecatName)
+	sessionName := backend.SessionName(polecatName)
 
 	fmt.Printf("%s Polecat %s spawned\n", style.Bold.Render("✓"), polecatName)
 

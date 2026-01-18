@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -261,7 +261,8 @@ func runSlingFormula(args []string) error {
 		return nil
 	}
 
-	agents := agent.Default()
+	// Use AgentsFor to get RemoteTmux for remote polecats
+	agents := factory.AgentsFor(townRoot, agentID)
 	if err := agents.Nudge(agentID, prompt); err != nil {
 		// Graceful fallback
 		fmt.Printf("%s Could not nudge: %v\n", style.Dim.Render("○"), err)

@@ -298,10 +298,7 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 		// Explicit target provided
 		target = args[0]
 	} else {
-		// Use cwd-based detection for status display
-		// This ensures we show the hook for the agent whose directory we're in,
-		// not the agent from the GT_ROLE env var (which might be different if
-		// we cd'd into another rig's crew/polecat directory)
+		// detectRole checks GT_ROLE env first, then falls back to cwd-based detection
 		roleCtx = detectRole(cwd, townRoot)
 		target = buildAgentIdentity(roleCtx)
 		if target == "" {
@@ -699,10 +696,7 @@ func runMoleculeCurrent(cmd *cobra.Command, args []string) error {
 		// Explicit target provided
 		target = args[0]
 	} else {
-		// Use cwd-based detection for status display
-		// This ensures we show the hook for the agent whose directory we're in,
-		// not the agent from the GT_ROLE env var (which might be different if
-		// we cd'd into another rig's crew/polecat directory)
+		// detectRole checks GT_ROLE env first, then falls back to cwd-based detection
 		roleCtx = detectRole(cwd, townRoot)
 		target = buildAgentIdentity(roleCtx)
 		if target == "" {

@@ -263,6 +263,37 @@ func detectRole(cwd, townRoot string) RoleInfo {
 		Source:   "cwd",
 	}
 
+	// Check GT_ROLE env var first (for remote polecats)
+	if envRole := os.Getenv("GT_ROLE"); envRole != "" {
+		ctx.Source = "env"
+		switch envRole {
+		case "mayor":
+			ctx.Role = RoleMayor
+			return ctx
+		case "deacon":
+			ctx.Role = RoleDeacon
+			return ctx
+		case "polecat":
+			ctx.Role = RolePolecat
+			ctx.Rig = os.Getenv("GT_RIG")
+			ctx.Polecat = os.Getenv("GT_POLECAT")
+			return ctx
+		case "crew":
+			ctx.Role = RoleCrew
+			ctx.Rig = os.Getenv("GT_RIG")
+			ctx.Polecat = os.Getenv("GT_CREW")
+			return ctx
+		case "witness":
+			ctx.Role = RoleWitness
+			ctx.Rig = os.Getenv("GT_RIG")
+			return ctx
+		case "refinery":
+			ctx.Role = RoleRefinery
+			ctx.Rig = os.Getenv("GT_RIG")
+			return ctx
+		}
+	}
+
 	// Get relative path from town root
 	relPath, err := filepath.Rel(townRoot, cwd)
 	if err != nil {

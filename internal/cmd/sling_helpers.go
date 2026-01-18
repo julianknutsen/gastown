@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -246,7 +247,8 @@ func injectStartPrompt(townRoot string, id agent.AgentID, beadID, subject, args 
 		prompt = fmt.Sprintf("Work slung: %s. Start working on it now - run `gt hook` to see the hook, then begin.", beadID)
 	}
 
-	agents := agent.Default()
+	// Use AgentsFor to get RemoteTmux for remote polecats
+	agents := factory.AgentsFor(townRoot, id)
 	return agents.Nudge(id, prompt)
 }
 
@@ -256,7 +258,8 @@ func injectStartPrompt(townRoot string, id agent.AgentID, beadID, subject, args 
 func ensureAgentReady(townRoot string, id agent.AgentID) error {
 	// Always wait for ready, even if process is running - it may still be initializing
 	// (WaitReady is fast if agent is already ready since prompt checker finds ">" quickly)
-	agents := agent.Default()
+	// Use AgentsFor to get RemoteTmux for remote polecats
+	agents := factory.AgentsFor(townRoot, id)
 	return agents.WaitReady(id)
 }
 
