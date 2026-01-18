@@ -229,6 +229,31 @@ type RigSettings struct {
 	// Overrides TownSettings.RoleAgents for this specific rig.
 	// Example: {"witness": "claude-haiku", "polecat": "claude-sonnet"}
 	RoleAgents map[string]string `json:"role_agents,omitempty"`
+
+	// Remote configures remote polecat execution via SSH.
+	// When set, polecats for this rig run on a remote machine.
+	Remote *RemotePolecatConfig `json:"remote,omitempty"`
+}
+
+// RemotePolecatConfig configures remote polecat execution via SSH.
+type RemotePolecatConfig struct {
+	// SSHCmd is the SSH command to reach the remote machine.
+	// Example: "ssh ubuntu@remote-host" or "ssh -i ~/.ssh/key user@host"
+	SSHCmd string `json:"ssh_cmd"`
+
+	// LocalSSH is the SSH command the remote uses to call back to local.
+	// This is set as GT_LOCAL_SSH for bd-wrapper to proxy beads operations.
+	// Example: "ssh -i ~/.ssh/internal_key ubuntu@local-ip"
+	LocalSSH string `json:"local_ssh,omitempty"`
+
+	// RepoURL is the git URL to clone on the remote.
+	// If empty, uses the rig's GitURL from rig.json.
+	// Example: "git@github.com:user/repo.git"
+	RepoURL string `json:"repo_url,omitempty"`
+
+	// RemoteRigPath is where the rig lives on the remote.
+	// Default: ~/rigs/<rigname>
+	RemoteRigPath string `json:"remote_rig_path,omitempty"`
 }
 
 // CrewConfig represents crew workspace settings for a rig.

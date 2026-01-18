@@ -150,12 +150,28 @@ func Start(townRoot string, id agent.AgentID, opts ...StartOption) (agent.AgentI
 	}
 	envVars := config.AgentEnv(envCfg)
 
-	// Create tmux
-	t := tmux.NewTmux()
-	agents := agent.New(t, agent.FromPreset(aiRuntime).WithEnvVars(envVars))
+	// Check for remote polecat config
+	var sess session.Sessions
+	var themer agent.OnSessionCreated
+	if role == constants.RolePolecat && rigName != "" {
+		if remoteCfg := loadRigRemoteConfig(townRoot, rigName); remoteCfg != nil {
+			// Use RemoteTmux for remote polecats
+			// WorkDir is identical on local and remote (same directory structure)
+			sess = tmux.NewRemoteTmuxWithCallback(remoteCfg.SSHCmd, remoteCfg.LocalSSH)
+			// Remote polecats don't get local theming
+			themer = nil
+		}
+	}
 
-	// Build session configurer callback - passed to StartWithAgents for OnCreated
-	themer := buildSessionConfigurer(id, envVars, t)
+	// Default to local tmux
+	if sess == nil {
+		t := tmux.NewTmux()
+		sess = t
+		// Build session configurer callback for local sessions
+		themer = buildSessionConfigurer(id, envVars, t)
+	}
+
+	agents := agent.New(sess, agent.FromPreset(aiRuntime).WithEnvVars(envVars))
 
 	return StartWithAgents(agents, themer, townRoot, id, opts...)
 }
@@ -541,4 +557,16 @@ func startBootDegraded(townRoot string) error {
 
 	// Run async - don't wait for completion
 	return cmd.Start()
+}
+
+// loadRigRemoteConfig loads the remote polecat config for a rig if it exists.
+// Returns nil if the rig doesn't have remote config.
+func loadRigRemoteConfig(townRoot, rigName string) *config.RemotePolecatConfig {
+	rigPath := filepath.Join(townRoot, rigName)
+	settingsPath := filepath.Join(rigPath, "settings", "config.json")
+	settings, err := config.LoadRigSettings(settingsPath)
+	if err != nil {
+		return nil
+	}
+	return settings.Remote
 }
