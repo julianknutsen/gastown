@@ -104,11 +104,13 @@ func ParseAddress(addr string) AgentID {
 //   - "hq-mayor" → {Role: "mayor"} (town-level prefix variant)
 //   - "hq-deacon" → {Role: "deacon"} (town-level prefix variant)
 //   - "gt-rig-witness" → {Role: "witness", Rig: "rig"}
+//   - "gt-foo-bar-witness" → {Role: "witness", Rig: "foo-bar"} (hyphenated rig)
 //   - "gt-rig-refinery" → {Role: "refinery", Rig: "rig"}
 //   - "gt-rig-polecat-name" → {Role: "polecat", Rig: "rig", Worker: "name"}
 //   - "gt-rig-crew-name" → {Role: "crew", Rig: "rig", Worker: "name"}
 //   - "gt-rig-name" → {Role: "polecat", Rig: "rig", Worker: "name"} (legacy polecat)
 //
+// Uses suffix-based parsing for witness/refinery to support hyphenated rig names.
 // Returns empty AgentID if format is invalid.
 func ParseSessionName(name string) AgentID {
 	var rest string
@@ -137,38 +139,43 @@ func ParseSessionName(name string) AgentID {
 		return AgentID{} // Invalid singleton
 	}
 
-	// rig-role or rig-role-worker format
-	rig := parts[0]
-	role := parts[1]
-
-	switch role {
-	case "witness", "refinery":
-		// Rig-level singletons: gt-rig-witness, gt-rig-refinery
-		if len(parts) != 2 {
-			return AgentID{}
-		}
-		return AgentID{Role: role, Rig: rig}
-	case "polecat":
-		// Explicit polecat: gt-rig-polecat-name
-		if len(parts) < 3 {
-			return AgentID{}
-		}
-		// Worker name may contain dashes, so rejoin
-		worker := strings.Join(parts[2:], "-")
-		return AgentID{Role: "polecat", Rig: rig, Worker: worker}
-	case "crew":
-		// Crew: gt-rig-crew-name
-		if len(parts) < 3 {
-			return AgentID{}
-		}
-		// Worker name may contain dashes, so rejoin
-		worker := strings.Join(parts[2:], "-")
-		return AgentID{Role: "crew", Rig: rig, Worker: worker}
-	default:
-		// Legacy polecat format: gt-rig-name (no explicit "polecat" role)
-		// The "role" position is actually the worker name
-		// Worker name may contain dashes, so rejoin everything after rig
-		worker := strings.Join(parts[1:], "-")
-		return AgentID{Role: "polecat", Rig: rig, Worker: worker}
+	// Check for witness/refinery using SUFFIX-based parsing (supports hyphenated rigs)
+	// e.g., "gt-foo-bar-witness" → rig="foo-bar", role="witness"
+	lastPart := parts[len(parts)-1]
+	if lastPart == "witness" || lastPart == "refinery" {
+		rig := strings.Join(parts[:len(parts)-1], "-")
+		return AgentID{Role: lastPart, Rig: rig}
 	}
+
+	// Check for crew marker: gt-rig-crew-name or gt-foo-bar-crew-alice
+	for i, p := range parts {
+		if p == "crew" && i > 0 {
+			if i == len(parts)-1 {
+				// Marker at end with no worker name - invalid
+				return AgentID{}
+			}
+			rig := strings.Join(parts[:i], "-")
+			worker := strings.Join(parts[i+1:], "-")
+			return AgentID{Role: "crew", Rig: rig, Worker: worker}
+		}
+	}
+
+	// Check for explicit polecat marker: gt-rig-polecat-name
+	for i, p := range parts {
+		if p == "polecat" && i > 0 {
+			if i == len(parts)-1 {
+				// Marker at end with no worker name - invalid
+				return AgentID{}
+			}
+			rig := strings.Join(parts[:i], "-")
+			worker := strings.Join(parts[i+1:], "-")
+			return AgentID{Role: "polecat", Rig: rig, Worker: worker}
+		}
+	}
+
+	// Legacy polecat format: gt-rig-name (no explicit marker)
+	// First segment is rig, everything after is worker name
+	rig := parts[0]
+	worker := strings.Join(parts[1:], "-")
+	return AgentID{Role: "polecat", Rig: rig, Worker: worker}
 }

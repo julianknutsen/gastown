@@ -380,8 +380,9 @@ func TestParseSessionName_InvalidRigLevel(t *testing.T) {
 		name    string
 		session string
 	}{
-		{"witness with extra parts", "gt-gastown-witness-extra"},
-		{"refinery with extra parts", "gt-gastown-refinery-extra"},
+		// With suffix-based parsing, "gt-gastown-witness-extra" parses as legacy polecat
+		// (rig="gastown", worker="witness-extra") since "extra" is not "witness" or "refinery"
+		// Only truly invalid cases are when markers have no following name
 		{"polecat missing name", "gt-gastown-polecat"},
 		{"crew missing name", "gt-gastown-crew"},
 	}
@@ -394,29 +395,50 @@ func TestParseSessionName_InvalidRigLevel(t *testing.T) {
 	}
 }
 
+func TestParseSessionName_MarkerWithExtraParts(t *testing.T) {
+	// With suffix-based parsing for witness/refinery, extra parts after the
+	// suffix marker means it's not actually a witness/refinery session.
+	// These become legacy polecats.
+	tests := []struct {
+		name    string
+		session string
+		want    AgentID
+	}{
+		{
+			"witness with extra parts becomes polecat",
+			"gt-gastown-witness-extra",
+			AgentID{Role: "polecat", Rig: "gastown", Worker: "witness-extra"},
+		},
+		{
+			"refinery with extra parts becomes polecat",
+			"gt-gastown-refinery-extra",
+			AgentID{Role: "polecat", Rig: "gastown", Worker: "refinery-extra"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseSessionName(tt.session)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 // =============================================================================
 // Known Limitations / Ambiguity Tests
 // =============================================================================
 
-func TestParseSessionName_KnownAmbiguity_HyphenatedRig(t *testing.T) {
-	// Known limitation: hyphenated rig names cause parsing ambiguity
-	// gt-foo-bar-witness could be:
-	// - rig="foo-bar", role="witness" (intended)
-	// - rig="foo", role="bar", and "witness" is legacy polecat name (what happens)
-	//
-	// The current parser treats the second segment as the role, so hyphenated
-	// rig names are parsed incorrectly for rig-level singletons.
+func TestParseSessionName_HyphenatedRig(t *testing.T) {
+	// Suffix-based parsing correctly handles hyphenated rig names.
+	// gt-foo-bar-witness parses as rig="foo-bar", role="witness"
+	// because "witness" is the last segment and is a known role suffix.
 
 	session := "gt-foo-bar-witness"
 	got := ParseSessionName(session)
 
-	// Current behavior: treats "bar" as the role. Since "bar" is not a known role
-	// (witness, refinery, polecat, crew), it falls through to legacy polecat parsing.
-	// The worker name becomes "bar-witness" (everything after rig).
-	// This documents the limitation - NOT necessarily what we want.
-	assert.Equal(t, "polecat", got.Role, "parsed as legacy polecat due to unknown role")
-	assert.Equal(t, "foo", got.Rig, "only first segment treated as rig")
-	assert.Equal(t, "bar-witness", got.Worker, "rest becomes worker name")
+	assert.Equal(t, "witness", got.Role, "suffix-based parsing detects witness role")
+	assert.Equal(t, "foo-bar", got.Rig, "everything before witness is the rig")
+	assert.Equal(t, "", got.Worker, "witness is a singleton, no worker")
 }
 
 func TestParseSessionName_KnownAmbiguity_PolecatNamedWitness(t *testing.T) {
