@@ -1,6 +1,15 @@
 // ABOUTME: Global state management for Gas Town enable/disable toggle.
 // ABOUTME: Uses XDG-compliant paths for per-machine state storage.
 
+// Error Handling Pattern:
+// This package uses graceful degradation for state file errors. When Load()
+// fails (missing file, corrupted JSON, permissions), functions behave as follows:
+//   - Query functions (IsEnabled, GetMachineID): Return safe defaults
+//   - Mutation functions (Enable, Disable, SetShellIntegration): Create new
+//     default state and proceed with the operation
+// This ensures Gas Town remains functional even with missing or corrupted state,
+// avoiding hard failures during normal CLI operations.
+
 package state
 
 import (
