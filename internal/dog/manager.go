@@ -1,3 +1,5 @@
+// Package dog provides worker pool management for Gas Town's dog (deacon worker) lifecycle.
+// Manager handles creating, removing, and coordinating dog workers with their git worktrees.
 package dog
 
 import (
