@@ -1,3 +1,5 @@
+// witness_handlers.go implements protocol handlers for the Witness role,
+// processing merge outcomes from the Refinery and coordinating polecat cleanup.
 package protocol
 
 import (
