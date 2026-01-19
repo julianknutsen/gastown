@@ -1,3 +1,5 @@
+// Package ui provides terminal user interface utilities.
+// This file implements pager support for piping long output through less or similar.
 package ui
 
 import (
