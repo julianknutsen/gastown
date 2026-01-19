@@ -161,10 +161,18 @@ func runDown(cmd *cobra.Command, args []string) error {
 	// Phase 2a: Stop refineries
 	agents := factory.Agents()
 
+	// Prefetch all running agents once for O(1) lookups (avoids N subprocess calls)
+	runningAgents := make(map[agent.AgentID]bool)
+	if agentList, err := agents.List(); err == nil {
+		for _, id := range agentList {
+			runningAgents[id] = true
+		}
+	}
+
 	for _, rigName := range rigs {
 		id := agent.RefineryAddress(rigName)
 		if downDryRun {
-			if agents.Exists(id) {
+			if runningAgents[id] {
 				printDownStatus(fmt.Sprintf("Refinery (%s)", rigName), true, "would stop")
 			}
 			continue
@@ -184,7 +192,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 	for _, rigName := range rigs {
 		id := agent.WitnessAddress(rigName)
 		if downDryRun {
-			if agents.Exists(id) {
+			if runningAgents[id] {
 				printDownStatus(fmt.Sprintf("Witness (%s)", rigName), true, "would stop")
 			}
 			continue
@@ -213,12 +221,12 @@ func runDown(cmd *cobra.Command, args []string) error {
 	}
 	for _, ta := range townAgents {
 		if downDryRun {
-			if agents.Exists(ta.id) {
+			if runningAgents[ta.id] {
 				printDownStatus(ta.name, true, "would stop")
 			}
 			continue
 		}
-		wasRunning := agents.Exists(ta.id)
+		wasRunning := runningAgents[ta.id]
 		err := agents.Stop(ta.id, !downForce) // graceful = !force
 		if err != nil {
 			printDownStatus(ta.name, false, err.Error())
