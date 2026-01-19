@@ -1,3 +1,6 @@
+// parser.go handles reading, parsing, and validating formula.toml files which define
+// workflow orchestration patterns (workflows, convoys, expansions, and aspects).
+
 package formula
 
 import (
