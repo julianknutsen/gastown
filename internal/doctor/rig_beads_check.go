@@ -1,3 +1,6 @@
+// rig_beads_check.go - Doctor check ensuring all rigs have identity beads.
+// Can detect and auto-fix missing rig beads via 'gt doctor --fix'.
+
 package doctor
 
 import (
