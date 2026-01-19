@@ -16,13 +16,13 @@ const (
 	// NOTE: This is a pool of NAMES, not polecats. Polecats are spawned fresh
 	// for each task and nuked when done - there is no idle pool of polecats.
 	// Only the name slots are reused when a polecat is nuked and a new one spawned.
-	DefaultPoolSize = 50
+	DefaultPoolSize = 75
 
 	// DefaultTheme is the default theme for new rigs.
 	DefaultTheme = "mad-max"
 )
 
-// Built-in themes with themed polecat names.
+// Built-in themes with themed polecat names (75 names each).
 var BuiltinThemes = map[string][]string{
 	"mad-max": {
 		"furiosa", "nux", "slit", "rictus", "dementus",
@@ -35,6 +35,12 @@ var BuiltinThemes = map[string][]string{
 		"gastown", "bullet-farmer", "citadel", "wasteland", "fury",
 		"road-warrior", "interceptor", "blackfinger", "wraith", "witness",
 		"chrome", "shiny", "mediocre", "guzzoline", "aqua-cola",
+		// Additional 25 names for 75 total
+		"thunderdome", "bartertown", "aunty", "blaster", "master",
+		"pigkiller", "ironbar", "scrooloose", "savannah", "feral",
+		"gyro", "papagallo", "warrior", "humungus", "wez",
+		"toadie", "golden", "fifi", "mechanic", "curmudgeon",
+		"mudguts", "lydecker", "kalashnikov", "tenderloin", "tattooed",
 	},
 	"minerals": {
 		"obsidian", "quartz", "jasper", "onyx", "opal",
@@ -47,6 +53,12 @@ var BuiltinThemes = map[string][]string{
 		"rhodonite", "sodalite", "hematite", "magnetite", "calcite",
 		"fluorite", "selenite", "kyanite", "labradorite", "amazonite",
 		"chalcedony", "carnelian", "aventurine", "chrysoprase", "heliodor",
+		// Additional 25 names for 75 total
+		"beryl", "spinel", "tanzanite", "kunzite", "morganite",
+		"aquamarine", "alexandrite", "chrysoberyl", "tsavorite", "demantoid",
+		"sphene", "benitoite", "painite", "taaffeite", "musgravite",
+		"poudretteite", "grandidierite", "jeremejevite", "serendibite", "red-beryl",
+		"bixbite", "larimar", "charoite", "sugilite", "danburite",
 	},
 	"wasteland": {
 		"rust", "chrome", "nitro", "guzzle", "witness",
@@ -59,6 +71,12 @@ var BuiltinThemes = map[string][]string{
 		"tribal", "khan", "legion", "ncr", "ranger",
 		"overseer", "sentinel", "paladin", "scribe", "initiate",
 		"elder", "lancer", "knight", "squire", "proctor",
+		// Additional 25 names for 75 total
+		"prydwen", "maxson", "danse", "hancock", "piper",
+		"valentine", "cait", "curie", "deacon", "maccready",
+		"preston", "strong", "codsworth", "dogmeat", "kellogg",
+		"shaun", "father", "liberty", "vertibird", "radstorm",
+		"supermutant", "behemoth", "assaultron", "sentry", "eyebot",
 	},
 }
 
@@ -187,13 +205,14 @@ func (p *NamePool) Load() error {
 // namePoolState is the subset of NamePool that is persisted to the state file.
 // Only runtime state is saved, not configuration (Theme, CustomNames come from settings).
 type namePoolState struct {
-	RigName      string `json:"rig_name"`
-	OverflowNext int    `json:"overflow_next"`
-	MaxSize      int    `json:"max_size"`
+	RigName      string          `json:"rig_name"`
+	OverflowNext int             `json:"overflow_next"`
+	MaxSize      int             `json:"max_size"`
+	InUse        map[string]bool `json:"in_use,omitempty"` // Track allocated names for cross-process coordination
 }
 
 // Save persists the pool state to disk using atomic write.
-// Only runtime state (OverflowNext, MaxSize) is saved - configuration like
+// Only runtime state (OverflowNext, MaxSize, InUse) is saved - configuration like
 // Theme and CustomNames come from settings/config.json and are not persisted here.
 func (p *NamePool) Save() error {
 	p.mu.RLock()
@@ -204,11 +223,12 @@ func (p *NamePool) Save() error {
 		return err
 	}
 
-	// Only save runtime state, not configuration
+	// Save runtime state including InUse for cross-process coordination
 	state := namePoolState{
 		RigName:      p.RigName,
 		OverflowNext: p.OverflowNext,
 		MaxSize:      p.MaxSize,
+		InUse:        p.InUse,
 	}
 
 	return util.AtomicWriteJSON(p.stateFile, state)
@@ -217,25 +237,108 @@ func (p *NamePool) Save() error {
 // Allocate returns a name from the pool.
 // It prefers names in order from the theme list, and falls back to overflow names
 // when the pool is exhausted.
+//
+// Uses file locking for cross-process synchronization when multiple gt processes
+// try to allocate names concurrently.
 func (p *NamePool) Allocate() (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Acquire file lock for cross-process synchronization
+	lockPath := p.stateFile + ".lock"
+	flock, err := util.NewFileLock(lockPath)
+	if err != nil {
+		return "", fmt.Errorf("creating file lock: %w", err)
+	}
+	defer flock.Close()
+
+	if err := flock.Lock(); err != nil {
+		return "", fmt.Errorf("acquiring file lock: %w", err)
+	}
+
+	// Re-load state from disk (another process may have modified it)
+	p.reloadInUseFromDisk()
+
 	names := p.getNames()
 
 	// Try to find first available name from the theme
+	var name string
 	for i := 0; i < len(names) && i < p.MaxSize; i++ {
-		name := names[i]
-		if !p.InUse[name] {
-			p.InUse[name] = true
-			return name, nil
+		n := names[i]
+		if !p.InUse[n] {
+			p.InUse[n] = true
+			name = n
+			break
 		}
 	}
 
 	// Pool exhausted, use overflow naming
-	name := p.formatOverflowName(p.OverflowNext)
-	p.OverflowNext++
+	if name == "" {
+		name = p.formatOverflowName(p.OverflowNext)
+		p.OverflowNext++
+	}
+
+	// Save state to disk before releasing lock
+	if err := p.saveUnlocked(); err != nil {
+		return "", fmt.Errorf("saving state: %w", err)
+	}
+
 	return name, nil
+}
+
+// reloadInUseFromDisk reloads the InUse map from the state file.
+// Called while holding both mutex and file lock.
+// IMPORTANT: This MERGES disk state with current InUse (set by Reconcile from directories).
+// Both sources of truth are needed:
+// - Disk state: names allocated by concurrent processes (may not have directories yet)
+// - Directory state: names with existing directories (for crash recovery)
+func (p *NamePool) reloadInUseFromDisk() {
+	data, err := os.ReadFile(p.stateFile)
+	if err != nil {
+		// No state file - keep current InUse (from Reconcile)
+		if p.InUse == nil {
+			p.InUse = make(map[string]bool)
+		}
+		return
+	}
+
+	var loaded namePoolState
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		// Parse error - keep current InUse
+		if p.InUse == nil {
+			p.InUse = make(map[string]bool)
+		}
+		return
+	}
+
+	// Merge: keep names from both disk AND current InUse (from directories)
+	if p.InUse == nil {
+		p.InUse = make(map[string]bool)
+	}
+	for name := range loaded.InUse {
+		p.InUse[name] = true
+	}
+
+	if loaded.OverflowNext > p.OverflowNext {
+		p.OverflowNext = loaded.OverflowNext
+	}
+}
+
+// saveUnlocked saves state without acquiring mutex (caller must hold it).
+func (p *NamePool) saveUnlocked() error {
+	dir := filepath.Dir(p.stateFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	state := namePoolState{
+		RigName:      p.RigName,
+		OverflowNext: p.OverflowNext,
+		MaxSize:      p.MaxSize,
+		InUse:        p.InUse,
+	}
+
+	return util.AtomicWriteJSON(p.stateFile, state)
 }
 
 // Release returns a name slot to the available pool.
