@@ -19,7 +19,6 @@ import (
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/boot"
-	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/events"
@@ -263,9 +262,7 @@ const DeaconRole = "deacon"
 // the Deacon, centralizing the "when to wake" decision in an agent.
 // In degraded mode (no tmux), falls back to mechanical checks.
 func (d *Daemon) ensureBootRunning() {
-	// Boot uses deacon's agent configuration since it's the deacon's watchdog
-	agentName, _ := config.ResolveRoleAgentName("deacon", d.config.TownRoot, "")
-	b, err := boot.New(d.config.TownRoot, agentName)
+	b, err := boot.New(d.config.TownRoot)
 	if err != nil {
 		d.logger.Printf("Error creating Boot: %v, falling back to direct Deacon check", err)
 		d.ensureDeaconRunning()
@@ -286,9 +283,9 @@ func (d *Daemon) ensureBootRunning() {
 		return
 	}
 
-	// Spawn Boot in a fresh tmux session
+	// Spawn Boot in a fresh tmux session via factory.Start()
 	d.logger.Println("Spawning Boot for triage...")
-	if err := b.Start(); err != nil {
+	if _, err := factory.Start(d.config.TownRoot, agent.BootAddress, factory.WithTopic("gt boot triage")); err != nil {
 		d.logger.Printf("Error spawning Boot: %v, falling back to direct Deacon check", err)
 		// Fallback: ensure Deacon is running directly
 		d.ensureDeaconRunning()

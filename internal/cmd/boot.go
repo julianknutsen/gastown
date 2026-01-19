@@ -9,8 +9,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/boot"
-	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/deacon"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -102,9 +102,7 @@ func getBootManager() (*boot.Boot, error) {
 		return nil, fmt.Errorf("finding town root: %w", err)
 	}
 
-	// Boot uses deacon's agent configuration since it's the deacon's watchdog
-	agentName, _ := config.ResolveRoleAgentName("deacon", townRoot, "")
-	return boot.New(townRoot, agentName)
+	return boot.New(townRoot)
 }
 
 func runBootStatus(cmd *cobra.Command, args []string) error {
@@ -192,7 +190,12 @@ func runBootStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runBootSpawn(cmd *cobra.Command, args []string) error {
-	b, err := getBootManager()
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town root: %w", err)
+	}
+
+	b, err := boot.New(townRoot)
 	if err != nil {
 		return err
 	}
@@ -211,8 +214,8 @@ func runBootSpawn(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("saving status: %w", err)
 	}
 
-	// Spawn Boot
-	if err := b.Start(); err != nil {
+	// Spawn Boot via factory.Start()
+	if _, err := factory.Start(townRoot, agent.BootAddress, factory.WithTopic("gt boot triage")); err != nil {
 		status.Error = err.Error()
 		status.CompletedAt = time.Now()
 		status.Running = false

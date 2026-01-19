@@ -3,6 +3,7 @@ package factory
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -121,6 +122,11 @@ func Start(townRoot string, id agent.AgentID, opts ...StartOption) (agent.AgentI
 	cfg := &startConfig{}
 	for _, opt := range opts {
 		opt(cfg)
+	}
+
+	// Boot has special degraded mode handling (runs subprocess instead of tmux)
+	if id == agent.BootAddress && os.Getenv("GT_DEGRADED") == "true" {
+		return id, startBootDegraded(townRoot)
 	}
 
 	// Resolve agent name: WithAgent() override > auto-resolve from config
@@ -514,4 +520,25 @@ func parseEnvOverrides(overrides []string) map[string]string {
 		}
 	}
 	return result
+}
+
+// startBootDegraded starts Boot in degraded mode (no tmux).
+// In degraded mode, Boot runs as a subprocess and exits when done.
+// This is used when tmux is unavailable or GT_DEGRADED=true.
+func startBootDegraded(townRoot string) error {
+	workDir := filepath.Join(townRoot, "deacon", "dogs", constants.RoleBoot)
+
+	cmd := exec.Command("gt", "boot", "triage", "--degraded")
+	cmd.Dir = workDir
+
+	// Use centralized AgentEnv for consistency with tmux mode
+	envVars := config.AgentEnv(config.AgentEnvConfig{
+		Role:     constants.RoleBoot,
+		TownRoot: townRoot,
+	})
+	cmd.Env = config.EnvForExecCommand(envVars)
+	cmd.Env = append(cmd.Env, "GT_DEGRADED=true")
+
+	// Run async - don't wait for completion
+	return cmd.Start()
 }

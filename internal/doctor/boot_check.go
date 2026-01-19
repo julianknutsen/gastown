@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/boot"
-	"github.com/steveyegge/gastown/internal/config"
 )
 
 // BootHealthCheck verifies Boot watchdog health.
@@ -28,9 +27,7 @@ func NewBootHealthCheck() *BootHealthCheck {
 
 // Run checks Boot health: directory, session, status, and marker freshness.
 func (c *BootHealthCheck) Run(ctx *CheckContext) *CheckResult {
-	// Boot uses deacon's agent configuration since it's the deacon's watchdog
-	agentName, _ := config.ResolveRoleAgentName("deacon", ctx.TownRoot, "")
-	b, err := boot.New(ctx.TownRoot, agentName)
+	b, err := boot.New(ctx.TownRoot)
 	if err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
