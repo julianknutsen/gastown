@@ -1,3 +1,5 @@
+// Router handles mail delivery routing to the correct beads database based on
+// recipient address, supporting lists, queues, channels, and @group fan-out.
 package mail
 
 import (
