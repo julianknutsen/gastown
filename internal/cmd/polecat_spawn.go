@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -68,8 +69,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 
 	// Get backend (local or remote based on rig config)
 	polecatGit := git.NewGit(r.Path)
-	agents := agent.Default()
-	backend := polecat.BackendFor(agents, r, polecatGit)
+	backend := polecat.BackendFor(r, polecatGit)
 
 	// Allocate a new polecat name
 	polecatName, err := backend.AllocateName()
@@ -86,8 +86,9 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 	// Check if polecat already exists (shouldn't happen - indicates stale state needing repair)
 	if backend.Exists(polecatName) {
 		// Stale state: polecat exists despite fresh name allocation - remove and recreate
+		// Use nuclear=true to bypass all safety checks (stale polecats shouldn't block new work)
 		fmt.Printf("Repairing stale polecat %s with fresh worktree...\n", polecatName)
-		if err := backend.Remove(polecatName, opts.Force); err != nil {
+		if err := backend.RemoveWithOptions(polecatName, true, true); err != nil {
 			return nil, fmt.Errorf("removing stale polecat: %w", err)
 		}
 	}
@@ -96,25 +97,43 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 	fmt.Printf("Creating polecat %s...\n", polecatName)
 	polecatObj, err := backend.AddWithOptions(polecatName, addOpts)
 	if err != nil {
-		return nil, fmt.Errorf("creating polecat: %w", err)
+		// Handle race condition: another process may have created the polecat
+		// between our Exists() check and AddWithOptions() call
+		if err == polecat.ErrPolecatExists {
+			fmt.Printf("Repairing polecat %s (concurrent creation detected)...\n", polecatName)
+			// Remove and recreate - use nuclear=true to bypass all safety checks
+			if removeErr := backend.RemoveWithOptions(polecatName, true, true); removeErr != nil {
+				return nil, fmt.Errorf("removing polecat for repair: %w", removeErr)
+			}
+			polecatObj, err = backend.AddWithOptions(polecatName, addOpts)
+			if err != nil {
+				return nil, fmt.Errorf("recreating polecat: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("creating polecat: %w", err)
+		}
+	}
+
+	// For remote polecats, create a local mirror directory for lock files and state
+	// The actual worktree is on the remote, but gt prime needs a local .runtime/ dir
+	localPolecatDir := filepath.Join(r.Path, "polecats", polecatName)
+	if err := os.MkdirAll(filepath.Join(localPolecatDir, ".runtime"), 0755); err != nil {
+		fmt.Printf("Warning: could not create local mirror directory: %v\n", err)
 	}
 
 	// Start the session if not already running
-	// For agent override, use factory.Start which supports WithAgent option
+	// Always use factory.Start which goes through SessionFactory for proper
+	// local vs remote session routing (MirroredSessions for remote polecats)
 	id := agent.PolecatAddress(rigName, polecatName)
 	factoryAgents := factory.AgentsFor(townRoot, id)
 	if !factoryAgents.Exists(id) {
 		fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
+		var startOpts []factory.StartOption
 		if opts.Agent != "" {
-			// Use factory.Start for agent override support
-			if _, err := factory.Start(townRoot, id, factory.WithAgent(opts.Agent)); err != nil {
-				return nil, fmt.Errorf("starting session: %w", err)
-			}
-		} else {
-			// Use backend.Start for default agent resolution
-			if err := backend.Start(polecatName); err != nil {
-				return nil, fmt.Errorf("starting session: %w", err)
-			}
+			startOpts = append(startOpts, factory.WithAgent(opts.Agent))
+		}
+		if _, err := factory.Start(townRoot, id, startOpts...); err != nil {
+			return nil, fmt.Errorf("starting session: %w", err)
 		}
 	}
 

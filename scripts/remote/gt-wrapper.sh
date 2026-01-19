@@ -30,9 +30,13 @@ if [ -z "$GT_LOCAL_SSH" ]; then
 fi
 
 # Proxy the command to the local machine via SSH
-# cd to rig's polecats directory so workspace/beads detection works
+# cd to polecat's specific directory so lock files go in the right place
 # Pass GT_ROLE/GT_RIG/GT_POLECAT for role detection
-if [ -n "$GT_ROOT" ] && [ -n "$GT_RIG" ]; then
+if [ -n "$GT_ROOT" ] && [ -n "$GT_RIG" ] && [ -n "$GT_POLECAT" ]; then
+    # cd to specific polecat directory for correct lock file placement
+    POLECAT_DIR="$GT_ROOT/$GT_RIG/polecats/$GT_POLECAT"
+    exec $GT_LOCAL_SSH "cd '$POLECAT_DIR' && GT_ROLE='$GT_ROLE' GT_RIG='$GT_RIG' GT_POLECAT='$GT_POLECAT' gt $*"
+elif [ -n "$GT_ROOT" ] && [ -n "$GT_RIG" ]; then
     POLECATS_DIR="$GT_ROOT/$GT_RIG/polecats"
     exec $GT_LOCAL_SSH "cd '$POLECATS_DIR' && GT_ROLE='$GT_ROLE' GT_RIG='$GT_RIG' GT_POLECAT='$GT_POLECAT' gt $*"
 else
