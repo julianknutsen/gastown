@@ -103,7 +103,10 @@ func New(config *Config) (*Daemon, error) {
 	}, nil
 }
 
-// Run starts the daemon main loop.
+// Run starts the daemon main loop, which monitors the health of Gas Town agents
+// and ensures the system remains operational. It acquires an exclusive lock to
+// prevent duplicate daemons, then enters a heartbeat loop that periodically
+// checks for crashed agents, GUPP violations, and orphaned work.
 func (d *Daemon) Run() error {
 	d.logger.Printf("Daemon starting (PID %d)", os.Getpid())
 
