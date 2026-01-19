@@ -156,6 +156,12 @@ func runSlingFormula(args []string) error {
 		}
 	}
 
+	// --wisp-only mode: just create the wisp, don't spawn or attach
+	if slingWispOnly {
+		fmt.Printf("%s Creating wisp for formula %s (wisp-only mode)...\n", style.Bold.Render("🎯"), formulaName)
+		return runWispOnly(formulaName, townBeadsDir)
+	}
+
 	fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, targetAgent)
 
 	if slingDryRun {
@@ -271,5 +277,43 @@ func runSlingFormula(args []string) error {
 		fmt.Printf("%s Nudged to start\n", style.Bold.Render("▶"))
 	}
 
+	return nil
+}
+
+// runWispOnly creates a formula wisp without spawning a polecat or attaching to a hook.
+// This is used for pre-staging wisps before parallel polecat spawning.
+// Outputs the wisp ID for later use.
+func runWispOnly(formulaName, townBeadsDir string) error {
+	// Step 1: Cook the formula (ensures proto exists)
+	fmt.Printf("  Cooking formula...\n")
+	cookArgs := []string{"--no-daemon", "cook", formulaName}
+	cookCmd := exec.Command("bd", cookArgs...)
+	cookCmd.Stderr = os.Stderr
+	if err := cookCmd.Run(); err != nil {
+		return fmt.Errorf("cooking formula: %w", err)
+	}
+
+	// Step 2: Create wisp instance (ephemeral)
+	fmt.Printf("  Creating wisp...\n")
+	wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName}
+	for _, v := range slingVars {
+		wispArgs = append(wispArgs, "--var", v)
+	}
+	wispArgs = append(wispArgs, "--json")
+
+	wispCmd := exec.Command("bd", wispArgs...)
+	wispCmd.Stderr = os.Stderr
+	wispOut, err := wispCmd.Output()
+	if err != nil {
+		return fmt.Errorf("creating wisp: %w", err)
+	}
+
+	// Parse wisp output to get the root ID
+	wispRootID, err := parseWispIDFromJSON(wispOut)
+	if err != nil {
+		return fmt.Errorf("parsing wisp output: %w", err)
+	}
+
+	fmt.Printf("%s Wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
 	return nil
 }

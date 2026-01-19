@@ -95,6 +95,8 @@ var (
 	slingAccount  string // --account: Claude Code account handle to use
 	slingAgent    string // --agent: override runtime agent for this sling/spawn
 	slingNoConvoy bool   // --no-convoy: skip auto-convoy creation
+	slingWispOnly bool   // --wisp-only: create wisp only, don't spawn or attach
+	slingSkipCook bool   // --skip-cook: skip formula cooking (assumes pre-cooked)
 )
 
 func init() {
@@ -111,6 +113,8 @@ func init() {
 	slingCmd.Flags().StringVar(&slingAccount, "account", "", "Claude Code account handle to use")
 	slingCmd.Flags().StringVar(&slingAgent, "agent", "", "Override agent/runtime for this sling (e.g., claude, gemini, codex, or custom alias)")
 	slingCmd.Flags().BoolVar(&slingNoConvoy, "no-convoy", false, "Skip auto-convoy creation for single-issue sling")
+	slingCmd.Flags().BoolVar(&slingWispOnly, "wisp-only", false, "Create formula wisp only, don't spawn polecat or attach (for pre-staging)")
+	slingCmd.Flags().BoolVar(&slingSkipCook, "skip-cook", false, "Skip formula cooking (assumes formula is pre-cooked)")
 
 	rootCmd.AddCommand(slingCmd)
 }
@@ -225,6 +229,10 @@ func runSling(cmd *cobra.Command, args []string) error {
 				// Dry run - just indicate what would happen
 				fmt.Printf("Would spawn fresh polecat in rig '%s'\n", rigName)
 				targetAgent = fmt.Sprintf("%s/polecats/<new>", rigName)
+			} else if slingWispOnly {
+				// --wisp-only mode: just create the wisp, don't spawn polecat
+				// Polecat will be spawned separately and the compound bead will be slung to it
+				targetAgent = fmt.Sprintf("%s/polecats/<pending>", rigName)
 			} else {
 				// Spawn a fresh polecat in the rig
 				fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
@@ -282,10 +290,16 @@ func runSling(cmd *cobra.Command, args []string) error {
 			}
 		}
 	} else {
-		// Slinging to self
-		targetAgent, err = resolveSelfTarget()
-		if err != nil {
-			return err
+		// No target specified
+		if slingWispOnly {
+			// --wisp-only mode: no target needed, just creating the wisp
+			targetAgent = "<wisp-only>"
+		} else {
+			// Slinging to self
+			targetAgent, err = resolveSelfTarget()
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -365,11 +379,13 @@ func runSling(cmd *cobra.Command, args []string) error {
 		formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, "")
 
 		// Step 1: Cook the formula (ensures proto exists)
-		// Cook doesn't need database context - runs from cwd like gt formula show
-		cookCmd := exec.Command("bd", "--no-daemon", "cook", formulaName)
-		cookCmd.Stderr = os.Stderr
-		if err := cookCmd.Run(); err != nil {
-			return fmt.Errorf("cooking formula %s: %w", formulaName, err)
+		// Skip if --skip-cook flag is set (formula pre-cooked for batch operations)
+		if !slingSkipCook {
+			cookCmd := exec.Command("bd", "--no-daemon", "cook", formulaName)
+			cookCmd.Stderr = os.Stderr
+			if err := cookCmd.Run(); err != nil {
+				return fmt.Errorf("cooking formula %s: %w", formulaName, err)
+			}
 		}
 
 		// Step 2: Create wisp with feature and issue variables from bead
@@ -427,6 +443,14 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 		// Update beadID to hook the compound root instead of bare bead
 		beadID = wispRootID
+
+		// --wisp-only mode: just created the wisp+bond, now return early
+		// The compound bead can be slung to a polecat separately
+		if slingWispOnly {
+			fmt.Printf("%s Compound bead ready: %s\n", style.Bold.Render("✓"), beadID)
+			fmt.Printf("  (wisp-only mode: polecat spawn and hook attachment skipped)\n")
+			return nil
+		}
 	}
 
 	// Hook the bead using bd update.
