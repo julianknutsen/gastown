@@ -64,7 +64,7 @@ func NewEnvVarsCheckWithReader(reader SessionEnvReader) *EnvVarsCheck {
 func (c *EnvVarsCheck) Run(ctx *CheckContext) *CheckResult {
 	reader := c.reader
 	if reader == nil {
-		reader = &tmuxEnvReader{t: tmux.NewTmux()}
+		reader = &tmuxEnvReader{t: tmux.NewLocalTmux()}
 	}
 
 	sessions, err := reader.List()

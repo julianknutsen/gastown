@@ -343,13 +343,13 @@ func (a *Implementation) Attach(id AgentID) error {
 
 // Default creates an Agents interface with default settings.
 func Default() Agents {
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	return New(t, nil)
 }
 
 // WithConfig creates an Agents interface with the specified config.
 // Use Claude() for Claude-specific behavior (zombie filtering, readiness).
 func WithConfig(cfg *Config) Agents {
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	return New(t, cfg)
 }

@@ -27,7 +27,7 @@ func skipIfNoLocalSSH(t *testing.T) {
 }
 
 // cleanupSession ensures a session is killed after the test.
-func cleanupSession(t *testing.T, remote *tmux.RemoteTmux, name string) {
+func cleanupSession(t *testing.T, remote *tmux.Tmux, name string) {
 	t.Helper()
 	t.Cleanup(func() {
 		_ = remote.Stop(session.SessionID(name))
@@ -35,8 +35,8 @@ func cleanupSession(t *testing.T, remote *tmux.RemoteTmux, name string) {
 }
 
 func TestRemoteTmux_ImplementsSessions(t *testing.T) {
-	// Compile-time check is in remote.go, this just verifies the interface
-	var _ session.Sessions = (*tmux.RemoteTmux)(nil)
+	// Compile-time check that Tmux implements Sessions
+	var _ session.Sessions = (*tmux.Tmux)(nil)
 }
 
 func TestRemoteTmux_StartAndStop(t *testing.T) {
@@ -156,21 +156,29 @@ func TestRemoteTmux_SendControl(t *testing.T) {
 	sessionName := "gt-test-remote-ctrl-" + randomSuffix()
 	cleanupSession(t, remote, sessionName)
 
-	// Start a session with sleep
-	_, err := remote.Start(sessionName, "/tmp", "sleep 60")
+	// Start a session with a shell (not a direct command)
+	// This way when we send Ctrl+C to interrupt a command, the shell survives
+	_, err := remote.Start(sessionName, "/tmp", "bash")
+	require.NoError(t, err)
+
+	// Wait for bash to start
+	time.Sleep(300 * time.Millisecond)
+
+	// Send a sleep command to the shell
+	err = remote.Send(session.SessionID(sessionName), "sleep 60")
 	require.NoError(t, err)
 
 	// Wait for sleep to start
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
-	// Send Ctrl+C to interrupt
+	// Send Ctrl+C to interrupt the sleep
 	err = remote.SendControl(session.SessionID(sessionName), "C-c")
 	require.NoError(t, err)
 
 	// Give it time to process
 	time.Sleep(300 * time.Millisecond)
 
-	// The session should still exist (tmux session, but sleep was killed)
+	// The session should still exist (bash shell survived the Ctrl+C)
 	exists, err := remote.Exists(session.SessionID(sessionName))
 	require.NoError(t, err)
 	assert.True(t, exists)

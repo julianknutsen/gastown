@@ -43,7 +43,7 @@ func init() {
 func runIssueSet(cmd *cobra.Command, args []string) error {
 	issueID := args[0]
 
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	sess, err := t.CurrentSessionName()
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func runIssueSet(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueClear(cmd *cobra.Command, args []string) error {
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	sess, err := t.CurrentSessionName()
 	if err != nil {
 		return err
@@ -74,7 +74,7 @@ func runIssueClear(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueShow(cmd *cobra.Command, args []string) error {
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	sess, err := t.CurrentSessionName()
 	if err != nil {
 		return err

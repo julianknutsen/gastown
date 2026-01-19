@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/runner"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -42,31 +43,66 @@ func (e *UncommittedWorkError) Unwrap() error {
 }
 
 // Manager handles polecat lifecycle.
+// It works with both local and remote polecats via the Backend abstraction.
 type Manager struct {
-	rig      *rig.Rig
-	git      *git.Git
-	beads    *beads.Beads
-	namePool *NamePool
-	agents   agent.Agents
-	fs       Filesystem
+	rig           *rig.Rig       // Local rig info (path, name) - used for beads, namepool, config
+	beads         *beads.Beads   // Beads database (always local)
+	namePool      *NamePool      // Name pool state (always local)
+	agents        agent.Agents   // Session operations (local or remote via MirroredSessions)
+	targetFS      Filesystem     // Filesystem for target operations (local or SSH)
+	localFS       Filesystem     // Filesystem for local reads (always local)
+	gitOps        *git.Ops       // Git operations on target (local or SSH)
+	targetRigPath string         // Where rig is on target (may differ from rig.Path for remote)
 }
 
-// NewManager creates a new polecat manager.
+// ManagerDeps provides filesystem and git operations for polecat managers.
+// This is passed to NewManagerWithDeps.
+type ManagerDeps struct {
+	TargetFS      Filesystem // For file operations on the target (local or remote)
+	LocalFS       Filesystem // For reading local files (always local)
+	GitOps        *git.Ops   // For git operations on target
+	TargetRigPath string     // Where rig is on target (may differ from rig.Path)
+}
+
+// NewManager creates a new polecat manager for local polecats.
 // agents can be nil if not checking session state (e.g., just listing polecats).
+// Deprecated: Use NewManagerWithDeps for new code.
 func NewManager(agents agent.Agents, r *rig.Rig, g *git.Git) *Manager {
-	return NewManagerWithFilesystem(agents, r, g, NewLocalFilesystem())
+	localFS := NewLocalFilesystem()
+	deps := &ManagerDeps{
+		TargetFS:      localFS,
+		LocalFS:       localFS,
+		GitOps:        git.NewOps(runner.NewLocal()),
+		TargetRigPath: r.Path,
+	}
+	return NewManagerWithDeps(agents, r, deps)
 }
 
 // NewManagerWithFilesystem creates a new polecat manager with a custom filesystem.
-// This is useful for testing or remote operations.
+// Deprecated: Use NewManagerWithDeps for new code.
 func NewManagerWithFilesystem(agents agent.Agents, r *rig.Rig, g *git.Git, fs Filesystem) *Manager {
+	deps := &ManagerDeps{
+		TargetFS:      fs,
+		LocalFS:       NewLocalFilesystem(),
+		GitOps:        git.NewOps(runner.NewLocal()),
+		TargetRigPath: r.Path,
+	}
+	return NewManagerWithDeps(agents, r, deps)
+}
+
+// NewManagerWithDeps creates a new polecat manager with dependencies.
+// The deps determine whether operations are local or remote.
+// agents can be nil if not checking session state (e.g., just listing polecats).
+func NewManagerWithDeps(agents agent.Agents, r *rig.Rig, deps *ManagerDeps) *Manager {
 	// Use the resolved beads directory to find where bd commands should run.
 	// For tracked beads: rig/.beads/redirect -> mayor/rig/.beads, so use mayor/rig
 	// For local beads: rig/.beads is the database, so use rig root
+	// Note: Beads are always local, so use rig.Path not targetRigPath.
 	resolvedBeads := beads.ResolveBeadsDir(r.Path)
 	beadsPath := filepath.Dir(resolvedBeads) // Get the directory containing .beads
 
 	// Try to load rig settings for namepool config
+	// Note: Settings are loaded from local rig path.
 	settingsPath := filepath.Join(r.Path, "settings", "config.json")
 	var pool *NamePool
 
@@ -87,12 +123,14 @@ func NewManagerWithFilesystem(agents agent.Agents, r *rig.Rig, g *git.Git, fs Fi
 	_ = pool.Load() // non-fatal: state file may not exist for new rigs
 
 	return &Manager{
-		rig:      r,
-		git:      g,
-		beads:    beads.NewWithBeadsDir(beadsPath, resolvedBeads),
-		namePool: pool,
-		agents:   agents,
-		fs:       fs,
+		rig:           r,
+		beads:         beads.NewWithBeadsDir(beadsPath, resolvedBeads),
+		namePool:      pool,
+		agents:        agents,
+		targetFS:      deps.TargetFS,
+		localFS:       deps.LocalFS,
+		gitOps:        deps.GitOps,
+		targetRigPath: deps.TargetRigPath,
 	}
 }
 
@@ -230,47 +268,48 @@ func (m *Manager) checkCleanupStatus(name string, status CleanupStatus, force bo
 	}
 }
 
-// repoBase returns the git directory and Git object to use for worktree operations.
+// repoBasePath returns the git directory path to use for worktree operations on the target.
 // Prefers the shared bare repo (.repo.git) if it exists, otherwise falls back to mayor/rig.
 // The bare repo architecture allows all worktrees (refinery, polecats) to share branch visibility.
-func (m *Manager) repoBase() (*git.Git, error) {
+// Use m.gitOps with the returned path for actual git operations.
+func (m *Manager) repoBasePath() (string, error) {
 	// First check for shared bare repo (new architecture)
-	bareRepoPath := filepath.Join(m.rig.Path, ".repo.git")
-	if m.fs.IsDir(bareRepoPath) {
+	bareRepoPath := filepath.Join(m.targetRigPath, ".repo.git")
+	if m.targetFS.IsDir(bareRepoPath) {
 		// Bare repo exists - use it
-		return git.NewGitWithDir(bareRepoPath, ""), nil
+		return bareRepoPath, nil
 	}
 
 	// Fall back to mayor/rig (legacy architecture)
-	mayorPath := filepath.Join(m.rig.Path, "mayor", "rig")
-	if !m.fs.IsDir(mayorPath) {
-		return nil, fmt.Errorf("no repo base found (neither .repo.git nor mayor/rig exists)")
+	mayorPath := filepath.Join(m.targetRigPath, "mayor", "rig")
+	if !m.targetFS.IsDir(mayorPath) {
+		return "", fmt.Errorf("no repo base found (neither .repo.git nor mayor/rig exists)")
 	}
-	return git.NewGit(mayorPath), nil
+	return mayorPath, nil
 }
 
-// polecatDir returns the parent directory for a polecat.
+// polecatDir returns the parent directory for a polecat on the target.
 // This is polecats/<name>/ - the polecat's home directory.
 func (m *Manager) polecatDir(name string) string {
-	return filepath.Join(m.rig.Path, "polecats", name)
+	return filepath.Join(m.targetRigPath, "polecats", name)
 }
 
-// clonePath returns the path where the git worktree lives.
+// clonePath returns the path where the git worktree lives on the target.
 // New structure: polecats/<name>/<rigname>/ - gives LLMs recognizable repo context.
 // Falls back to old structure: polecats/<name>/ for backward compatibility.
 func (m *Manager) clonePath(name string) string {
 	// New structure: polecats/<name>/<rigname>/
-	newPath := filepath.Join(m.rig.Path, "polecats", name, m.rig.Name)
-	if m.fs.IsDir(newPath) {
+	newPath := filepath.Join(m.targetRigPath, "polecats", name, m.rig.Name)
+	if m.targetFS.IsDir(newPath) {
 		return newPath
 	}
 
 	// Old structure: polecats/<name>/ (backward compat)
-	oldPath := filepath.Join(m.rig.Path, "polecats", name)
-	if m.fs.IsDir(oldPath) {
+	oldPath := filepath.Join(m.targetRigPath, "polecats", name)
+	if m.targetFS.IsDir(oldPath) {
 		// Check if this is actually a git worktree (has .git file or dir)
 		gitPath := filepath.Join(oldPath, ".git")
-		if m.fs.Exists(gitPath) {
+		if m.targetFS.Exists(gitPath) {
 			return oldPath
 		}
 	}
@@ -279,9 +318,9 @@ func (m *Manager) clonePath(name string) string {
 	return newPath
 }
 
-// exists checks if a polecat exists.
+// exists checks if a polecat exists on the target.
 func (m *Manager) exists(name string) bool {
-	return m.fs.Exists(m.polecatDir(name))
+	return m.targetFS.Exists(m.polecatDir(name))
 }
 
 // AddOptions configures polecat creation.
@@ -328,18 +367,18 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 	}
 
 	// Create polecat directory (polecats/<name>/)
-	if err := m.fs.MkdirAll(polecatDir, 0755); err != nil {
+	if err := m.targetFS.MkdirAll(polecatDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating polecat dir: %w", err)
 	}
 
-	// Get the repo base (bare repo or mayor/rig)
-	repoGit, err := m.repoBase()
+	// Get the repo base path (bare repo or mayor/rig)
+	repoPath, err := m.repoBasePath()
 	if err != nil {
 		return nil, fmt.Errorf("finding repo base: %w", err)
 	}
 
 	// Fetch latest from origin to ensure worktree starts from up-to-date code
-	if err := repoGit.Fetch("origin"); err != nil {
+	if err := m.gitOps.Fetch(repoPath, "origin"); err != nil {
 		// Non-fatal - proceed with potentially stale code
 		fmt.Printf("Warning: could not fetch origin: %v\n", err)
 	}
@@ -355,17 +394,18 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 	// Always create fresh branch - unique name guarantees no collision
 	// git worktree add -b polecat/<name>-<timestamp> <path> <startpoint>
 	// Worktree goes in polecats/<name>/<rigname>/ for LLM ergonomics
-	if err := repoGit.WorktreeAddFromRef(clonePath, branchName, startPoint); err != nil {
+	if err := m.gitOps.WorktreeAdd(repoPath, clonePath, branchName, startPoint); err != nil {
 		return nil, fmt.Errorf("creating worktree from %s: %w", startPoint, err)
 	}
 
 	// Ensure AGENTS.md exists - critical for polecats to "land the plane"
 	// Fall back to copy from mayor/rig if not in git (e.g., stale fetch, local-only file)
 	agentsMDPath := filepath.Join(clonePath, "AGENTS.md")
-	if !m.fs.Exists(agentsMDPath) {
+	if !m.targetFS.Exists(agentsMDPath) {
+		// Read from local rig, write to target
 		srcPath := filepath.Join(m.rig.Path, "mayor", "rig", "AGENTS.md")
-		if srcData, readErr := m.fs.ReadFile(srcPath); readErr == nil {
-			if writeErr := m.fs.WriteFile(agentsMDPath, srcData, 0644); writeErr != nil {
+		if srcData, readErr := m.localFS.ReadFile(srcPath); readErr == nil {
+			if writeErr := m.targetFS.WriteFile(agentsMDPath, srcData, 0644); writeErr != nil {
 				fmt.Printf("Warning: could not copy AGENTS.md: %v\n", writeErr)
 			}
 		}
@@ -478,13 +518,17 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 			}
 		} else {
 			// Fallback path: Check git directly (for polecats that haven't reported yet)
-			polecatGit := git.NewGit(clonePath)
-			status, err := polecatGit.CheckUncommittedWork()
-			if err == nil && !status.Clean() {
+			hasChanges, stashCount, unpushedCount, err := m.gitOps.CheckUncommittedWork(clonePath)
+			if err == nil && (hasChanges || stashCount > 0 || unpushedCount > 0) {
+				status := &git.UncommittedWorkStatus{
+					HasUncommittedChanges: hasChanges,
+					StashCount:            stashCount,
+					UnpushedCommits:       unpushedCount,
+				}
 				// For backward compatibility: force only bypasses uncommitted changes, not stashes/unpushed
 				if force {
 					// Force mode: allow uncommitted changes but still block on stashes/unpushed
-					if status.StashCount > 0 || status.UnpushedCommits > 0 {
+					if stashCount > 0 || unpushedCount > 0 {
 						return &UncommittedWorkError{PolecatName: name, Status: status}
 					}
 				} else {
@@ -494,37 +538,35 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 		}
 	}
 
-	// Get repo base to remove the worktree properly
-	repoGit, err := m.repoBase()
+	// Get repo base path to remove the worktree properly
+	repoPath, err := m.repoBasePath()
 	if err != nil {
 		// Best-effort: try to prune stale worktree entries from both possible repo locations.
 		// This handles edge cases where the repo base is corrupted but worktree entries exist.
-		bareRepoPath := filepath.Join(m.rig.Path, ".repo.git")
-		if m.fs.IsDir(bareRepoPath) {
-			bareGit := git.NewGitWithDir(bareRepoPath, "")
-			_ = bareGit.WorktreePrune()
+		bareRepoPath := filepath.Join(m.targetRigPath, ".repo.git")
+		if m.targetFS.IsDir(bareRepoPath) {
+			_ = m.gitOps.WorktreePrune(bareRepoPath)
 		}
-		mayorRigPath := filepath.Join(m.rig.Path, "mayor", "rig")
-		if m.fs.IsDir(mayorRigPath) {
-			mayorGit := git.NewGit(mayorRigPath)
-			_ = mayorGit.WorktreePrune()
+		mayorRigPath := filepath.Join(m.targetRigPath, "mayor", "rig")
+		if m.targetFS.IsDir(mayorRigPath) {
+			_ = m.gitOps.WorktreePrune(mayorRigPath)
 		}
 		// Fall back to direct removal if repo base not found
-		return m.fs.RemoveAll(polecatDir)
+		return m.targetFS.RemoveAll(polecatDir)
 	}
 
 	// Try to remove as a worktree first (use force flag for worktree removal too)
-	if err := repoGit.WorktreeRemove(clonePath, force); err != nil {
+	if err := m.gitOps.WorktreeRemove(repoPath, clonePath, force); err != nil {
 		// Fall back to direct removal if worktree removal fails
 		// (e.g., if this is an old-style clone, not a worktree)
-		if removeErr := m.fs.RemoveAll(clonePath); removeErr != nil {
+		if removeErr := m.targetFS.RemoveAll(clonePath); removeErr != nil {
 			return fmt.Errorf("removing clone path: %w", removeErr)
 		}
 	} else {
 		// GT-1L3MY9: git worktree remove may leave untracked directories behind.
 		// Clean up any leftover files (overlay files, .beads/, setup hook outputs, etc.)
 		// Use RemoveAll to handle non-empty directories with untracked files.
-		_ = m.fs.RemoveAll(clonePath)
+		_ = m.targetFS.RemoveAll(clonePath)
 	}
 
 	// Also remove the parent polecat directory
@@ -532,11 +574,11 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 	if polecatDir != clonePath {
 		// GT-1L3MY9: Clean up any orphaned files at polecat level.
 		// Use RemoveAll to handle non-empty directories with leftover files.
-		_ = m.fs.RemoveAll(polecatDir)
+		_ = m.targetFS.RemoveAll(polecatDir)
 	}
 
 	// Prune any stale worktree entries (non-fatal: cleanup only)
-	_ = repoGit.WorktreePrune()
+	_ = m.gitOps.WorktreePrune(repoPath)
 
 	// Release name back to pool if it's a pooled name (non-fatal: state file update)
 	m.namePool.Release(name)
@@ -607,22 +649,26 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 
 	// Get the old clone path (may be old or new structure)
 	oldClonePath := m.clonePath(name)
-	polecatGit := git.NewGit(oldClonePath)
 
 	// New clone path uses new structure
 	polecatDir := m.polecatDir(name)
 	newClonePath := filepath.Join(polecatDir, m.rig.Name)
 
-	// Get the repo base (bare repo or mayor/rig)
-	repoGit, err := m.repoBase()
+	// Get the repo base path (bare repo or mayor/rig)
+	repoPath, err := m.repoBasePath()
 	if err != nil {
 		return nil, fmt.Errorf("finding repo base: %w", err)
 	}
 
 	// Check for uncommitted work unless forced
 	if !force {
-		status, err := polecatGit.CheckUncommittedWork()
-		if err == nil && !status.Clean() {
+		hasChanges, stashCount, unpushedCount, err := m.gitOps.CheckUncommittedWork(oldClonePath)
+		if err == nil && (hasChanges || stashCount > 0 || unpushedCount > 0) {
+			status := &git.UncommittedWorkStatus{
+				HasUncommittedChanges: hasChanges,
+				StashCount:            stashCount,
+				UnpushedCommits:       unpushedCount,
+			}
 			return nil, &UncommittedWorkError{PolecatName: name, Status: status}
 		}
 	}
@@ -638,21 +684,21 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	}
 
 	// Remove the old worktree (use force for git worktree removal)
-	if err := repoGit.WorktreeRemove(oldClonePath, true); err != nil {
+	if err := m.gitOps.WorktreeRemove(repoPath, oldClonePath, true); err != nil {
 		// Fall back to direct removal
-		if removeErr := m.fs.RemoveAll(oldClonePath); removeErr != nil {
+		if removeErr := m.targetFS.RemoveAll(oldClonePath); removeErr != nil {
 			return nil, fmt.Errorf("removing old clone path: %w", removeErr)
 		}
 	}
 
 	// Prune stale worktree entries (non-fatal: cleanup only)
-	_ = repoGit.WorktreePrune()
+	_ = m.gitOps.WorktreePrune(repoPath)
 
 	// Fetch latest from origin to ensure we have fresh commits (non-fatal: may be offline)
-	_ = repoGit.Fetch("origin")
+	_ = m.gitOps.Fetch(repoPath, "origin")
 
 	// Ensure polecat directory exists for new structure
-	if err := m.fs.MkdirAll(polecatDir, 0755); err != nil {
+	if err := m.targetFS.MkdirAll(polecatDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating polecat dir: %w", err)
 	}
 
@@ -675,17 +721,18 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	} else {
 		branchName = fmt.Sprintf("polecat/%s-%s", name, timestamp)
 	}
-	if err := repoGit.WorktreeAddFromRef(newClonePath, branchName, startPoint); err != nil {
+	if err := m.gitOps.WorktreeAdd(repoPath, newClonePath, branchName, startPoint); err != nil {
 		return nil, fmt.Errorf("creating fresh worktree from %s: %w", startPoint, err)
 	}
 
 	// Ensure AGENTS.md exists - critical for polecats to "land the plane"
 	// Fall back to copy from mayor/rig if not in git (e.g., stale fetch, local-only file)
 	agentsMDPath := filepath.Join(newClonePath, "AGENTS.md")
-	if !m.fs.Exists(agentsMDPath) {
+	if !m.targetFS.Exists(agentsMDPath) {
+		// Read from local rig, write to target
 		srcPath := filepath.Join(m.rig.Path, "mayor", "rig", "AGENTS.md")
-		if srcData, readErr := m.fs.ReadFile(srcPath); readErr == nil {
-			if writeErr := m.fs.WriteFile(agentsMDPath, srcData, 0644); writeErr != nil {
+		if srcData, readErr := m.localFS.ReadFile(srcPath); readErr == nil {
+			if writeErr := m.targetFS.WriteFile(agentsMDPath, srcData, 0644); writeErr != nil {
 				fmt.Printf("Warning: could not copy AGENTS.md: %v\n", writeErr)
 			}
 		}
@@ -768,8 +815,8 @@ func (m *Manager) ReconcilePool() {
 	m.namePool.Reconcile(namesWithDirs)
 
 	// Prune any stale git worktree entries (handles manually deleted directories)
-	if repoGit, err := m.repoBase(); err == nil {
-		_ = repoGit.WorktreePrune()
+	if repoPath, err := m.repoBasePath(); err == nil {
+		_ = m.gitOps.WorktreePrune(repoPath)
 	}
 }
 
@@ -808,10 +855,10 @@ func (m *Manager) PoolStatus() (active int, names []string) {
 func (m *Manager) List() ([]*Polecat, error) {
 	polecatsDir := filepath.Join(m.rig.Path, "polecats")
 
-	entries, err := m.fs.ReadDir(polecatsDir)
+	entries, err := m.targetFS.ReadDir(polecatsDir)
 	if err != nil {
 		// Check if directory doesn't exist
-		if !m.fs.Exists(polecatsDir) {
+		if !m.targetFS.Exists(polecatsDir) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("reading polecats dir: %w", err)
@@ -957,8 +1004,7 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 	clonePath := m.clonePath(name)
 
 	// Get actual branch from worktree (branches are now timestamped)
-	polecatGit := git.NewGit(clonePath)
-	branchName, err := polecatGit.CurrentBranch()
+	branchName, err := m.gitOps.CurrentBranch(clonePath)
 	if err != nil {
 		// Fall back to old format if we can't read the branch
 		branchName = fmt.Sprintf("polecat/%s", name)
@@ -1011,13 +1057,13 @@ func (m *Manager) setupSharedBeads(clonePath string) error {
 // - Old timestamped branches (keeps only the most recent per polecat name)
 // Returns the number of branches deleted.
 func (m *Manager) CleanupStaleBranches() (int, error) {
-	repoGit, err := m.repoBase()
+	repoPath, err := m.repoBasePath()
 	if err != nil {
 		return 0, fmt.Errorf("finding repo base: %w", err)
 	}
 
 	// List all polecat branches
-	branches, err := repoGit.ListBranches("polecat/*")
+	branches, err := m.gitOps.ListBranches(repoPath, "polecat/*")
 	if err != nil {
 		return 0, fmt.Errorf("listing branches: %w", err)
 	}
@@ -1045,7 +1091,7 @@ func (m *Manager) CleanupStaleBranches() (int, error) {
 			continue // This branch is in use
 		}
 		// Delete orphaned branch
-		if err := repoGit.DeleteBranch(branch, true); err != nil {
+		if err := m.gitOps.DeleteBranch(repoPath, branch, true); err != nil {
 			// Log but continue - non-fatal
 			fmt.Printf("Warning: could not delete branch %s: %v\n", branch, err)
 			continue
@@ -1091,6 +1137,7 @@ func (m *Manager) DetectStalePolecats(threshold int) ([]*StalenessInfo, error) {
 	}
 
 	var results []*StalenessInfo
+	remoteBranch := "origin/" + defaultBranch
 	for _, p := range polecats {
 		info := &StalenessInfo{
 			Name: p.Name,
@@ -1102,12 +1149,14 @@ func (m *Manager) DetectStalePolecats(threshold int) ([]*StalenessInfo, error) {
 		info.HasActiveSession = checkTmuxSession(sessionName)
 
 		// Check how far behind main
-		polecatGit := git.NewGit(p.ClonePath)
-		info.CommitsBehind = countCommitsBehind(polecatGit, defaultBranch)
+		commitsBehind, err := m.gitOps.CountCommitsBehind(p.ClonePath, remoteBranch)
+		if err == nil {
+			info.CommitsBehind = commitsBehind
+		}
 
 		// Check for uncommitted work
-		status, err := polecatGit.CheckUncommittedWork()
-		if err == nil && !status.Clean() {
+		hasChanges, stashCount, unpushedCount, err := m.gitOps.CheckUncommittedWork(p.ClonePath)
+		if err == nil && (hasChanges || stashCount > 0 || unpushedCount > 0) {
 			info.HasUncommittedWork = true
 		}
 
@@ -1131,18 +1180,6 @@ func checkTmuxSession(sessionName string) bool {
 	// Use has-session command which returns 0 if session exists
 	cmd := exec.Command("tmux", "has-session", "-t", sessionName) //nolint:gosec // G204: sessionName is constructed internally
 	return cmd.Run() == nil
-}
-
-// countCommitsBehind counts how many commits a worktree is behind origin/<defaultBranch>.
-func countCommitsBehind(g *git.Git, defaultBranch string) int {
-	// Use rev-list to count commits: origin/main..HEAD shows commits ahead,
-	// HEAD..origin/main shows commits behind
-	remoteBranch := "origin/" + defaultBranch
-	count, err := g.CountCommitsBehind(remoteBranch)
-	if err != nil {
-		return 0 // Can't determine, assume not behind
-	}
-	return count
 }
 
 // assessStaleness determines if a polecat should be cleaned up.
@@ -1191,7 +1228,6 @@ func (m *Manager) GitState(name string) (*GitState, error) {
 	}
 
 	clonePath := m.clonePath(name)
-	polecatGit := git.NewGit(clonePath)
 
 	state := &GitState{
 		Clean:            true,
@@ -1199,37 +1235,30 @@ func (m *Manager) GitState(name string) (*GitState, error) {
 	}
 
 	// Check for uncommitted changes (git status --porcelain)
-	gitStatus, err := polecatGit.Status()
+	files, err := m.gitOps.Status(clonePath)
 	if err != nil {
 		return nil, fmt.Errorf("git status: %w", err)
 	}
-	if !gitStatus.Clean {
+	if len(files) > 0 {
 		state.Clean = false
-		state.UncommittedFiles = append(state.UncommittedFiles, gitStatus.Modified...)
-		state.UncommittedFiles = append(state.UncommittedFiles, gitStatus.Added...)
-		state.UncommittedFiles = append(state.UncommittedFiles, gitStatus.Deleted...)
-		state.UncommittedFiles = append(state.UncommittedFiles, gitStatus.Untracked...)
+		state.UncommittedFiles = files
 	}
 
 	// Check for unpushed commits
-	unpushed, err := polecatGit.UnpushedCommits()
+	unpushed, err := m.gitOps.UnpushedCommitCount(clonePath)
 	if err == nil && unpushed > 0 {
 		// Check if there's any actual content difference (handle squash merges)
-		// Use git diff --quiet to check if content differs
-		mainRef := "origin/main"
-		diffCmd := exec.Command("git", "diff", mainRef, "HEAD", "--quiet") //nolint:gosec // G204: mainRef is hardcoded
-		diffCmd.Dir = clonePath
-		diffErr := diffCmd.Run()
-		if diffErr != nil {
-			// Exit code 1 means there's a diff - truly unpushed work
+		hasDiff, _ := m.gitOps.HasContentDiffFromRef(clonePath, "origin/main")
+		if hasDiff {
+			// There's a diff - truly unpushed work
 			state.UnpushedCommits = unpushed
 			state.Clean = false
 		}
-		// Exit code 0 means no diff - content is on main (squash merged)
+		// No diff means content is on main (squash merged)
 	}
 
 	// Check for stashes
-	stashCount, _ := polecatGit.StashCount()
+	stashCount, _ := m.gitOps.StashCount(clonePath)
 	if stashCount > 0 {
 		state.StashCount = stashCount
 		state.Clean = false

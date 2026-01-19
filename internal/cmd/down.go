@@ -94,7 +94,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 		// By default, tmux exits when there are no sessions (exit-empty on).
 		// This ensures the server stays running for subsequent `gt up`.
 		// Ignore errors - if there's no server, nothing to configure.
-		t := tmux.NewTmux()
+		t := tmux.NewLocalTmux()
 		_ = t.SetExitEmpty(false)
 	}
 	allOK := true
@@ -293,7 +293,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 			fmt.Printf("To proceed, run with: %s\n", style.Bold.Render("GT_NUKE_ACKNOWLEDGED=1 gt down --nuke"))
 			allOK = false
 		} else {
-			t := tmux.NewTmux()
+			t := tmux.NewLocalTmux()
 			if err := t.KillServer(); err != nil {
 				printDownStatus("Tmux server", false, err.Error())
 				allOK = false

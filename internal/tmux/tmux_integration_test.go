@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 
 // cleanupTestSessions removes all sessions starting with testPrefix.
 func cleanupTestSessions() {
-	t := NewTmux()
+	t := NewLocalTmux()
 	sessions, _ := t.List()
 	for _, id := range sessions {
 		if strings.HasPrefix(string(id), testPrefix) {
@@ -55,7 +55,7 @@ func uniqueSessionName(t *testing.T) string {
 
 // TestStart verifies the Start method creates a session running a command.
 func TestStart(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -122,7 +122,7 @@ func TestStart(t *testing.T) {
 
 // TestStop verifies the Stop method terminates sessions and cleans up processes.
 func TestStop(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 
 	t.Run("terminates existing session", func(t *testing.T) {
 		name := uniqueSessionName(t)
@@ -163,7 +163,7 @@ func TestStop(t *testing.T) {
 // TestStopOrphanPrevention tests that Stop kills descendant processes.
 // This is a separate test to ensure proper isolation and server availability.
 func TestStopOrphanPrevention(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 
 	// Keep a session alive throughout the test to ensure server doesn't shut down
 	keepAlive := uniqueSessionName(t) + "-keepalive"
@@ -222,7 +222,7 @@ func TestStopOrphanPrevention(t *testing.T) {
 
 // TestExists verifies the Exists method with exact matching.
 func TestExists(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -276,7 +276,7 @@ func TestExists(t *testing.T) {
 
 // TestSend verifies the Send method sends text with Enter.
 func TestSend(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -336,7 +336,7 @@ func TestSend(t *testing.T) {
 
 // TestSendControl verifies the SendControl method sends control sequences.
 func TestSendControl(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -398,7 +398,7 @@ func TestSendControl(t *testing.T) {
 
 // TestCapture verifies the Capture method returns pane content.
 func TestCapture(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -447,7 +447,7 @@ func TestCapture(t *testing.T) {
 
 // TestIsRunning verifies the IsRunning method checks process names.
 func TestIsRunning(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -489,7 +489,7 @@ func TestIsRunning(t *testing.T) {
 
 // TestWaitFor verifies the WaitFor method waits for process to start.
 func TestWaitFor(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -565,7 +565,7 @@ func TestWaitFor(t *testing.T) {
 
 // TestList verifies the List method returns all session IDs.
 func TestList(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name1 := uniqueSessionName(t) + "-1"
 	name2 := uniqueSessionName(t) + "-2"
 
@@ -624,7 +624,7 @@ func TestList(t *testing.T) {
 
 // TestSetEnv verifies the SetEnv method sets environment variables.
 func TestSetEnv(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -680,7 +680,7 @@ func TestSetEnv(t *testing.T) {
 
 // TestGetInfo verifies the GetInfo method returns session information.
 func TestGetInfo(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -722,7 +722,7 @@ func TestGetInfo(t *testing.T) {
 
 // TestConfigureGasTownSession verifies the ConfigureGasTownSession method.
 func TestConfigureGasTownSession(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -771,7 +771,7 @@ func TestConfigureGasTownSession(t *testing.T) {
 
 // TestSetPaneDiedHook verifies the SetPaneDiedHook method.
 func TestSetPaneDiedHook(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	name := uniqueSessionName(t)
 
 	t.Cleanup(func() {
@@ -805,7 +805,7 @@ func TestInterfaceCompliance(t *testing.T) {
 
 // TestConcurrentOperations verifies thread-safety of concurrent operations.
 func TestConcurrentOperations(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 	sessions := make([]session.SessionID, 5)
 
 	// Create multiple sessions
@@ -878,7 +878,7 @@ func TestConcurrentOperations(t *testing.T) {
 
 // TestEdgeCases tests edge cases and error conditions.
 func TestEdgeCases(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 
 	t.Run("operations on stopped session", func(t *testing.T) {
 		name := uniqueSessionName(t)
@@ -954,7 +954,7 @@ func TestEdgeCases(t *testing.T) {
 // TestNoServerHandling tests behavior when tmux server is not running.
 // This test is skipped if there are existing sessions (to avoid killing the server).
 func TestNoServerHandling(t *testing.T) {
-	tmx := NewTmux()
+	tmx := NewLocalTmux()
 
 	// Check if there are existing sessions
 	sessions, _ := tmx.List()
@@ -1021,7 +1021,7 @@ func TestNoServerHandling(t *testing.T) {
 // This verifies tmux matches the Session contract that the Double also implements.
 func TestTmux_Conformance(t *testing.T) {
 	factory := func() session.Session {
-		return NewTmux()
+		return NewLocalTmux()
 	}
 
 	cfg := session.ConformanceConfig{

@@ -338,7 +338,7 @@ type PolecatListItem struct {
 }
 
 // getPolecatBackend creates a polecat backend for the given rig.
-// This returns either a local Manager or RemoteManager based on rig config.
+// The Manager is configured for local or remote operations based on rig config.
 func getPolecatBackend(rigName string) (polecat.Backend, *rig.Rig, string, error) {
 	townRoot, r, err := getRig(rigName)
 	if err != nil {

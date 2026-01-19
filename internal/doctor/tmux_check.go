@@ -31,7 +31,7 @@ func NewLinkedPaneCheck() *LinkedPaneCheck {
 
 // Run checks for linked panes across Gas Town tmux sessions.
 func (c *LinkedPaneCheck) Run(ctx *CheckContext) *CheckResult {
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 
 	sessions, err := t.List()
 	if err != nil {
@@ -121,7 +121,7 @@ func (c *LinkedPaneCheck) Fix(ctx *CheckContext) error {
 		return nil
 	}
 
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	var lastErr error
 
 	for _, sess := range c.linkedSessions {

@@ -50,7 +50,7 @@ func (c *IdentityCollisionCheck) Run(ctx *CheckContext) *CheckResult {
 	// Get active tmux sessions for cross-reference
 	// Build a set containing both session names AND session IDs
 	// because locks may store either format
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	sessionSet := make(map[string]bool)
 
 	// Get session names

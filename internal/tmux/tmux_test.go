@@ -19,7 +19,7 @@ func TestListSessionsNoServer(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessions, err := tm.List()
 	// Should not error even if no server running
 	if err != nil {
@@ -34,7 +34,7 @@ func TestHasSessionNoServer(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	has, err := tm.Exists(session.SessionID("nonexistent-session-xyz"))
 	if err != nil {
 		t.Fatalf("HasSession: %v", err)
@@ -49,7 +49,7 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "tmux-test-" + t.Name() // Use non-gt prefix to avoid translation
 	sessionID := session.SessionID(sessionName)
 
@@ -107,7 +107,7 @@ func TestDuplicateSession(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "gt-test-dup-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
@@ -132,7 +132,7 @@ func TestSendKeysAndCapture(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "gt-test-keys-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
@@ -169,7 +169,7 @@ func TestGetSessionInfo(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "gt-test-info-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
@@ -196,7 +196,7 @@ func TestGetSessionInfo(t *testing.T) {
 }
 
 func TestWrapError(t *testing.T) {
-	tm := NewTmux()
+	tm := NewLocalTmux()
 
 	tests := []struct {
 		stderr string
@@ -210,7 +210,7 @@ func TestWrapError(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		err := tm.wrapError(nil, tt.stderr, []string{"test"})
+		err := tm.wrapError(nil, []byte(tt.stderr), []string{"test"})
 		if err != tt.want {
 			t.Errorf("wrapError(%q) = %v, want %v", tt.stderr, err, tt.want)
 		}
@@ -222,7 +222,7 @@ func TestEnsureSessionFresh_NoExistingSession(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "gt-test-fresh-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
@@ -250,7 +250,7 @@ func TestEnsureSessionFresh_ZombieSession(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "gt-test-zombie-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
@@ -295,7 +295,7 @@ func TestEnsureSessionFresh_IdempotentOnZombie(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "gt-test-idem-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
@@ -325,7 +325,7 @@ func TestIsAgentRunning(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "gt-test-agent-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
@@ -402,7 +402,7 @@ func TestIsAgentRunning_NonexistentSession(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 
 	// IsAgentRunning on nonexistent session should return false, not error
 	got := tm.IsAgentRunning("nonexistent-session-xyz", "node", "gemini", "cursor-agent")
@@ -416,7 +416,7 @@ func TestIsRuntimeRunning(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "gt-test-runtime-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
@@ -477,7 +477,7 @@ func TestIsRuntimeRunning_ShellWithNodeChild(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	tm := NewTmux()
+	tm := NewLocalTmux()
 	sessionName := "gt-test-shell-child-" + t.Name()
 	sessionID := session.SessionID(sessionName)
 
@@ -522,30 +522,32 @@ func TestIsRuntimeRunning_ShellWithNodeChild(t *testing.T) {
 }
 
 func TestHasClaudeChild(t *testing.T) {
-	// Test the hasClaudeChild helper function directly
+	// Test the hasClaudeChild method
 	// This uses the current process as a test subject
+	tm := NewLocalTmux()
 
 	// Get current process PID as string
 	currentPID := "1" // init/launchd - should have children but not claude/node
 
 	// hasClaudeChild should return false for init (no node/claude children)
-	got := hasClaudeChild(currentPID)
+	got := tm.hasClaudeChild(currentPID)
 	if got {
 		t.Logf("hasClaudeChild(%q) = true - init has claude/node child?", currentPID)
 	}
 
 	// Test with a definitely nonexistent PID
-	got = hasClaudeChild("999999999")
+	got = tm.hasClaudeChild("999999999")
 	if got {
 		t.Error("hasClaudeChild should return false for nonexistent PID")
 	}
 }
 
 func TestGetAllDescendants(t *testing.T) {
-	// Test the getAllDescendants helper function
+	// Test the getAllDescendants method
+	tm := NewLocalTmux()
 
 	// Test with nonexistent PID - should return empty slice
-	got := getAllDescendants("999999999")
+	got := tm.getAllDescendants("999999999")
 	if len(got) != 0 {
 		t.Errorf("getAllDescendants(nonexistent) = %v, want empty slice", got)
 	}
@@ -553,7 +555,7 @@ func TestGetAllDescendants(t *testing.T) {
 	// Test with PID 1 (init/launchd) - should find some descendants
 	// Note: We can't test exact PIDs, just that the function doesn't panic
 	// and returns reasonable results
-	descendants := getAllDescendants("1")
+	descendants := tm.getAllDescendants("1")
 	t.Logf("getAllDescendants(\"1\") found %d descendants", len(descendants))
 
 	// Verify returned PIDs are all numeric strings

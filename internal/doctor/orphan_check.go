@@ -66,7 +66,7 @@ func NewOrphanSessionCheckWithSessionLister(lister SessionLister) *OrphanSession
 func (c *OrphanSessionCheck) Run(ctx *CheckContext) *CheckResult {
 	lister := c.sessionLister
 	if lister == nil {
-		lister = &realSessionLister{t: tmux.NewTmux()}
+		lister = &realSessionLister{t: tmux.NewLocalTmux()}
 	}
 
 	sessions, err := lister.List()
@@ -146,7 +146,7 @@ func (c *OrphanSessionCheck) Fix(ctx *CheckContext) error {
 		return nil
 	}
 
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	var lastErr error
 
 	for _, sess := range c.orphanSessions {
@@ -388,7 +388,7 @@ func (c *OrphanProcessCheck) getTmuxSessionPIDs() (map[int]bool, error) { //noli
 	}
 
 	// Also get shell PIDs inside tmux panes
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	sessions, _ := t.List()
 	for _, sessionID := range sessions {
 		// Get pane PIDs for this session

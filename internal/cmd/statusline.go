@@ -32,7 +32,7 @@ func init() {
 }
 
 func runStatusLine(cmd *cobra.Command, args []string) error {
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 
 	// Get session environment
 	var rigName, polecat, crew, issue, role string

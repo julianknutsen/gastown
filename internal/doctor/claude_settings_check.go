@@ -442,7 +442,7 @@ func (c *ClaudeSettingsCheck) hookHasPattern(hooks map[string]any, hookName, pat
 func (c *ClaudeSettingsCheck) Fix(ctx *CheckContext) error {
 	var errors []string
 	var skipped []string
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 
 	for _, sf := range c.staleSettings {
 		// Skip files with local modifications - require manual review

@@ -107,7 +107,7 @@ func runTheme(cmd *cobra.Command, args []string) error {
 }
 
 func runThemeApply(cmd *cobra.Command, args []string) error {
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	agents := factory.Agents()
 
 	// Get all running agents
@@ -195,7 +195,7 @@ func detectCurrentRig() string {
 	}
 
 	// Try to extract from tmux session name
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	if sessName, err := t.CurrentSessionName(); err == nil {
 		// Extract rig from session name: gt-<rig>-...
 		parts := strings.SplitN(sessName, "-", 3)

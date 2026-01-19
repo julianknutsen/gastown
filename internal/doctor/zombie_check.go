@@ -40,7 +40,7 @@ func NewZombieSessionCheckWithLister(lister SessionLister) *ZombieSessionCheck {
 
 // Run checks for zombie Gas Town sessions (tmux alive but Claude dead).
 func (c *ZombieSessionCheck) Run(ctx *CheckContext) *CheckResult {
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	lister := c.sessionLister
 	if lister == nil {
 		lister = &realSessionLister{t: t}
@@ -136,7 +136,7 @@ func (c *ZombieSessionCheck) Fix(ctx *CheckContext) error {
 		return nil
 	}
 
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	var lastErr error
 
 	for _, sess := range c.zombieSessions {

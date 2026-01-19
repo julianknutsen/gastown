@@ -3,6 +3,7 @@ package runner
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -18,6 +19,10 @@ type Runner interface {
 
 	// CombinedOutput executes a command and returns combined stdout/stderr.
 	CombinedOutput(dir, name string, args ...string) ([]byte, error)
+
+	// RunInteractive runs a command with stdin/stdout/stderr attached.
+	// Used for interactive commands like tmux attach.
+	RunInteractive(name string, args ...string) error
 }
 
 // Local executes commands on the local machine.
@@ -52,6 +57,14 @@ func (r *Local) CombinedOutput(dir, name string, args ...string) ([]byte, error)
 	return cmd.CombinedOutput()
 }
 
+func (r *Local) RunInteractive(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // SSH executes commands on a remote machine via SSH.
 type SSH struct {
 	sshCmd string // e.g., "ssh user@host" or "ssh -i key user@host"
@@ -75,6 +88,24 @@ func (r *SSH) Output(dir, name string, args ...string) ([]byte, error) {
 func (r *SSH) CombinedOutput(dir, name string, args ...string) ([]byte, error) {
 	remoteCmd := r.buildRemoteCommand(dir, name, args)
 	return exec.Command("sh", "-c", remoteCmd).CombinedOutput()
+}
+
+func (r *SSH) RunInteractive(name string, args ...string) error {
+	// Build the remote command
+	var cmdParts []string
+	cmdParts = append(cmdParts, name)
+	for _, arg := range args {
+		cmdParts = append(cmdParts, shellEscape(arg))
+	}
+	innerCmd := strings.Join(cmdParts, " ")
+
+	// Run via SSH with -t for TTY allocation (required for interactive commands)
+	fullCmd := fmt.Sprintf("%s -t %s", r.sshCmd, shellEscape(innerCmd))
+	cmd := exec.Command("sh", "-c", fullCmd)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // buildRemoteCommand constructs the full SSH command string.

@@ -2,11 +2,9 @@
 package tmux
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -15,6 +13,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/ids"
+	"github.com/steveyegge/gastown/internal/runner"
 	"github.com/steveyegge/gastown/internal/session"
 )
 
@@ -53,43 +52,82 @@ func (c SessionConfig) WithEnvVars(envVars map[string]string) SessionConfig {
 // Tmux-specific operations like theming, env vars, and hooks are available
 // as methods on *Tmux directly (not part of the Sessions interface).
 type Tmux struct {
-	sessionConfig *SessionConfig
+	runner        runner.Runner  // Command execution (local or SSH)
+	commandPrefix string         // Prefix for commands (e.g., GT_LOCAL_SSH='...')
+	sessionConfig *SessionConfig // Optional config to apply on session creation
 }
 
-// NewTmux creates a new Tmux wrapper.
-func NewTmux() *Tmux {
-	return &Tmux{}
+// NewTmux creates a new Tmux wrapper with the given runner.
+// Use runner.NewLocal() for local tmux, or runner.NewSSH(sshCmd) for remote.
+func NewTmux(r runner.Runner) *Tmux {
+	return &Tmux{runner: r}
+}
+
+// NewLocalTmux creates a Tmux wrapper for local tmux operations.
+// This is a convenience constructor equivalent to NewTmux(runner.NewLocal()).
+func NewLocalTmux() *Tmux {
+	return NewTmux(runner.NewLocal())
+}
+
+// NewRemoteTmux creates a Tmux wrapper for remote tmux operations via SSH.
+// This is a convenience constructor equivalent to NewTmux(runner.NewSSH(sshCmd)).
+func NewRemoteTmux(sshCmd string) *Tmux {
+	return NewTmux(runner.NewSSH(sshCmd))
+}
+
+// NewRemoteTmuxWithCallback creates a Tmux wrapper for remote tmux with bd-wrapper callback support.
+// sshCmd: SSH command to reach remote (e.g., "ssh user@remote")
+// localSSH: SSH command for remote to call back (e.g., "ssh -i ~/.ssh/key user@local-ip")
+//
+// When localSSH is set, Start() and Respawn() automatically prepend GT_LOCAL_SSH to commands,
+// enabling bd-wrapper on the remote to proxy beads operations back to local.
+func NewRemoteTmuxWithCallback(sshCmd, localSSH string) *Tmux {
+	prefix := ""
+	if localSSH != "" {
+		prefix = "GT_LOCAL_SSH='" + localSSH + "' "
+	}
+	return NewTmux(runner.NewSSH(sshCmd)).WithCommandPrefix(prefix)
+}
+
+// WithCommandPrefix returns a Tmux that prepends a prefix to commands.
+// Used for bd-wrapper callback support on remote polecats:
+//
+//	tmux.NewTmux(runner.NewSSH(sshCmd)).WithCommandPrefix("GT_LOCAL_SSH='ssh user@local' ")
+func (t *Tmux) WithCommandPrefix(prefix string) *Tmux {
+	return &Tmux{
+		runner:        t.runner,
+		commandPrefix: prefix,
+		sessionConfig: t.sessionConfig,
+	}
 }
 
 // WithSessionConfig returns a Tmux configured to apply settings when sessions are created.
 func (t *Tmux) WithSessionConfig(cfg SessionConfig) *Tmux {
 	return &Tmux{
+		runner:        t.runner,
+		commandPrefix: t.commandPrefix,
 		sessionConfig: &cfg,
 	}
 }
 
 // run executes a tmux command and returns stdout.
 func (t *Tmux) run(args ...string) (string, error) {
-	cmd := exec.Command("tmux", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	out, err := t.runner.CombinedOutput("", "tmux", args...)
 	if err != nil {
-		return "", t.wrapError(err, stderr.String(), args)
+		return "", t.wrapError(err, out, args)
 	}
-
-	return strings.TrimSpace(stdout.String()), nil
+	return strings.TrimSpace(string(out)), nil
 }
 
 // wrapError wraps tmux errors with context.
-func (t *Tmux) wrapError(err error, stderr string, args []string) error {
-	stderr = strings.TrimSpace(stderr)
+func (t *Tmux) wrapError(err error, output []byte, args []string) error {
+	stderr := strings.TrimSpace(string(output))
 
 	// Detect specific error types
 	if strings.Contains(stderr, "no server running") ||
-		strings.Contains(stderr, "error connecting to") {
+		strings.Contains(stderr, "error connecting to") ||
+		strings.Contains(stderr, "server exited unexpectedly") ||
+		strings.Contains(stderr, "no current target") {
 		return ErrNoServer
 	}
 	if strings.Contains(stderr, "duplicate session") {
@@ -123,8 +161,14 @@ func (t *Tmux) NewSession(name, workDir string) error {
 // See: https://github.com/anthropics/gastown/issues/280
 //
 // If WithSessionConfig was used, the config is applied after session creation.
+// If WithCommandPrefix was used, the prefix is prepended to the command.
 func (t *Tmux) Start(name, workDir, command string) (session.SessionID, error) {
 	sessionID := session.SessionID(name)
+
+	// Prepend command prefix if set (e.g., GT_LOCAL_SSH for bd-wrapper callback)
+	if t.commandPrefix != "" {
+		command = t.commandPrefix + command
+	}
 
 	args := []string{"new-session", "-d", "-s", name}
 	if workDir != "" {
@@ -231,11 +275,11 @@ func (t *Tmux) Stop(id session.SessionID) error {
 	pid, err := t.GetPanePID(name)
 	if err == nil && pid != "" {
 		// Get all descendant PIDs recursively (returns deepest-first order)
-		descendants := getAllDescendants(pid)
+		descendants := t.getAllDescendants(pid)
 
 		// Send SIGTERM to all descendants (deepest first to avoid orphaning)
 		for _, dpid := range descendants {
-			_ = exec.Command("kill", "-TERM", dpid).Run()
+			_ = t.runner.Run("", "kill", "-TERM", dpid)
 		}
 
 		// Wait for graceful shutdown
@@ -243,20 +287,20 @@ func (t *Tmux) Stop(id session.SessionID) error {
 
 		// Send SIGKILL to any remaining descendants
 		for _, dpid := range descendants {
-			_ = exec.Command("kill", "-KILL", dpid).Run()
+			_ = t.runner.Run("", "kill", "-KILL", dpid)
 		}
 
 		// Kill the pane process itself (may have called setsid() and detached)
-		_ = exec.Command("kill", "-TERM", pid).Run()
+		_ = t.runner.Run("", "kill", "-TERM", pid)
 		time.Sleep(100 * time.Millisecond)
-		_ = exec.Command("kill", "-KILL", pid).Run()
+		_ = t.runner.Run("", "kill", "-KILL", pid)
 	}
 
 	// Kill the tmux session
 	// Note: If killing descendants caused the main process to exit, tmux may have
 	// already destroyed the session (when remain-on-exit is off). That's fine.
 	_, err = t.run("kill-session", "-t", name)
-	if errors.Is(err, ErrSessionNotFound) {
+	if errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrNoServer) {
 		return nil // Session already gone, which is what we wanted
 	}
 	return err
@@ -264,11 +308,11 @@ func (t *Tmux) Stop(id session.SessionID) error {
 
 // getAllDescendants recursively finds all descendant PIDs of a process.
 // Returns PIDs in deepest-first order so killing them doesn't orphan grandchildren.
-func getAllDescendants(pid string) []string {
+func (t *Tmux) getAllDescendants(pid string) []string {
 	var result []string
 
 	// Get direct children using pgrep
-	out, err := exec.Command("pgrep", "-P", pid).Output()
+	out, err := t.runner.Output("", "pgrep", "-P", pid)
 	if err != nil {
 		return result
 	}
@@ -276,7 +320,7 @@ func getAllDescendants(pid string) []string {
 	children := strings.Fields(strings.TrimSpace(string(out)))
 	for _, child := range children {
 		// First add grandchildren (recursively) - deepest first
-		result = append(result, getAllDescendants(child)...)
+		result = append(result, t.getAllDescendants(child)...)
 		// Then add this child
 		result = append(result, child)
 	}
@@ -288,7 +332,7 @@ func getAllDescendants(pid string) []string {
 // Returns nil if the session was successfully killed or was already gone.
 func (t *Tmux) KillSession(name string) error {
 	_, err := t.run("kill-session", "-t", name)
-	if errors.Is(err, ErrSessionNotFound) {
+	if errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrNoServer) {
 		return nil
 	}
 	return err
@@ -322,8 +366,7 @@ func (t *Tmux) SetExitEmpty(on bool) error {
 
 // IsAvailable checks if tmux is installed and can be invoked.
 func (t *Tmux) IsAvailable() bool {
-	cmd := exec.Command("tmux", "-V")
-	return cmd.Run() == nil
+	return t.runner.Run("", "tmux", "-V") == nil
 }
 
 // Exists checks if a session exists (exact match).
@@ -653,10 +696,9 @@ func (t *Tmux) GetPanePID(session string) (string, error) {
 
 // hasClaudeChild checks if a process has a child running claude/node.
 // Used when the pane command is a shell (bash, zsh) that launched claude.
-func hasClaudeChild(pid string) bool {
+func (t *Tmux) hasClaudeChild(pid string) bool {
 	// Use pgrep to find child processes
-	cmd := exec.Command("pgrep", "-P", pid, "-l")
-	out, err := cmd.Output()
+	out, err := t.runner.Output("", "pgrep", "-P", pid, "-l")
 	if err != nil {
 		return false
 	}
@@ -710,11 +752,7 @@ func (t *Tmux) CapturePaneLines(sess string, lines int) ([]string, error) {
 // AttachSession attaches to an existing session.
 // Connects stdin/stdout/stderr to the terminal for interactive use.
 func (t *Tmux) AttachSession(sessionName string) error {
-	cmd := exec.Command("tmux", "attach-session", "-t", sessionName)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return t.runner.RunInteractive("tmux", "attach-session", "-t", sessionName)
 }
 
 // Attach implements session.Sessions interface.
@@ -910,7 +948,7 @@ func (t *Tmux) IsRuntimeRunning(session string, processNames []string) bool {
 			if cmd == shell {
 				pid, err := t.GetPanePID(session)
 				if err == nil && pid != "" {
-					if hasClaudeChild(pid) {
+					if t.hasClaudeChild(pid) {
 						return true
 					}
 				}
@@ -1249,6 +1287,7 @@ func (t *Tmux) ClearHistory(pane string) error {
 // Respawn atomically kills the session's process and starts a new one.
 // Clears scrollback history before respawning for a clean start.
 // This is used for handoff - an agent can respawn itself or another agent.
+// If WithCommandPrefix was used, the prefix is prepended to the command.
 func (t *Tmux) Respawn(id session.SessionID, command string) error {
 	// Get pane ID for the session
 	paneID, err := t.GetPaneID(string(id))
@@ -1259,6 +1298,11 @@ func (t *Tmux) Respawn(id session.SessionID, command string) error {
 	// Clear scrollback history for clean start
 	if err := t.ClearHistory(paneID); err != nil {
 		// Non-fatal - continue with respawn even if clear fails
+	}
+
+	// Prepend command prefix if set (e.g., GT_LOCAL_SSH for bd-wrapper callback)
+	if t.commandPrefix != "" {
+		command = t.commandPrefix + command
 	}
 
 	// Atomically kill current process and start new one

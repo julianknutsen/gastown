@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/agent"
-	"github.com/steveyegge/gastown/internal/claude"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
@@ -36,32 +35,24 @@ import (
 //
 // For polecats that may be remote, use AgentsFor() instead.
 func Agents() agent.Agents {
-	t := tmux.NewTmux()
+	t := tmux.NewLocalTmux()
 	return agent.New(t, agent.Claude())
 }
 
 // AgentsFor returns an Agents interface appropriate for the given agent.
-// For remote polecats (configured via rig settings), returns an Agents using RemoteTmux.
+// For remote polecats (configured via rig settings), returns an Agents using MirroredSessions.
 // For all other agents, returns the standard local tmux-based Agents.
 // The AI runtime is resolved from config based on the agent's role.
 func AgentsFor(townRoot string, id agent.AgentID) agent.Agents {
-	role, rigName, _ := id.Parse()
-
 	// Resolve AI runtime from config
 	aiRuntime := resolveAgentForID(townRoot, id)
 	preset := agent.FromPreset(aiRuntime)
 
-	// Check for remote polecat config
-	if role == constants.RolePolecat && rigName != "" {
-		if remoteCfg := loadRigRemoteConfig(townRoot, rigName); remoteCfg != nil {
-			sess := tmux.NewRemoteTmuxWithCallback(remoteCfg.SSHCmd, remoteCfg.LocalSSH)
-			return agent.New(sess, preset)
-		}
-	}
+	// Use SessionFactory to get the appropriate Sessions implementation
+	sessFactory := NewSessionFactory(townRoot)
+	sess := sessFactory.For(id)
 
-	// Default to local tmux
-	t := tmux.NewTmux()
-	return agent.New(t, preset)
+	return agent.New(sess, preset)
 }
 
 // StartOption configures Start() behavior for specific roles.
@@ -177,35 +168,17 @@ func Start(townRoot string, id agent.AgentID, opts ...StartOption) (agent.AgentI
 	}
 	envVars := config.AgentEnv(envCfg)
 
-	// Check for remote polecat config
-	var sess session.Sessions
-	var themer agent.OnSessionCreated
-	if role == constants.RolePolecat && rigName != "" {
-		if remoteCfg := loadRigRemoteConfig(townRoot, rigName); remoteCfg != nil {
-			// Use RemoteTmux for remote polecats
-			// WorkDir is identical on local and remote (same directory structure)
-			sess = tmux.NewRemoteTmuxWithCallback(remoteCfg.SSHCmd, remoteCfg.LocalSSH)
-			// Remote polecats don't get local theming
-			themer = nil
+	// Use SessionFactory to get the appropriate Sessions
+	// For remote polecats, this also copies Claude settings to remote
+	workDir, _ := WorkDirForID(townRoot, id)
+	sessFactory := NewSessionFactory(townRoot)
+	sessInfo := sessFactory.ForWithInfo(id, workDir)
 
-			// Copy .claude/settings.json to remote for prehooks to work
-			if workDir, err := WorkDirForID(townRoot, id); err == nil {
-				if err := copyClaudeSettingsToRemote(remoteCfg.SSHCmd, workDir, role); err != nil {
-					fmt.Printf("Warning: could not copy Claude settings to remote: %v\n", err)
-				}
-			}
-		}
-	}
+	// Build theming callback for the local tmux (works for both local and mirrored sessions)
+	// For mirrored sessions, this themes the local mirror for better UX
+	themer := buildSessionConfigurer(id, envVars, sessInfo.LocalTmux)
 
-	// Default to local tmux
-	if sess == nil {
-		t := tmux.NewTmux()
-		sess = t
-		// Build session configurer callback for local sessions
-		themer = buildSessionConfigurer(id, envVars, t)
-	}
-
-	agents := agent.New(sess, agent.FromPreset(aiRuntime).WithEnvVars(envVars))
+	agents := agent.New(sessInfo.Sessions, agent.FromPreset(aiRuntime).WithEnvVars(envVars))
 
 	return StartWithAgents(agents, themer, townRoot, id, opts...)
 }
@@ -501,7 +474,7 @@ type Factory struct {
 // New creates a production Factory with real tmux and sessions.
 func New(townRoot string) *Factory {
 	return &Factory{
-		sess:     tmux.NewTmux(),
+		sess:     tmux.NewLocalTmux(),
 		townRoot: townRoot,
 	}
 }
@@ -605,29 +578,3 @@ func loadRigRemoteConfig(townRoot, rigName string) *config.RemotePolecatConfig {
 	return settings.Remote
 }
 
-// copyClaudeSettingsToRemote copies the .claude/settings.json to a remote workDir.
-// This ensures Claude prehooks work on remote polecats.
-func copyClaudeSettingsToRemote(sshCmd, remoteWorkDir, role string) error {
-	// Get the settings content for this role
-	settingsContent, err := claude.SettingsContentFor(role)
-	if err != nil {
-		return fmt.Errorf("getting settings content: %w", err)
-	}
-
-	// Create .claude directory on remote
-	mkdirCmd := fmt.Sprintf("%s 'mkdir -p %s/.claude'", sshCmd, remoteWorkDir)
-	if err := exec.Command("sh", "-c", mkdirCmd).Run(); err != nil {
-		return fmt.Errorf("creating .claude directory: %w", err)
-	}
-
-	// Write settings file to remote via stdin
-	// Use cat with heredoc to write the content
-	writeCmd := fmt.Sprintf("%s 'cat > %s/.claude/settings.json'", sshCmd, remoteWorkDir)
-	cmd := exec.Command("sh", "-c", writeCmd)
-	cmd.Stdin = strings.NewReader(string(settingsContent))
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("writing settings file: %w", err)
-	}
-
-	return nil
-}

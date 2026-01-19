@@ -1,17 +1,14 @@
 package polecat
 
-// Compile-time interface compliance checks.
-var (
-	_ Backend = (*Manager)(nil)
-	_ Backend = (*RemoteManager)(nil)
-)
+// Compile-time interface compliance check.
+var _ Backend = (*Manager)(nil)
 
 // Backend abstracts polecat creation operations.
-// LocalBackend (Manager) uses local filesystem and git commands.
-// RemoteBackend (RemoteManager) uses SSH for remote operations.
+// Manager implements this interface and handles both local and remote polecats
+// via the ManagerDeps abstraction (TargetFS, LocalFS, GitOps).
 //
 // This interface enables the same spawn code path to work for both
-// local and remote polecats by abstracting filesystem and git operations.
+// local and remote polecats.
 type Backend interface {
 	// AllocateName allocates a name from the name pool.
 	AllocateName() (string, error)

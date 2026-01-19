@@ -1,33 +1,37 @@
-package runner
+package git
 
 import (
 	"fmt"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/runner"
 )
 
-// GitOps provides git operations using a Runner.
+// Ops provides git operations using a Runner.
 // This allows the same git operations to work locally or remotely.
-type GitOps struct {
-	runner Runner
+// Unlike the Git struct which works with a fixed working directory,
+// Ops accepts the working directory as a parameter to each method.
+type Ops struct {
+	runner runner.Runner
 }
 
-// NewGitOps creates a new GitOps with the given runner.
-func NewGitOps(r Runner) *GitOps {
-	return &GitOps{runner: r}
+// NewOps creates a new Ops with the given runner.
+func NewOps(r runner.Runner) *Ops {
+	return &Ops{runner: r}
 }
 
 // Fetch fetches from a remote.
-func (g *GitOps) Fetch(repoDir, remote string) error {
+func (g *Ops) Fetch(repoDir, remote string) error {
 	return g.runner.Run(repoDir, "git", "fetch", remote)
 }
 
 // WorktreeAdd creates a new worktree with a new branch.
-func (g *GitOps) WorktreeAdd(repoDir, path, branch, startPoint string) error {
+func (g *Ops) WorktreeAdd(repoDir, path, branch, startPoint string) error {
 	return g.runner.Run(repoDir, "git", "worktree", "add", "-b", branch, path, startPoint)
 }
 
 // WorktreeRemove removes a worktree.
-func (g *GitOps) WorktreeRemove(repoDir, path string, force bool) error {
+func (g *Ops) WorktreeRemove(repoDir, path string, force bool) error {
 	args := []string{"worktree", "remove"}
 	if force {
 		args = append(args, "--force")
@@ -37,12 +41,12 @@ func (g *GitOps) WorktreeRemove(repoDir, path string, force bool) error {
 }
 
 // WorktreePrune prunes stale worktree entries.
-func (g *GitOps) WorktreePrune(repoDir string) error {
+func (g *Ops) WorktreePrune(repoDir string) error {
 	return g.runner.Run(repoDir, "git", "worktree", "prune")
 }
 
 // CurrentBranch returns the current branch name.
-func (g *GitOps) CurrentBranch(repoDir string) (string, error) {
+func (g *Ops) CurrentBranch(repoDir string) (string, error) {
 	out, err := g.runner.Output(repoDir, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", err
@@ -51,17 +55,17 @@ func (g *GitOps) CurrentBranch(repoDir string) (string, error) {
 }
 
 // Clone clones a repository.
-func (g *GitOps) Clone(url, destPath string) error {
+func (g *Ops) Clone(url, destPath string) error {
 	return g.runner.Run("", "git", "clone", url, destPath)
 }
 
 // CloneWithBranch clones a repository and checks out a specific branch.
-func (g *GitOps) CloneWithBranch(url, destPath, branch string) error {
+func (g *Ops) CloneWithBranch(url, destPath, branch string) error {
 	return g.runner.Run("", "git", "clone", "-b", branch, url, destPath)
 }
 
 // ListBranches lists branches matching a pattern.
-func (g *GitOps) ListBranches(repoDir, pattern string) ([]string, error) {
+func (g *Ops) ListBranches(repoDir, pattern string) ([]string, error) {
 	args := []string{"branch", "--list"}
 	if pattern != "" {
 		args = append(args, pattern)
@@ -84,7 +88,7 @@ func (g *GitOps) ListBranches(repoDir, pattern string) ([]string, error) {
 }
 
 // DeleteBranch deletes a branch.
-func (g *GitOps) DeleteBranch(repoDir, branch string, force bool) error {
+func (g *Ops) DeleteBranch(repoDir, branch string, force bool) error {
 	flag := "-d"
 	if force {
 		flag = "-D"
@@ -94,7 +98,7 @@ func (g *GitOps) DeleteBranch(repoDir, branch string, force bool) error {
 
 // CheckUncommittedWork checks for uncommitted changes.
 // Returns (hasChanges, stashCount, unpushedCount, error)
-func (g *GitOps) CheckUncommittedWork(repoDir string) (bool, int, int, error) {
+func (g *Ops) CheckUncommittedWork(repoDir string) (bool, int, int, error) {
 	// Check for uncommitted changes
 	statusOut, err := g.runner.Output(repoDir, "git", "status", "--porcelain")
 	if err != nil {
@@ -124,7 +128,7 @@ func (g *GitOps) CheckUncommittedWork(repoDir string) (bool, int, int, error) {
 }
 
 // CountCommitsBehind counts commits behind a reference.
-func (g *GitOps) CountCommitsBehind(repoDir, ref string) (int, error) {
+func (g *Ops) CountCommitsBehind(repoDir, ref string) (int, error) {
 	out, err := g.runner.Output(repoDir, "git", "rev-list", "--count", "HEAD.."+ref)
 	if err != nil {
 		return 0, err
@@ -135,7 +139,7 @@ func (g *GitOps) CountCommitsBehind(repoDir, ref string) (int, error) {
 }
 
 // Status returns the git status --porcelain output as lines.
-func (g *GitOps) Status(repoDir string) ([]string, error) {
+func (g *Ops) Status(repoDir string) ([]string, error) {
 	out, err := g.runner.Output(repoDir, "git", "status", "--porcelain")
 	if err != nil {
 		return nil, fmt.Errorf("git status: %w", err)
@@ -157,7 +161,7 @@ func (g *GitOps) Status(repoDir string) ([]string, error) {
 }
 
 // StashCount returns the number of stashed entries.
-func (g *GitOps) StashCount(repoDir string) (int, error) {
+func (g *Ops) StashCount(repoDir string) (int, error) {
 	out, err := g.runner.Output(repoDir, "git", "stash", "list")
 	if err != nil {
 		return 0, nil // stash list failing is not fatal
@@ -173,7 +177,7 @@ func (g *GitOps) StashCount(repoDir string) (int, error) {
 }
 
 // UnpushedCommitCount returns the number of commits ahead of the upstream.
-func (g *GitOps) UnpushedCommitCount(repoDir string) (int, error) {
+func (g *Ops) UnpushedCommitCount(repoDir string) (int, error) {
 	out, err := g.runner.Output(repoDir, "git", "rev-list", "--count", "@{u}..HEAD")
 	if err != nil {
 		return 0, nil // may not have upstream configured
@@ -185,7 +189,7 @@ func (g *GitOps) UnpushedCommitCount(repoDir string) (int, error) {
 
 // HasContentDiffFromRef checks if there's any actual content difference from a ref.
 // This handles the case where commits exist but content is identical (e.g., after squash merge).
-func (g *GitOps) HasContentDiffFromRef(repoDir, ref string) (bool, error) {
+func (g *Ops) HasContentDiffFromRef(repoDir, ref string) (bool, error) {
 	err := g.runner.Run(repoDir, "git", "diff", ref, "HEAD", "--quiet")
 	if err != nil {
 		// Exit code 1 means there's a diff
