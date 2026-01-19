@@ -1,3 +1,5 @@
+// types.go defines the core data types for formula parsing and representation.
+
 // Package formula provides parsing and validation for formula.toml files.
 //
 // Formulas define structured workflows that can be executed by agents.
