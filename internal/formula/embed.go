@@ -1,3 +1,5 @@
+// embed.go manages embedded formula files, providing installation, health checking,
+// and safe updates that preserve user modifications.
 package formula
 
 import (
