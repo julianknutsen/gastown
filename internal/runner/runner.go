@@ -127,6 +127,18 @@ func (r *SSH) buildRemoteCommand(dir, name string, args []string) string {
 
 // shellEscape escapes a string for safe use in shell commands.
 func shellEscape(s string) string {
+	// Handle paths starting with ~/ - expand via $HOME
+	if strings.HasPrefix(s, "~/") {
+		// Use double quotes to allow $HOME expansion, escape special chars
+		rest := s[2:] // strip ~/
+		// Escape double quotes, backticks, $, and backslash in the path portion
+		rest = strings.ReplaceAll(rest, `\`, `\\`)
+		rest = strings.ReplaceAll(rest, `"`, `\"`)
+		rest = strings.ReplaceAll(rest, "`", "\\`")
+		rest = strings.ReplaceAll(rest, `$`, `\$`)
+		return `"$HOME/` + rest + `"`
+	}
 	// Wrap in single quotes, escape existing single quotes
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
+
