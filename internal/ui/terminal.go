@@ -1,3 +1,5 @@
+// Package ui provides terminal detection and output formatting utilities.
+// It handles TTY detection, color/emoji support, and agent mode configuration.
 package ui
 
 import (
