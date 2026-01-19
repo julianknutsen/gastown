@@ -1,4 +1,14 @@
-// Package beads provides a wrapper for the bd (beads) CLI.
+// Package beads provides a Go wrapper for the bd (beads) CLI tool.
+//
+// The beads package enables Gas Town components to interact with the beads
+// issue tracking system programmatically. It wraps the bd CLI commands and
+// provides typed Go interfaces for common operations like listing issues,
+// creating/updating issues, managing dependencies, and syncing with remote.
+//
+// The main type is [Beads], which is constructed with a working directory
+// and provides methods for all bd operations. Use [New] for normal usage,
+// [NewIsolated] for test isolation, or [NewWithBeadsDir] when accessing
+// beads from a different directory than the working directory.
 package beads
 
 import (
