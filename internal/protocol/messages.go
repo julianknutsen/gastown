@@ -1,3 +1,5 @@
+// Package protocol provides message constructors and parsers for inter-agent
+// communication in the Gas Town merge workflow (Witness <-> Refinery).
 package protocol
 
 import (
