@@ -1,3 +1,5 @@
+// types.go defines core types for swarm lifecycle and task management.
+
 // Package swarm provides types and management for multi-agent swarms.
 package swarm
 
