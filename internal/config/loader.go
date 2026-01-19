@@ -978,7 +978,10 @@ func ResolveRoleAgentConfig(role, townRoot, rigPath string) *RuntimeConfig {
 		_ = LoadRigAgentRegistry(RigAgentRegistryPath(rigPath))
 	}
 
-	// Check rig's RoleAgents first
+	// Check rig's RoleAgents first.
+	// Note: validation failure triggers a warning and fallback rather than an error,
+	// allowing the system to gracefully degrade when a configured agent is unavailable
+	// (e.g., binary not installed, custom agent removed from config).
 	if rigSettings != nil && rigSettings.RoleAgents != nil {
 		if agentName, ok := rigSettings.RoleAgents[role]; ok && agentName != "" {
 			if err := ValidateAgentConfig(agentName, townSettings, rigSettings); err != nil {
