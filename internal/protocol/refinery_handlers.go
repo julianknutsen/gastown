@@ -1,3 +1,6 @@
+// refinery_handlers.go implements protocol message handlers for the Refinery agent.
+// It processes merge lifecycle events (MERGE_READY, MERGED, MERGE_FAILED, REWORK_REQUEST)
+// in coordination with the Witness during the merge queue workflow.
 package protocol
 
 import (
