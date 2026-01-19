@@ -1,4 +1,6 @@
 // Package beads provides a wrapper for the bd (beads) CLI.
+// Use New() to create a Beads instance for a working directory, then call
+// methods like List(), Show(), Create(), Update(), and Close() to manage issues.
 package beads
 
 import (
