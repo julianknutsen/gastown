@@ -1,3 +1,6 @@
+// startup.go provides functions for sending startup nudge messages to polecat
+// sessions, enabling session identification in Claude Code's /resume picker.
+
 // Package session provides polecat session lifecycle management.
 package session
 
