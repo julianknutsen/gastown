@@ -1,3 +1,5 @@
+// resolve.go implements the Resolver type for mail address resolution.
+
 // Package mail provides address resolution for beads-native messaging.
 // This module implements the resolution order:
 // 1. Contains '/' → agent address or pattern
