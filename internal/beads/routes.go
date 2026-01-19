@@ -112,6 +112,8 @@ func RemoveRoute(townRoot string, prefix string) error {
 }
 
 // WriteRoutes writes routes to routes.jsonl, overwriting existing content.
+// TODO: Consider using util.AtomicWriteFile for crash safety. Currently, if the
+// process crashes mid-write, the routes file could be left in a corrupted state.
 func WriteRoutes(beadsDir string, routes []Route) error {
 	// Ensure beads directory exists
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
