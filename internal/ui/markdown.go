@@ -1,3 +1,5 @@
+// Package ui/markdown provides terminal-friendly markdown rendering using glamour,
+// with graceful fallback to raw text when rendering fails or colors are disabled.
 package ui
 
 import (
