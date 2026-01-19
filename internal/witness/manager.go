@@ -1,3 +1,5 @@
+// manager.go handles witness agent lifecycle: starting, stopping, and monitoring
+// the witness daemon that oversees polecat health in a rig.
 package witness
 
 import (
