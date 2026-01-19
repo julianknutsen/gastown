@@ -1,4 +1,6 @@
 // Package tmux provides theme support for Gas Town tmux sessions.
+// theme.go defines color themes for tmux status bars, assigning distinct colors
+// to rigs via consistent hashing so each rig has a recognizable visual identity.
 package tmux
 
 import (
