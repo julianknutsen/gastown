@@ -1,4 +1,5 @@
 // Package tmux provides a wrapper for tmux session operations via subprocess.
+// Handles session creation, process management, keystroke delivery, and status theming.
 package tmux
 
 import (
