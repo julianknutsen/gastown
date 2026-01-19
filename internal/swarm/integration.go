@@ -1,3 +1,5 @@
+// integration.go provides git branch management for swarm workflows:
+// creating integration branches, merging worker branches, and landing to main.
 package swarm
 
 import (
