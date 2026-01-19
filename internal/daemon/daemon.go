@@ -103,7 +103,18 @@ func New(config *Config) (*Daemon, error) {
 	}, nil
 }
 
-// Run starts the daemon main loop.
+// Run starts the daemon main loop and blocks until shutdown.
+// This is the primary entry point for the daemon process. It:
+//   - Acquires an exclusive file lock to prevent duplicate daemons
+//   - Writes a PID file for process management
+//   - Starts background services (feed curator, convoy watcher)
+//   - Runs a recovery-focused heartbeat loop that ensures patrol agents
+//     (Deacon, Witnesses, Refineries) are running and detects failures
+//   - Handles graceful shutdown on SIGTERM/SIGINT
+//
+// The daemon is a safety net, not a scheduler. Normal agent wake is handled
+// by feed subscription (bd activity --follow). The daemon catches edge cases:
+// dead sessions, GUPP violations, orphaned work, and mass death events.
 func (d *Daemon) Run() error {
 	d.logger.Printf("Daemon starting (PID %d)", os.Getpid())
 
