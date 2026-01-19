@@ -1,4 +1,5 @@
 // Package version provides version information and staleness checking for gt.
+// Detects when the binary is out of sync with the repo to prompt rebuilds.
 package version
 
 import (
