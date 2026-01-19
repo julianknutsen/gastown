@@ -1,3 +1,5 @@
+// bd.go provides utilities for executing bd (beads CLI) commands from Go code.
+
 package mail
 
 import (
