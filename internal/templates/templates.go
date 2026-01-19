@@ -10,6 +10,12 @@ import (
 	"text/template"
 )
 
+// The //go:embed directives below use Go's embed package to include template files
+// directly in the compiled binary. At compile time, the Go toolchain reads matching
+// files from disk and embeds their contents into the embed.FS variable. This allows
+// the templates to be distributed as a single binary without external file dependencies.
+// The glob patterns (e.g., "roles/*.md.tmpl") specify which files to embed.
+
 //go:embed roles/*.md.tmpl messages/*.md.tmpl
 var templateFS embed.FS
 
