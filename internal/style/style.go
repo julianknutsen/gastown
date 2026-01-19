@@ -21,6 +21,10 @@ var (
 		Bold(true)
 
 	// Error style for failures (red)
+	// Error handling pattern: Use Error.Render(message) for error text,
+	// or ErrorPrefix + message for icon-prefixed errors. For user-facing
+	// errors, prefer fmt.Printf("%s %s\n", ErrorPrefix, Error.Render(msg))
+	// to maintain consistent formatting across the codebase.
 	Error = lipgloss.NewStyle().
 		Foreground(ui.ColorFail).
 		Bold(true)
