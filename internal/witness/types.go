@@ -1,3 +1,6 @@
+// types.go defines the Witness struct and WitnessConfig for polecat monitoring.
+// The Witness tracks rig state, monitored polecats, and auto-spawn configuration.
+
 // Package witness provides the polecat monitoring agent.
 package witness
 
