@@ -1,4 +1,8 @@
-// Package runtime provides helpers for runtime-specific integration.
+// Package runtime provides helpers for runtime-specific integration across
+// different LLM agent backends (Claude, OpenCode). It handles session ID
+// detection, hook installation, startup fallback commands for environments
+// without native hooks, and role-specific behavior configuration for
+// autonomous vs human-guided agent roles.
 package runtime
 
 import (
