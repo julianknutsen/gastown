@@ -22,6 +22,12 @@ func AtomicWriteJSON(path string, v interface{}) error {
 // It first writes to a temporary file, then renames it to the target path.
 // This prevents data corruption if the process crashes during write.
 // The rename operation is atomic on POSIX systems.
+//
+// Error handling pattern: When the primary operation (rename) fails, cleanup
+// errors from os.Remove are intentionally suppressed using blank identifier
+// assignment. This follows the principle that the original error is more
+// informative to the caller than a secondary cleanup failure. The caller
+// needs to know why the write failed, not that cleanup also failed.
 func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	tmpFile := path + ".tmp"
 
