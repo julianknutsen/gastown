@@ -174,9 +174,9 @@ func Start(townRoot string, id agent.AgentID, opts ...StartOption) (agent.AgentI
 	sessFactory := NewSessionFactory(townRoot)
 	sessInfo := sessFactory.ForWithInfo(id, workDir)
 
-	// Build theming callback for the local tmux (works for both local and mirrored sessions)
-	// For mirrored sessions, this themes the local mirror for better UX
-	themer := buildSessionConfigurer(id, envVars, sessInfo.LocalTmux)
+	// Build theming callback for tmux sessions
+	// For mirrored sessions, this themes both the local mirror and remote session
+	themer := buildSessionConfigurer(id, envVars, sessInfo.LocalTmux, sessInfo.RemoteTmux)
 
 	agents := agent.New(sessInfo.Sessions, agent.FromPreset(aiRuntime).WithEnvVars(envVars))
 
@@ -298,12 +298,16 @@ func buildCommand(role, aiRuntime string, cfg *startConfig) string {
 //
 // The callback captures the tmux instance to perform tmux-specific operations
 // like theming, hooks, and bindings using the SessionID.
-func buildSessionConfigurer(id agent.AgentID, envVars map[string]string, t *tmux.Tmux) agent.OnSessionCreated {
+//
+// If remoteTmux is provided, theming is also applied to the remote session.
+// This is used for remote polecats where we want consistent visual styling
+// on both the local mirror and the actual remote session.
+func buildSessionConfigurer(id agent.AgentID, envVars map[string]string, localTmux, remoteTmux *tmux.Tmux) agent.OnSessionCreated {
 	role, rigName, worker := id.Parse()
 
 	return func(sessionID session.SessionID) error {
 		// Set env vars via the front door (tmux translates internally)
-		if err := t.SetEnvVars(sessionID, envVars); err != nil {
+		if err := localTmux.SetEnvVars(sessionID, envVars); err != nil {
 			return fmt.Errorf("setting env vars: %w", err)
 		}
 
@@ -335,20 +339,29 @@ func buildSessionConfigurer(id agent.AgentID, envVars map[string]string, t *tmux
 			theme = tmux.AssignTheme(rigName)
 		}
 
-		// Apply theming via the front door (tmux translates internally)
-		if err := t.ConfigureGasTownSession(sessionID, theme, themeRig, themeWorker, role); err != nil {
+		// Apply theming to local tmux (or the only tmux for local agents)
+		if err := localTmux.ConfigureGasTownSession(sessionID, theme, themeRig, themeWorker, role); err != nil {
 			return fmt.Errorf("configuring session: %w", err)
 		}
 
-		// Role-specific hooks (only for rig-level named agents)
+		// Apply theming to remote session if we have a remote tmux
+		// This ensures the remote session has consistent visual styling
+		if remoteTmux != nil {
+			if err := remoteTmux.ConfigureGasTownSession(sessionID, theme, themeRig, themeWorker, role); err != nil {
+				// Non-fatal - remote theming is nice-to-have
+				fmt.Printf("Warning: could not apply theming to remote session: %v\n", err)
+			}
+		}
+
+		// Role-specific hooks (only for local tmux - these trigger local commands)
 		switch role {
 		case constants.RolePolecat:
-			if err := t.SetPaneDiedHook(sessionID, fmt.Sprintf("%s/%s", rigName, worker)); err != nil {
+			if err := localTmux.SetPaneDiedHook(sessionID, fmt.Sprintf("%s/%s", rigName, worker)); err != nil {
 				return fmt.Errorf("setting pane died hook: %w", err)
 			}
 		case constants.RoleCrew:
 			// SetCrewCycleBindings sets global bindings (session param unused)
-			if err := t.SetCrewCycleBindings(""); err != nil {
+			if err := localTmux.SetCrewCycleBindings(""); err != nil {
 				return fmt.Errorf("setting crew bindings: %w", err)
 			}
 		}

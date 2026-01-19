@@ -26,7 +26,7 @@ func NewSessionFactory(townRoot string) *SessionFactory {
 	return &SessionFactory{townRoot: townRoot}
 }
 
-// SessionInfo contains the Sessions implementation and the local tmux for theming.
+// SessionInfo contains the Sessions implementation and tmux instances for theming.
 type SessionInfo struct {
 	// Sessions is the session implementation to use for agent operations.
 	Sessions session.Sessions
@@ -35,6 +35,10 @@ type SessionInfo struct {
 	// For local agents, this is the same as Sessions.
 	// For remote agents, this is the local mirror that can be themed.
 	LocalTmux *tmux.Tmux
+
+	// RemoteTmux is the remote tmux instance for theming remote sessions.
+	// This is only set for remote polecats, nil otherwise.
+	RemoteTmux *tmux.Tmux
 }
 
 // For returns the appropriate Sessions implementation for an agent.
@@ -66,13 +70,15 @@ func (f *SessionFactory) ForWithInfo(id ids.AgentID, workDir string) SessionInfo
 			}
 
 			localTmux := tmux.NewLocalTmux()
+			remoteTmux := tmux.NewRemoteTmuxWithCallback(cfg.SSHCmd, cfg.LocalSSH)
 			return SessionInfo{
 				Sessions: session.NewMirroredSessions(
-					tmux.NewRemoteTmuxWithCallback(cfg.SSHCmd, cfg.LocalSSH),
+					remoteTmux,
 					localTmux,
 					cfg.SSHCmd,
 				),
-				LocalTmux: localTmux,
+				LocalTmux:  localTmux,
+				RemoteTmux: remoteTmux,
 			}
 		}
 	}
