@@ -2,9 +2,11 @@ package factory
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/gastown/internal/claude"
 	"github.com/steveyegge/gastown/internal/config"
@@ -13,6 +15,23 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
+
+// debugSessions returns true if GT_DEBUG_SESSIONS is set.
+func debugSessions() bool {
+	return os.Getenv("GT_DEBUG_SESSIONS") != ""
+}
+
+// timestamp returns current time for logging.
+func timestamp() string {
+	return time.Now().Format("15:04:05.000")
+}
+
+// debugf prints debug output if GT_DEBUG_SESSIONS is set.
+func debugf(format string, args ...interface{}) {
+	if debugSessions() {
+		fmt.Printf(format, args...)
+	}
+}
 
 // SessionFactory creates Sessions instances based on agent configuration.
 // It encapsulates the decision of whether to use local tmux, remote tmux,
@@ -62,8 +81,13 @@ func (f *SessionFactory) ForWithInfo(id ids.AgentID, workDir string) SessionInfo
 	// Only polecats can be remote
 	if role == constants.RolePolecat && rigName != "" {
 		if cfg := f.loadRemoteConfig(rigName); cfg != nil {
+			debugf("[%s] SessionFactory: creating MirroredSessions for %s (ssh: %s)\n",
+				timestamp(), id, cfg.SSHCmd)
+
 			// Copy Claude settings to remote for prehooks to work
 			if workDir != "" {
+				debugf("[%s] SessionFactory: copying Claude settings to remote workDir=%s\n",
+					timestamp(), workDir)
 				if err := copyClaudeSettingsToRemote(cfg.SSHCmd, workDir, role); err != nil {
 					fmt.Printf("Warning: could not copy Claude settings to remote: %v\n", err)
 				}
@@ -71,6 +95,8 @@ func (f *SessionFactory) ForWithInfo(id ids.AgentID, workDir string) SessionInfo
 
 			localTmux := tmux.NewLocalTmux()
 			remoteTmux := tmux.NewRemoteTmuxWithCallback(cfg.SSHCmd, cfg.LocalSSH)
+			debugf("[%s] SessionFactory: MirroredSessions created, localSSH=%s\n",
+				timestamp(), cfg.LocalSSH)
 			return SessionInfo{
 				Sessions: session.NewMirroredSessions(
 					remoteTmux,

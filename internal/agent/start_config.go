@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"time"
 )
 
 // StartConfig holds configuration for starting an agent.
@@ -50,15 +51,27 @@ func mergeEnvVars(agentsVars, startVars map[string]string) map[string]string {
 //   - OnCreated callback is per-start (can capture context via closure)
 func (a *Implementation) StartWithConfig(id AgentID, cfg StartConfig) error {
 	sessionID := a.sess.SessionIDForAgent(id)
+	debugf("[%s] agent.StartWithConfig: id=%s sessionID=%s workDir=%s\n",
+		time.Now().Format("15:04:05.000"), id, sessionID, cfg.WorkDir)
+	debugf("[%s] agent.StartWithConfig: command=%s\n",
+		time.Now().Format("15:04:05.000"), cfg.Command)
 
 	// Check for existing session and handle zombie detection
+	debugf("[%s] agent.StartWithConfig: checking for existing session\n",
+		time.Now().Format("15:04:05.000"))
 	exists, _ := a.sess.Exists(sessionID)
 	if exists {
+		debugf("[%s] agent.StartWithConfig: session exists, checking if running\n",
+			time.Now().Format("15:04:05.000"))
 		// Session exists - check if agent is actually running (healthy vs zombie)
 		if a.sess.IsRunning(sessionID, a.config.ProcessNames...) {
+			debugf("[%s] agent.StartWithConfig: agent already running, returning error\n",
+				time.Now().Format("15:04:05.000"))
 			return ErrAlreadyRunning
 		}
 		// Zombie - session alive but agent dead. Kill and recreate.
+		debugf("[%s] agent.StartWithConfig: zombie detected, killing session\n",
+			time.Now().Format("15:04:05.000"))
 		if err := a.sess.Stop(sessionID); err != nil {
 			return fmt.Errorf("killing zombie session: %w", err)
 		}
@@ -74,12 +87,20 @@ func (a *Implementation) StartWithConfig(id AgentID, cfg StartConfig) error {
 	}
 
 	// Create the session
+	debugf("[%s] agent.StartWithConfig: calling sess.Start\n",
+		time.Now().Format("15:04:05.000"))
 	if _, err := a.sess.Start(string(sessionID), cfg.WorkDir, command); err != nil {
+		debugf("[%s] agent.StartWithConfig: sess.Start FAILED: %v\n",
+			time.Now().Format("15:04:05.000"), err)
 		return fmt.Errorf("starting session: %w", err)
 	}
+	debugf("[%s] agent.StartWithConfig: sess.Start succeeded\n",
+		time.Now().Format("15:04:05.000"))
 
 	// Run Agents-level callback first (if any)
 	if a.config.OnSessionCreated != nil {
+		debugf("[%s] agent.StartWithConfig: running Agents-level OnSessionCreated\n",
+			time.Now().Format("15:04:05.000"))
 		if err := a.config.OnSessionCreated(sessionID); err != nil {
 			_ = a.sess.Stop(sessionID)
 			return fmt.Errorf("session setup: %w", err)
@@ -88,6 +109,8 @@ func (a *Implementation) StartWithConfig(id AgentID, cfg StartConfig) error {
 
 	// Run per-start callback (if any)
 	if cfg.OnCreated != nil {
+		debugf("[%s] agent.StartWithConfig: running per-start OnCreated callback\n",
+			time.Now().Format("15:04:05.000"))
 		if err := cfg.OnCreated(sessionID); err != nil {
 			_ = a.sess.Stop(sessionID)
 			return fmt.Errorf("session setup: %w", err)
@@ -95,7 +118,11 @@ func (a *Implementation) StartWithConfig(id AgentID, cfg StartConfig) error {
 	}
 
 	// Wait for agent to be ready (non-blocking)
+	debugf("[%s] agent.StartWithConfig: spawning background doWaitForReady goroutine\n",
+		time.Now().Format("15:04:05.000"))
 	go a.doWaitForReady(id)
 
+	debugf("[%s] agent.StartWithConfig: returning success\n",
+		time.Now().Format("15:04:05.000"))
 	return nil
 }

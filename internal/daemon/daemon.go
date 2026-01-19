@@ -305,8 +305,9 @@ func (d *Daemon) runDegradedBootTriage(b *boot.Boot) {
 	}
 
 	// Simple check: is Deacon agent alive?
-	agents := factory.Agents()
+	// AgentsFor returns local sessions for non-polecat agents
 	deaconID := agent.DeaconAddress
+	agents := factory.AgentsFor(d.config.TownRoot, deaconID)
 	if !agents.Exists(deaconID) {
 		d.logger.Println("Deacon not running, starting...")
 		d.ensureDeaconRunning()
@@ -372,8 +373,8 @@ func (d *Daemon) checkDeaconHeartbeat() {
 
 	d.logger.Printf("Deacon heartbeat is stale (%s old), checking agent...", age.Round(time.Minute))
 
-	agents := factory.Agents()
 	deaconID := agent.DeaconAddress
+	agents := factory.AgentsFor(d.config.TownRoot, deaconID)
 
 	// Check if agent exists
 	if !agents.Exists(deaconID) {
@@ -550,7 +551,11 @@ func (d *Daemon) triggerPendingSpawns() {
 	d.logger.Printf("Found %d pending spawn(s), attempting to trigger...", len(pending))
 
 	// Trigger pending spawns (uses WaitForRuntimeReady with short timeout)
-	results, err := polecat.TriggerPendingSpawns(d.config.TownRoot, triggerTimeout)
+	// Provider function returns appropriate agents for each polecat ID
+	provider := func(id agent.AgentID) agent.Agents {
+		return factory.AgentsFor(d.config.TownRoot, id)
+	}
+	results, err := polecat.TriggerPendingSpawns(d.config.TownRoot, triggerTimeout, provider)
 	if err != nil {
 		d.logger.Printf("Error triggering spawns: %v", err)
 		return
@@ -740,9 +745,8 @@ func listPolecatWorktrees(polecatsDir string) ([]string, error) {
 // checkPolecatHealth checks a single polecat's session health.
 // If the polecat has work-on-hook but the tmux session is dead, it's restarted.
 func (d *Daemon) checkPolecatHealth(rigName, polecatName string) {
-	// Check if polecat agent exists using factory.Agents().Exists()
 	polecatID := agent.PolecatAddress(rigName, polecatName)
-	running := factory.Agents().Exists(polecatID)
+	running := factory.AgentsFor(d.config.TownRoot, polecatID).Exists(polecatID)
 	if running {
 		// Agent is alive - nothing to do
 		return

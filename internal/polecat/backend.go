@@ -33,10 +33,6 @@ type Backend interface {
 	// nuclear: bypass ALL safety checks including stashes and unpushed commits
 	RemoveWithOptions(name string, force, nuclear bool) error
 
-	// Start starts the polecat's session.
-	// The agent is resolved from config based on the rig's role_agents setting.
-	Start(name string) error
-
 	// RigName returns the rig name for this backend.
 	RigName() string
 

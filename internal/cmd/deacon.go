@@ -606,7 +606,11 @@ func runDeaconTriggerPending(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Found %d pending spawn(s)\n", style.Bold.Render("●"), len(pending))
 
 	// Step 2: Try to trigger each pending spawn
-	results, err := polecat.TriggerPendingSpawns(townRoot, triggerTimeout)
+	// Provider function returns appropriate agents for each polecat ID
+	provider := func(id agent.AgentID) agent.Agents {
+		return factory.AgentsFor(townRoot, id)
+	}
+	results, err := polecat.TriggerPendingSpawns(townRoot, triggerTimeout, provider)
 	if err != nil {
 		return fmt.Errorf("triggering: %w", err)
 	}

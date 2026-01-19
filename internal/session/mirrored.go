@@ -1,10 +1,29 @@
 package session
 
 import (
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/ids"
 )
+
+// debugSessions returns true if GT_DEBUG_SESSIONS is set.
+func debugSessions() bool {
+	return os.Getenv("GT_DEBUG_SESSIONS") != ""
+}
+
+// timestamp returns current time for logging.
+func timestamp() string {
+	return time.Now().Format("15:04:05.000")
+}
+
+// debugf prints debug output if GT_DEBUG_SESSIONS is set.
+func debugf(format string, args ...interface{}) {
+	if debugSessions() {
+		fmt.Printf(format, args...)
+	}
+}
 
 // MirroredSessions wraps remote and local Sessions for remote polecats.
 // The remote session is the source of truth (where the agent actually runs).
@@ -38,20 +57,30 @@ func mirrorName(name string) string {
 
 // Start creates the session on the remote and a local mirror for attach UX.
 func (m *MirroredSessions) Start(name, workDir, command string) (SessionID, error) {
+	debugf("[%s] MirroredSessions.Start: name=%s workDir=%s\n", timestamp(), name, workDir)
+	debugf("[%s] MirroredSessions.Start: command=%s\n", timestamp(), command)
+
 	// 1. Start the real session on remote
+	debugf("[%s] MirroredSessions.Start: creating remote session...\n", timestamp())
 	id, err := m.remote.Start(name, workDir, command)
 	if err != nil {
+		debugf("[%s] MirroredSessions.Start: remote.Start FAILED: %v\n", timestamp(), err)
 		return "", err
 	}
+	debugf("[%s] MirroredSessions.Start: remote session created, id=%s\n", timestamp(), id)
 
 	// 2. Create local mirror that SSH-attaches to the remote session
 	// The mirror session runs: ssh <host> tmux attach -t <session>
 	// This gives us a local tmux session we can attach to with no additional latency
 	mirrorCmd := m.sshCmd + " -t tmux attach-session -t " + name
+	debugf("[%s] MirroredSessions.Start: creating local mirror: %s\n", timestamp(), mirrorName(name))
 	_, err = m.local.Start(mirrorName(name), "", mirrorCmd)
 	if err != nil {
 		// Mirror creation failed - non-fatal, remote session still works
 		// User can still attach via direct SSH
+		debugf("[%s] MirroredSessions.Start: local mirror FAILED (non-fatal): %v\n", timestamp(), err)
+	} else {
+		debugf("[%s] MirroredSessions.Start: local mirror created\n", timestamp())
 	}
 
 	return id, nil
@@ -70,7 +99,10 @@ func (m *MirroredSessions) Stop(id SessionID) error {
 
 // Exists checks if the session exists on the remote (source of truth).
 func (m *MirroredSessions) Exists(id SessionID) (bool, error) {
-	return m.remote.Exists(id)
+	debugf("[%s] MirroredSessions.Exists: checking remote for %s\n", timestamp(), id)
+	exists, err := m.remote.Exists(id)
+	debugf("[%s] MirroredSessions.Exists: result=%v err=%v\n", timestamp(), exists, err)
+	return exists, err
 }
 
 // Respawn respawns the session on the remote.
@@ -95,7 +127,21 @@ func (m *MirroredSessions) Nudge(id SessionID, message string) error {
 
 // Capture captures output from the remote session.
 func (m *MirroredSessions) Capture(id SessionID, lines int) (string, error) {
-	return m.remote.Capture(id, lines)
+	output, err := m.remote.Capture(id, lines)
+	if debugSessions() {
+		if err != nil {
+			debugf("[%s] MirroredSessions.Capture: id=%s FAILED: %v\n", timestamp(), id, err)
+		} else {
+			// Truncate output for logging
+			preview := output
+			if len(preview) > 200 {
+				preview = preview[:200] + "..."
+			}
+			debugf("[%s] MirroredSessions.Capture: id=%s len=%d preview=%q\n",
+				timestamp(), id, len(output), preview)
+		}
+	}
+	return output, err
 }
 
 // CaptureAll captures entire scrollback from the remote session.

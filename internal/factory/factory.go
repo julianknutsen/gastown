@@ -170,7 +170,10 @@ func Start(townRoot string, id agent.AgentID, opts ...StartOption) (agent.AgentI
 
 	// Use SessionFactory to get the appropriate Sessions
 	// For remote polecats, this also copies Claude settings to remote
-	workDir, _ := WorkDirForID(townRoot, id)
+	workDir := remotePolecatWorkDir(townRoot, id)
+	if workDir == "" {
+		workDir, _ = WorkDirForID(townRoot, id)
+	}
 	sessFactory := NewSessionFactory(townRoot)
 	sessInfo := sessFactory.ForWithInfo(id, workDir)
 
@@ -213,10 +216,14 @@ func StartWithAgents(
 
 	role, rigName, worker := id.Parse()
 
-	// Compute workDir
-	workDir, err := WorkDirForID(townRoot, id)
-	if err != nil {
-		return agent.AgentID{}, err
+	// Compute workDir - use remote path for remote polecats
+	workDir := remotePolecatWorkDir(townRoot, id)
+	if workDir == "" {
+		var err error
+		workDir, err = WorkDirForID(townRoot, id)
+		if err != nil {
+			return agent.AgentID{}, err
+		}
 	}
 
 	// Build env vars from parsed components
@@ -238,10 +245,13 @@ func StartWithAgents(
 		envVars[k] = v
 	}
 
-	// Ensure runtime settings exist
-	runtimeConfig := config.LoadRuntimeConfig(townRoot)
-	if err := runtime.EnsureSettingsForRole(workDir, role, runtimeConfig); err != nil {
-		return agent.AgentID{}, fmt.Errorf("ensuring runtime settings: %w", err)
+	// Ensure runtime settings exist (skip for remote polecats - handled by SessionFactory)
+	isRemote := remotePolecatWorkDir(townRoot, id) != ""
+	if !isRemote {
+		runtimeConfig := config.LoadRuntimeConfig(townRoot)
+		if err := runtime.EnsureSettingsForRole(workDir, role, runtimeConfig); err != nil {
+			return agent.AgentID{}, fmt.Errorf("ensuring runtime settings: %w", err)
+		}
 	}
 
 	// Build startup command
@@ -467,6 +477,30 @@ func polecatWorkDir(townRoot, rigName, polecatName string) string {
 func crewWorkDir(townRoot, rigName, crewName string) string {
 	rigPath := filepath.Join(townRoot, rigName)
 	return filepath.Join(rigPath, "crew", crewName)
+}
+
+// remotePolecatWorkDir returns the workDir for a remote polecat.
+// Returns empty string if not a remote polecat.
+func remotePolecatWorkDir(townRoot string, id agent.AgentID) string {
+	role, rigName, polecatName := id.Parse()
+	if role != constants.RolePolecat || rigName == "" {
+		return ""
+	}
+
+	// Check for remote config
+	rigPath := filepath.Join(townRoot, rigName)
+	settingsPath := filepath.Join(rigPath, "settings", "config.json")
+	settings, err := config.LoadRigSettings(settingsPath)
+	if err != nil || settings.Remote == nil {
+		return ""
+	}
+
+	// Compute remote workDir
+	remoteRigPath := settings.Remote.RemoteRigPath
+	if remoteRigPath == "" {
+		remoteRigPath = "~/rigs/" + rigName
+	}
+	return remoteRigPath + "/polecats/" + polecatName
 }
 
 

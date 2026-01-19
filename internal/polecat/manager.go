@@ -139,6 +139,12 @@ func (m *Manager) agentID(name string) agent.AgentID {
 	return agent.PolecatAddress(m.rig.Name, name)
 }
 
+// isRemote returns true if this manager is for remote polecats.
+// Remote polecats have a different targetRigPath than the local rig.Path.
+func (m *Manager) isRemote() bool {
+	return m.targetRigPath != m.rig.Path
+}
+
 // RigName returns the rig name for this manager.
 func (m *Manager) RigName() string {
 	return m.rig.Name
@@ -156,41 +162,6 @@ func (m *Manager) SessionName(name string) string {
 
 // Start starts the polecat's session using the configured AI runtime.
 // The runtime is resolved from config based on the rig's role_agents setting.
-func (m *Manager) Start(name string) error {
-	if !m.exists(name) {
-		return ErrPolecatNotFound
-	}
-
-	id := m.agentID(name)
-	if m.agents.Exists(id) {
-		return agent.ErrAlreadyRunning
-	}
-
-	aiRuntime := m.resolveAIRuntimeName()
-	startCfg := agent.StartConfig{
-		WorkDir: m.clonePath(name),
-		Command: config.BuildAgentCommand(aiRuntime, ""),
-	}
-
-	if err := m.agents.StartWithConfig(id, startCfg); err != nil {
-		return fmt.Errorf("starting session: %w", err)
-	}
-
-	return m.agents.WaitReady(id)
-}
-
-// resolveAIRuntimeName returns the configured AI runtime for polecats in this rig.
-func (m *Manager) resolveAIRuntimeName() string {
-	townRoot, err := workspace.Find(m.rig.Path)
-	if err != nil || townRoot == "" {
-		return "claude"
-	}
-	name, _ := config.ResolveRoleAgentName("polecat", townRoot, m.rig.Path)
-	if name == "" {
-		return "claude"
-	}
-	return name
-}
 
 // assigneeID returns the beads assignee identifier for a polecat.
 // Format: "rig/polecatName" (e.g., "gastown/Toast")
@@ -418,10 +389,13 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 
 	// Set up shared beads: polecat uses rig's .beads via redirect file.
 	// This eliminates git sync overhead - all polecats share one database.
-	if err := m.setupSharedBeads(clonePath); err != nil {
-		// Non-fatal - polecat can still work with local beads
-		// Log warning but don't fail the spawn
-		fmt.Printf("Warning: could not set up shared beads: %v\n", err)
+	// Skip for remote polecats since beads redirect uses local filesystem paths.
+	if !m.isRemote() {
+		if err := m.setupSharedBeads(clonePath); err != nil {
+			// Non-fatal - polecat can still work with local beads
+			// Log warning but don't fail the spawn
+			fmt.Printf("Warning: could not set up shared beads: %v\n", err)
+		}
 	}
 
 	// Provision PRIME.md with Gas Town context for this worker.
@@ -605,16 +579,8 @@ func (m *Manager) AllocateName() (string, error) {
 	// First reconcile pool with existing polecats to handle stale state
 	m.ReconcilePool()
 
-	name, err := m.namePool.Allocate()
-	if err != nil {
-		return "", err
-	}
-
-	if err := m.namePool.Save(); err != nil {
-		return "", fmt.Errorf("saving pool state: %w", err)
-	}
-
-	return name, nil
+	// Allocate() handles locking and saves state atomically
+	return m.namePool.Allocate()
 }
 
 // ReleaseName releases a name back to the pool.
@@ -741,9 +707,11 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	// NOTE: We intentionally do NOT write to CLAUDE.md here.
 	// Gas Town context is injected ephemerally via SessionStart hook (gt prime).
 
-	// Set up shared beads
-	if err := m.setupSharedBeads(newClonePath); err != nil {
-		fmt.Printf("Warning: could not set up shared beads: %v\n", err)
+	// Set up shared beads (skip for remote - uses local filesystem paths)
+	if !m.isRemote() {
+		if err := m.setupSharedBeads(newClonePath); err != nil {
+			fmt.Printf("Warning: could not set up shared beads: %v\n", err)
+		}
 	}
 
 	// Copy overlay files from .runtime/overlay/ to polecat root.

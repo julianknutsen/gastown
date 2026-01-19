@@ -9,8 +9,18 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/agent"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/ids"
 )
+
+// factoryAgentChecker wraps factory.AgentsFor to implement AgentChecker.
+type factoryAgentChecker struct {
+	townRoot string
+}
+
+func (f *factoryAgentChecker) Exists(id agent.AgentID) bool {
+	return factory.AgentsFor(f.townRoot, id).Exists(id)
+}
 
 // AgentChecker is the minimal interface for checking if agents exist.
 type AgentChecker interface {
@@ -24,7 +34,7 @@ type StaleHookConfig struct {
 	// DryRun if true, only reports what would be done without making changes.
 	DryRun bool `json:"dry_run"`
 	// AgentChecker is used to check if agents exist.
-	// If nil, agent.Default() is used.
+	// If nil, factory.AgentsFor is used.
 	// This field enables testing without real tmux sessions.
 	AgentChecker AgentChecker `json:"-"`
 }
@@ -88,10 +98,10 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 	// Filter to stale ones (older than threshold)
 	threshold := time.Now().Add(-cfg.MaxAge)
 
-	// Use injected AgentChecker if provided, otherwise use agent.Default
+	// Use injected AgentChecker if provided, otherwise use factory.AgentsFor
 	checker := cfg.AgentChecker
 	if checker == nil {
-		checker = agent.Default()
+		checker = &factoryAgentChecker{townRoot: townRoot}
 	}
 
 	for _, bead := range hookedBeads {

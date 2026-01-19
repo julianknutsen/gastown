@@ -15,6 +15,18 @@ import (
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
+// debugSessions returns true if GT_DEBUG_SESSIONS is set.
+func debugSessions() bool {
+	return os.Getenv("GT_DEBUG_SESSIONS") != ""
+}
+
+// debugf prints debug output if GT_DEBUG_SESSIONS is set.
+func debugf(format string, args ...interface{}) {
+	if debugSessions() {
+		fmt.Printf(format, args...)
+	}
+}
+
 // AgentID is the logical address of an agent.
 // Re-exported from ids package for convenience.
 type AgentID = ids.AgentID
@@ -164,19 +176,29 @@ func prependEnvVars(envVars map[string]string, command string) string {
 // doWaitForReady implements the readiness wait logic.
 func (a *Implementation) doWaitForReady(id AgentID) error {
 	sessionID := a.sess.SessionIDForAgent(id)
+	debugf("[%s] agent.doWaitForReady: id=%s sessionID=%s\n",
+		time.Now().Format("15:04:05.000"), id, sessionID)
 
 	// Run startup hook if defined (e.g., dismiss dialogs)
 	if a.config.StartupHook != nil {
+		debugf("[%s] agent.doWaitForReady: running startup hook\n",
+			time.Now().Format("15:04:05.000"))
 		_ = a.config.StartupHook(a.sess, sessionID) // Non-fatal
+		debugf("[%s] agent.doWaitForReady: startup hook complete\n",
+			time.Now().Format("15:04:05.000"))
 	}
 
 	// Use checker if available
 	if a.config.Checker != nil {
+		debugf("[%s] agent.doWaitForReady: using checker (timeout=%s)\n",
+			time.Now().Format("15:04:05.000"), a.timeout())
 		return a.waitForReady(sessionID, a.timeout(), a.config.Checker)
 	}
 
 	// Fall back to startup delay
 	if a.config.StartupDelay > 0 {
+		debugf("[%s] agent.doWaitForReady: using startup delay %s\n",
+			time.Now().Format("15:04:05.000"), a.config.StartupDelay)
 		time.Sleep(a.config.StartupDelay)
 	}
 
@@ -186,13 +208,36 @@ func (a *Implementation) doWaitForReady(id AgentID) error {
 // waitForReady polls until the agent is ready or times out.
 func (a *Implementation) waitForReady(id session.SessionID, timeout time.Duration, checker ReadinessChecker) error {
 	deadline := time.Now().Add(timeout)
+	startTime := time.Now()
+	iteration := 0
+	debugf("[%s] agent.waitForReady: starting poll for %s (timeout=%s)\n",
+		time.Now().Format("15:04:05.000"), id, timeout)
+
 	for time.Now().Before(deadline) {
+		iteration++
 		output, err := a.sess.Capture(id, 50)
-		if err == nil && checker.IsReady(output) {
+		if err != nil {
+			if debugSessions() && (iteration <= 5 || iteration%10 == 0) {
+				debugf("[%s] agent.waitForReady: iter=%d Capture error: %v\n",
+					time.Now().Format("15:04:05.000"), iteration, err)
+			}
+		} else if checker.IsReady(output) {
+			debugf("[%s] agent.waitForReady: READY after %d iterations (%s)\n",
+				time.Now().Format("15:04:05.000"), iteration, time.Since(startTime))
 			return nil
+		} else if debugSessions() && (iteration <= 5 || iteration%10 == 0) {
+			// Log first 5 iterations, then every 10th
+			preview := output
+			if len(preview) > 100 {
+				preview = preview[:100] + "..."
+			}
+			debugf("[%s] agent.waitForReady: iter=%d not ready, output=%q\n",
+				time.Now().Format("15:04:05.000"), iteration, preview)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	debugf("[%s] agent.waitForReady: TIMEOUT after %d iterations (%s)\n",
+		time.Now().Format("15:04:05.000"), iteration, time.Since(startTime))
 	return fmt.Errorf("timeout waiting for agent ready")
 }
 

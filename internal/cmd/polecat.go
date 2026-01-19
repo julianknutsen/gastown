@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Polecat command flags
@@ -346,8 +347,7 @@ func getPolecatBackend(rigName string) (polecat.Backend, *rig.Rig, string, error
 	}
 
 	polecatGit := git.NewGit(r.Path)
-	agents := factory.Agents()
-	backend := polecat.BackendFor(agents, r, polecatGit)
+	backend := polecat.BackendFor(r, polecatGit)
 
 	return backend, r, townRoot, nil
 }
@@ -375,12 +375,12 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Collect polecats from all rigs
-	agents := factory.Agents()
+	townRoot, _ := workspace.FindFromCwdOrError()
 	var allPolecats []PolecatListItem
 
 	for _, r := range rigs {
 		polecatGit := git.NewGit(r.Path)
-		backend := polecat.BackendFor(agents, r, polecatGit)
+		backend := polecat.BackendFor(r, polecatGit)
 
 		polecats, err := backend.List()
 		if err != nil {
@@ -389,7 +389,8 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 		}
 
 		for _, p := range polecats {
-			running := agents.Exists(agent.PolecatAddress(r.Name, p.Name))
+			polecatID := agent.PolecatAddress(r.Name, p.Name)
+			running := factory.AgentsFor(townRoot, polecatID).Exists(polecatID)
 			allPolecats = append(allPolecats, PolecatListItem{
 				Rig:            r.Name,
 				Name:           p.Name,
@@ -489,12 +490,19 @@ func runPolecatRemove(cmd *cobra.Command, args []string) error {
 	removed := 0
 
 	for _, p := range targets {
+		polecatID := agent.PolecatAddress(p.rigName, p.polecatName)
+		agents := factory.AgentsFor(p.townRoot, polecatID)
+
 		// Check if session is running
-		if !polecatForce {
-			polecatID := agent.PolecatAddress(p.rigName, p.polecatName)
-			if factory.Agents().Exists(polecatID) {
+		if agents.Exists(polecatID) {
+			if !polecatForce {
 				removeErrors = append(removeErrors, fmt.Sprintf("%s/%s: session is running (stop first or use --force)", p.rigName, p.polecatName))
 				continue
+			}
+			// Force mode: stop the session first
+			fmt.Printf("Stopping session for %s/%s...\n", p.rigName, p.polecatName)
+			if err := agents.Stop(polecatID, false); err != nil {
+				fmt.Printf("  %s warning: failed to stop session: %v\n", style.Warning.Render("!"), err)
 			}
 		}
 
@@ -1057,7 +1065,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 
 		// Step 1: Kill session (force mode - no graceful shutdown)
 		polecatID := agent.PolecatAddress(p.rigName, p.polecatName)
-		agents := factory.Agents()
+		agents := factory.AgentsFor(p.townRoot, polecatID)
 		if agents.Exists(polecatID) {
 			if err := agents.Stop(polecatID, false); err != nil { // graceful=false for force
 				fmt.Printf("  %s session kill failed: %v\n", style.Warning.Render("⚠"), err)

@@ -101,9 +101,15 @@ type TriggerResult struct {
 	Error     error
 }
 
+// AgentsProvider returns an Agents for a given AgentID.
+// This allows callers to provide the appropriate session implementation
+// (e.g., factory.AgentsFor for remote polecat support).
+type AgentsProvider func(id agent.AgentID) agent.Agents
+
 // TriggerPendingSpawns polls each pending spawn and triggers when ready.
 // Archives mail after successful trigger (ZFC: mail is source of truth).
-func TriggerPendingSpawns(townRoot string, timeout time.Duration) ([]TriggerResult, error) {
+// If provider is nil, agent.Default() is used.
+func TriggerPendingSpawns(townRoot string, timeout time.Duration, provider AgentsProvider) ([]TriggerResult, error) {
 	pending, err := CheckInboxForSpawns(townRoot)
 	if err != nil {
 		return nil, fmt.Errorf("checking inbox: %w", err)
@@ -113,7 +119,13 @@ func TriggerPendingSpawns(townRoot string, timeout time.Duration) ([]TriggerResu
 		return nil, nil
 	}
 
-	agents := agent.Default()
+	// Fallback to agent.Default() if no provider given
+	if provider == nil {
+		provider = func(id agent.AgentID) agent.Agents {
+			return agent.Default()
+		}
+	}
+
 	var results []TriggerResult
 
 	for _, ps := range pending {
@@ -121,6 +133,7 @@ func TriggerPendingSpawns(townRoot string, timeout time.Duration) ([]TriggerResu
 
 		// Construct AgentID from rig and polecat name
 		id := agent.PolecatAddress(ps.Rig, ps.Polecat)
+		agents := provider(id)
 
 		// Check if agent still exists
 		if !agents.Exists(id) {

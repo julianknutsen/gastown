@@ -2,9 +2,11 @@ package git
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/runner"
+	"github.com/steveyegge/gastown/internal/util"
 )
 
 // Ops provides git operations using a Runner.
@@ -26,7 +28,20 @@ func (g *Ops) Fetch(repoDir, remote string) error {
 }
 
 // WorktreeAdd creates a new worktree with a new branch.
+// Uses file locking to prevent concurrent worktree operations from conflicting.
 func (g *Ops) WorktreeAdd(repoDir, path, branch, startPoint string) error {
+	// Acquire lock on the repo to prevent concurrent worktree operations
+	lockPath := filepath.Join(repoDir, "gt-worktree.lock")
+	flock, err := util.NewFileLock(lockPath)
+	if err != nil {
+		return fmt.Errorf("creating worktree lock: %w", err)
+	}
+	defer flock.Close()
+
+	if err := flock.Lock(); err != nil {
+		return fmt.Errorf("acquiring worktree lock: %w", err)
+	}
+
 	return g.runner.Run(repoDir, "git", "worktree", "add", "-b", branch, path, startPoint)
 }
 

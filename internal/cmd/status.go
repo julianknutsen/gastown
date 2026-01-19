@@ -1078,45 +1078,51 @@ func discoverRigAgents(allSessions map[string]bool, r *rig.Rig, crews []string, 
 		go func(idx int, d agentDef) {
 			defer wg.Done()
 
-			agent := AgentRuntime{
+			ar := AgentRuntime{
 				Name:    d.name,
 				Address: d.address,
 				Session: d.session,
 				Role:    d.role,
 			}
 
-			// Check if agent is running from preloaded map (O(1))
-			// allSessions contains AgentID strings like "gastown/refinery"
-			agent.Running = allSessions[d.address]
+			// Check if agent is running
+			// For polecats, use AgentsFor to handle remote sessions
+			// For other agents, use preloaded map (O(1))
+			if d.role == "polecat" {
+				polecatID := agent.PolecatAddress(r.Name, d.name)
+				ar.Running = factory.AgentsFor(townRoot, polecatID).Exists(polecatID)
+			} else {
+				ar.Running = allSessions[d.address]
+			}
 
 			// Look up agent bead from preloaded map (O(1))
 			if issue, ok := allAgentBeads[d.beadID]; ok {
 				// Prefer SQLite columns over description parsing
 				// HookBead column is authoritative (cleared by unsling)
-				agent.HookBead = issue.HookBead
-				agent.State = issue.AgentState
-				if agent.HookBead != "" {
-					agent.HasWork = true
+				ar.HookBead = issue.HookBead
+				ar.State = issue.AgentState
+				if ar.HookBead != "" {
+					ar.HasWork = true
 					// Get hook title from preloaded map
-					if pinnedIssue, ok := allHookBeads[agent.HookBead]; ok {
-						agent.WorkTitle = pinnedIssue.Title
+					if pinnedIssue, ok := allHookBeads[ar.HookBead]; ok {
+						ar.WorkTitle = pinnedIssue.Title
 					}
 				}
 				// Fallback to description for legacy beads without SQLite columns
-				if agent.State == "" {
+				if ar.State == "" {
 					fields := beads.ParseAgentFields(issue.Description)
 					if fields != nil {
-						agent.State = fields.AgentState
+						ar.State = fields.AgentState
 					}
 				}
 			}
 
 			// Get mail info (skip if --fast)
 			if !skipMail {
-				populateMailInfo(&agent, mailRouter)
+				populateMailInfo(&ar, mailRouter)
 			}
 
-			agents[idx] = agent
+			agents[idx] = ar
 		}(i, def)
 	}
 

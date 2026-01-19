@@ -16,7 +16,12 @@ import (
 //
 // This allows the spawn code to use a single code path for both
 // local and remote polecats.
-func BackendFor(agents agent.Agents, r *rig.Rig, g *git.Git) Backend {
+func BackendFor(r *rig.Rig, g *git.Git) Backend {
+	// Use agent.Default() for session operations within the Manager.
+	// Callers who need remote polecat support should use factory.AgentsFor()
+	// directly for session operations instead of going through the Manager.
+	agents := agent.Default()
+
 	// Check for remote polecat config
 	settingsPath := filepath.Join(r.Path, "settings", "config.json")
 	settings, err := config.LoadRigSettings(settingsPath)

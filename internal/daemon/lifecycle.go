@@ -372,74 +372,62 @@ func (d *Daemon) restartAgent(identity string) error {
 	}
 }
 
-// isAgentRunning checks if an agent is running using factory.Agents().Exists().
+// isAgentRunning checks if an agent is running.
 func (d *Daemon) isAgentRunning(identity string) bool {
 	parsed, err := parseIdentity(identity)
 	if err != nil {
 		return false
 	}
 
-	agents := factory.Agents()
-
+	// Build the AgentID based on role type
+	var id agentpkg.AgentID
 	switch parsed.RoleType {
 	case "mayor":
-		return agents.Exists(agentpkg.MayorAddress)
-
+		id = agentpkg.MayorAddress
 	case "deacon":
-		return agents.Exists(agentpkg.DeaconAddress)
-
+		id = agentpkg.DeaconAddress
 	case "witness":
-		return agents.Exists(agentpkg.WitnessAddress(parsed.RigName))
-
+		id = agentpkg.WitnessAddress(parsed.RigName)
 	case "refinery":
-		return agents.Exists(agentpkg.RefineryAddress(parsed.RigName))
-
+		id = agentpkg.RefineryAddress(parsed.RigName)
 	case "crew":
-		return agents.Exists(agentpkg.CrewAddress(parsed.RigName, parsed.AgentName))
-
+		id = agentpkg.CrewAddress(parsed.RigName, parsed.AgentName)
 	case "polecat":
-		return agents.Exists(agentpkg.PolecatAddress(parsed.RigName, parsed.AgentName))
-
+		id = agentpkg.PolecatAddress(parsed.RigName, parsed.AgentName)
 	default:
 		return false
 	}
+
+	return factory.AgentsFor(d.config.TownRoot, id).Exists(id)
 }
 
-// stopAgent stops an agent using factory.Agents().Stop().
+// stopAgent stops an agent.
 func (d *Daemon) stopAgent(identity string) error {
 	parsed, err := parseIdentity(identity)
 	if err != nil {
 		return err
 	}
 
-	agents := factory.Agents()
-
+	// Build the AgentID based on role type
+	var id agentpkg.AgentID
 	switch parsed.RoleType {
 	case "mayor":
-		return agents.Stop(agentpkg.MayorAddress, true)
-
+		id = agentpkg.MayorAddress
 	case "deacon":
-		return agents.Stop(agentpkg.DeaconAddress, true)
-
+		id = agentpkg.DeaconAddress
 	case "witness":
-		witnessID := agentpkg.WitnessAddress(parsed.RigName)
-		return agents.Stop(witnessID, true)
-
+		id = agentpkg.WitnessAddress(parsed.RigName)
 	case "refinery":
-		refineryID := agentpkg.RefineryAddress(parsed.RigName)
-		return agents.Stop(refineryID, true)
-
+		id = agentpkg.RefineryAddress(parsed.RigName)
 	case "crew":
-		crewID := agentpkg.CrewAddress(parsed.RigName, parsed.AgentName)
-		return agents.Stop(crewID, true)
-
+		id = agentpkg.CrewAddress(parsed.RigName, parsed.AgentName)
 	case "polecat":
-		polecatID := agentpkg.PolecatAddress(parsed.RigName, parsed.AgentName)
-		return agents.Stop(polecatID, true)
-
+		id = agentpkg.PolecatAddress(parsed.RigName, parsed.AgentName)
 	default:
 		return fmt.Errorf("unknown role type: %s", parsed.RoleType)
 	}
+
+	return factory.AgentsFor(d.config.TownRoot, id).Stop(id, true)
 }
 
 
@@ -709,9 +697,8 @@ func (d *Daemon) checkRigGUPPViolations(rigName string) {
 		// Extract polecat name from agent ID (<prefix>-<rig>-polecat-<name> -> <name>)
 		polecatName := strings.TrimPrefix(agent.ID, prefix)
 
-		// Check if agent is running using factory.Agents().Exists()
 		polecatID := agentpkg.PolecatAddress(rigName, polecatName)
-		running := factory.Agents().Exists(polecatID)
+		running := factory.AgentsFor(d.config.TownRoot, polecatID).Exists(polecatID)
 
 		if running {
 			// Session is alive - check if it's been stuck too long
@@ -799,12 +786,11 @@ func (d *Daemon) checkRigOrphanedWork(rigName string) {
 			continue
 		}
 
-		// Check if agent is alive (derive state from factory.Agents().Exists(), not bead)
+		// Check if agent is alive (derive state from factory.AgentsFor().Exists(), not bead)
 		polecatName := strings.TrimPrefix(agent.ID, prefix)
 
-		// Check if agent is running using factory.Agents().Exists()
 		polecatID := agentpkg.PolecatAddress(rigName, polecatName)
-		running := factory.Agents().Exists(polecatID)
+		running := factory.AgentsFor(d.config.TownRoot, polecatID).Exists(polecatID)
 
 		// Agent running = not orphaned (work is being processed)
 		if running {

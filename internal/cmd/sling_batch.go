@@ -5,11 +5,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/style"
 )
+
+// batchParallelism controls how many polecats are spawned concurrently.
+// Set to 0 for sequential execution (old behavior).
+// Conservative for demos: 5. Increase after confirming API rate limits.
+const batchParallelism = 5
 
 // runBatchSling handles slinging multiple beads to a rig.
 // Each bead gets its own freshly spawned polecat.
@@ -38,10 +44,17 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		success bool
 		errMsg  string
 	}
-	results := make([]slingResult, 0, len(beadIDs))
 
 	// Get town root from beads dir (needed for agent ID resolution)
 	townRoot := filepath.Dir(townBeadsDir)
+
+	// Use parallel execution if batchParallelism > 0
+	if batchParallelism > 0 {
+		return runBatchSlingParallel(beadIDs, rigName, townRoot, townBeadsDir)
+	}
+
+	// Sequential fallback
+	results := make([]slingResult, 0, len(beadIDs))
 
 	// Spawn a polecat for each bead and sling it
 	for i, beadID := range beadIDs {
@@ -163,6 +176,133 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			}
 		}
 	}
+
+	return nil
+}
+
+// runBatchSlingParallel handles slinging multiple beads in parallel.
+// Uses a worker pool with batchParallelism workers.
+func runBatchSlingParallel(beadIDs []string, rigName, townRoot, townBeadsDir string) error {
+	fmt.Printf("%s Parallel batch slinging %d beads (parallelism=%d)...\n",
+		style.Bold.Render("🚀"), len(beadIDs), batchParallelism)
+
+	type slingResult struct {
+		index   int
+		beadID  string
+		polecat string
+		success bool
+		errMsg  string
+	}
+
+	// Channel for work items and results
+	jobs := make(chan int, len(beadIDs))
+	results := make(chan slingResult, len(beadIDs))
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	for w := 0; w < batchParallelism; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for idx := range jobs {
+				beadID := beadIDs[idx]
+				result := slingResult{index: idx, beadID: beadID}
+
+				// Check bead status
+				info, err := getBeadInfo(beadID)
+				if err != nil {
+					result.errMsg = err.Error()
+					results <- result
+					continue
+				}
+
+				if info.Status == "pinned" && !slingForce {
+					result.errMsg = "already pinned"
+					results <- result
+					continue
+				}
+
+				// Spawn a fresh polecat
+				spawnOpts := SlingSpawnOptions{
+					Force:    slingForce,
+					Account:  slingAccount,
+					Create:   slingCreate,
+					HookBead: beadID,
+					Agent:    slingAgent,
+				}
+				spawnInfo, err := SpawnPolecatForSling(rigName, spawnOpts)
+				if err != nil {
+					result.errMsg = fmt.Sprintf("spawn failed: %v", err)
+					results <- result
+					continue
+				}
+
+				result.polecat = spawnInfo.PolecatName
+				targetAgent := spawnInfo.AgentID()
+				hookWorkDir := spawnInfo.ClonePath
+
+				// Auto-convoy (skip for parallel - too noisy)
+				// Hook the bead
+				hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
+				hookCmd.Dir = beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
+				if err := hookCmd.Run(); err != nil {
+					result.errMsg = "hook failed"
+					results <- result
+					continue
+				}
+
+				// Log sling event
+				actor := detectActor()
+				_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadID, targetAgent))
+
+				// Update agent bead state
+				updateAgentHookBead(targetAgent, beadID, hookWorkDir, townBeadsDir)
+
+				// Auto-attach work molecule
+				_ = attachPolecatWorkMolecule(targetAgent, hookWorkDir, townRoot)
+
+				// Nudge the polecat
+				agentID, err := addressToAgentID(targetAgent)
+				if err == nil {
+					_ = ensureAgentReady(townRoot, agentID)
+					_ = injectStartPrompt(townRoot, agentID, beadID, slingSubject, slingArgs)
+				}
+
+				result.success = true
+				results <- result
+			}
+		}(w)
+	}
+
+	// Send jobs to workers
+	for i := range beadIDs {
+		jobs <- i
+	}
+	close(jobs)
+
+	// Wait for all workers to finish
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	allResults := make([]slingResult, len(beadIDs))
+	successCount := 0
+	for r := range results {
+		allResults[r.index] = r
+		if r.success {
+			successCount++
+			fmt.Printf("  %s [%d] %s → %s\n", style.Bold.Render("✓"), r.index+1, r.beadID, r.polecat)
+		} else {
+			fmt.Printf("  %s [%d] %s: %s\n", style.Dim.Render("✗"), r.index+1, r.beadID, r.errMsg)
+		}
+	}
+
+	// Wake witness and refinery once at the end
+	wakeRigAgents(townRoot, rigName)
+
+	fmt.Printf("\n%s Batch sling complete: %d/%d succeeded\n", style.Bold.Render("📊"), successCount, len(beadIDs))
 
 	return nil
 }
