@@ -337,11 +337,11 @@ func RuntimeConfigFromPreset(preset AgentPreset) *RuntimeConfig {
 // (e.g., via ResolveRoleAgentName at manager construction time).
 // Use this instead of BuildAgentStartupCommandWithAgentOverride to avoid
 // redundant agent resolution.
-// If prompt is empty, defaults to "gt prime" for propulsion.
+// If prompt is empty, defaults to "run command gt prime in bash" for propulsion.
 func BuildAgentCommand(agentName, prompt string) string {
 	rc := RuntimeConfigFromPreset(AgentPreset(agentName))
 	if prompt == "" {
-		prompt = "gt prime"
+		prompt = "run command gt prime in bash"
 	}
 	return rc.BuildCommandWithPrompt(prompt)
 }
