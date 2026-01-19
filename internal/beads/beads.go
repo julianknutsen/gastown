@@ -117,6 +117,8 @@ type Beads struct {
 }
 
 // New creates a new Beads wrapper for the given directory.
+// This is the main entry point for interacting with the beads CLI programmatically.
+// The workDir should be a directory containing or inheriting a .beads database.
 func New(workDir string) *Beads {
 	return &Beads{workDir: workDir}
 }
