@@ -1,4 +1,16 @@
 // Package runtime provides helpers for runtime-specific integration.
+//
+// Error Handling Pattern:
+// This package uses a "graceful degradation" approach to errors:
+//   - Configuration errors (nil config, missing fields): Return early with nil,
+//     allowing callers to proceed without the optional feature.
+//   - Unsupported providers/features: Return nil silently, treating unknown
+//     values as "disabled" rather than errors.
+//   - Operational errors (e.g., tmux failures): Propagate errors to callers
+//     for handling, failing fast on the first error.
+//
+// This pattern ensures the system remains functional even when optional
+// integrations are unavailable or misconfigured.
 package runtime
 
 import (
