@@ -1,3 +1,5 @@
+// Package swarm provides lifecycle management for swarms (parallel work groups).
+// Manager is stateless; all swarm state is discovered from beads via the bd CLI.
 package swarm
 
 import (
