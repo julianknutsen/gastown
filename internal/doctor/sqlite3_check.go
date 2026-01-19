@@ -1,3 +1,5 @@
+// sqlite3_check.go provides a diagnostic check for sqlite3 CLI availability.
+// sqlite3 is required for convoy-related database operations in Gas Town.
 package doctor
 
 import (
