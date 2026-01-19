@@ -103,7 +103,12 @@ func New(config *Config) (*Daemon, error) {
 	}, nil
 }
 
-// Run starts the daemon main loop.
+// Run starts the daemon main loop. This is the primary entry point for the daemon
+// process. It acquires an exclusive file lock to prevent multiple instances, sets up
+// signal handlers for graceful shutdown, and enters a heartbeat loop that monitors
+// the health of all Gas Town agents (Deacon, Witnesses, Refineries, and polecats).
+// The daemon acts as a recovery-focused safety net, detecting and restarting crashed
+// sessions, identifying GUPP violations, and cleaning up orphaned work.
 func (d *Daemon) Run() error {
 	d.logger.Printf("Daemon starting (PID %d)", os.Getpid())
 
