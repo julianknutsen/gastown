@@ -692,15 +692,15 @@ func selfNukePolecat(roleInfo RoleInfo, _ string) error {
 		return fmt.Errorf("not a polecat: role=%s, polecat=%s, rig=%s", roleInfo.Role, roleInfo.Polecat, roleInfo.Rig)
 	}
 
-	// Get polecat manager using existing helper
-	mgr, _, _, err := getPolecatManager(roleInfo.Rig)
+	// Get polecat backend using existing helper
+	backend, _, _, err := getPolecatBackend(roleInfo.Rig)
 	if err != nil {
-		return fmt.Errorf("getting polecat manager: %w", err)
+		return fmt.Errorf("getting polecat backend: %w", err)
 	}
 
 	// Use nuclear=true since we know we just pushed our work
 	// The branch is pushed, MR is created, we're clean
-	if err := mgr.RemoveWithOptions(roleInfo.Polecat, true, true); err != nil {
+	if err := backend.RemoveWithOptions(roleInfo.Polecat, true, true); err != nil {
 		return fmt.Errorf("removing worktree: %w", err)
 	}
 

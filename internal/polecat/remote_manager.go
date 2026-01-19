@@ -428,3 +428,239 @@ func (m *RemoteManager) setupRemoteBeadsRedirect(remoteClonePath string) error {
 	redirectPath := fmt.Sprintf("%s/.beads/redirect", remoteClonePath)
 	return m.fs.WriteFile(redirectPath, []byte("remote\n"), 0644)
 }
+
+// List returns all polecats in this rig.
+func (m *RemoteManager) List() ([]*Polecat, error) {
+	polecatsDir := fmt.Sprintf("%s/polecats", m.config.RemoteRigPath)
+	entries, err := m.fs.ReadDir(polecatsDir)
+	if err != nil {
+		// Directory may not exist yet
+		return nil, nil
+	}
+
+	var polecats []*Polecat
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "" || strings.HasPrefix(name, ".") || !entry.IsDir() {
+			continue
+		}
+
+		p, err := m.Get(name)
+		if err != nil {
+			continue // Skip polecats we can't read
+		}
+		polecats = append(polecats, p)
+	}
+	return polecats, nil
+}
+
+// RemoveWithOptions removes a polecat with control over safety checks.
+// force: bypass uncommitted changes check (but not stashes/unpushed)
+// nuclear: bypass ALL safety checks including stashes and unpushed commits
+func (m *RemoteManager) RemoveWithOptions(name string, force, nuclear bool) error {
+	if !m.Exists(name) {
+		return ErrPolecatNotFound
+	}
+
+	remoteClonePath := m.remoteClonePath(name)
+	remotePolecatDir := m.remotePolecatDir(name)
+	remoteRepoPath := fmt.Sprintf("%s/.repo.git", m.config.RemoteRigPath)
+
+	// Check for uncommitted work unless bypassed
+	if !nuclear {
+		state, err := m.GitState(name)
+		if err == nil && !state.Clean {
+			if force {
+				// Force mode: allow uncommitted changes but still block on stashes/unpushed
+				if state.StashCount > 0 || state.UnpushedCommits > 0 {
+					return ErrHasUncommittedWork
+				}
+			} else {
+				return ErrHasUncommittedWork
+			}
+		}
+	}
+
+	// Try to remove as a worktree first
+	if err := m.gitOps.WorktreeRemove(remoteRepoPath, remoteClonePath, force); err != nil {
+		// Fall back to direct removal
+		if err := m.fs.RemoveAll(remoteClonePath); err != nil {
+			return fmt.Errorf("removing remote polecat: %w", err)
+		}
+	}
+
+	// Also remove the parent polecat directory
+	_ = m.fs.RemoveAll(remotePolecatDir)
+
+	// Prune stale worktree entries
+	_ = m.gitOps.WorktreePrune(remoteRepoPath)
+
+	// Release name back to pool
+	m.namePool.Release(name)
+	_ = m.namePool.Save()
+
+	// Close agent bead locally (beads are always local)
+	agentID := m.agentBeadID(name)
+	if err := m.beads.CloseAndClearAgentBead(agentID, "polecat removed"); err != nil {
+		// Non-fatal - may not exist
+	}
+
+	return nil
+}
+
+// GitState returns the git state of a polecat's worktree.
+// Used for pre-kill verification to ensure no work is lost.
+func (m *RemoteManager) GitState(name string) (*GitState, error) {
+	if !m.Exists(name) {
+		return nil, ErrPolecatNotFound
+	}
+
+	clonePath := m.remoteClonePath(name)
+
+	state := &GitState{
+		Clean:            true,
+		UncommittedFiles: []string{},
+	}
+
+	// Check for uncommitted changes using GitOps.Status
+	files, err := m.gitOps.Status(clonePath)
+	if err == nil && len(files) > 0 {
+		state.UncommittedFiles = files
+		state.Clean = false
+	}
+
+	// Check for unpushed commits
+	unpushed, err := m.gitOps.UnpushedCommitCount(clonePath)
+	if err == nil && unpushed > 0 {
+		// Check if there's any actual content difference (handle squash merges)
+		hasDiff, _ := m.gitOps.HasContentDiffFromRef(clonePath, "origin/main")
+		if hasDiff {
+			state.UnpushedCommits = unpushed
+			state.Clean = false
+		}
+	}
+
+	// Check for stashes
+	stashCount, _ := m.gitOps.StashCount(clonePath)
+	if stashCount > 0 {
+		state.StashCount = stashCount
+		state.Clean = false
+	}
+
+	return state, nil
+}
+
+// Sync runs bd sync in the polecat's worktree.
+// fromMain: only pull changes, don't push
+func (m *RemoteManager) Sync(name string, fromMain bool) error {
+	if !m.Exists(name) {
+		return ErrPolecatNotFound
+	}
+
+	clonePath := m.remoteClonePath(name)
+
+	// Build sync command - bd commands are run via bd-wrapper on remote
+	// which SSHes back to local for beads operations
+	args := []string{"sync"}
+	if fromMain {
+		args = append(args, "--from-main")
+	}
+
+	// Use the SSH runner to execute bd on remote
+	sshRunner := runner.NewSSH(m.config.SSHCmd)
+	return sshRunner.Run(clonePath, "bd", args...)
+}
+
+// CleanupStaleBranches removes orphaned polecat branches.
+// Returns the number of branches deleted.
+func (m *RemoteManager) CleanupStaleBranches() (int, error) {
+	remoteRepoPath := fmt.Sprintf("%s/.repo.git", m.config.RemoteRigPath)
+
+	// List all polecat branches
+	branches, err := m.gitOps.ListBranches(remoteRepoPath, "polecat/*")
+	if err != nil {
+		return 0, fmt.Errorf("listing branches: %w", err)
+	}
+
+	if len(branches) == 0 {
+		return 0, nil
+	}
+
+	// Get current polecats
+	polecats, err := m.List()
+	if err != nil {
+		return 0, fmt.Errorf("listing polecats: %w", err)
+	}
+
+	// Build map of current branches
+	currentBranches := make(map[string]bool)
+	for _, p := range polecats {
+		currentBranches[p.Branch] = true
+	}
+
+	// Delete orphaned branches
+	deleted := 0
+	for _, branch := range branches {
+		if !currentBranches[branch] {
+			if err := m.gitOps.DeleteBranch(remoteRepoPath, branch, true); err == nil {
+				deleted++
+			}
+		}
+	}
+
+	return deleted, nil
+}
+
+// DetectStalePolecats identifies polecats that may need cleanup.
+// threshold: number of commits behind main to consider stale
+func (m *RemoteManager) DetectStalePolecats(threshold int) ([]*StalenessInfo, error) {
+	polecats, err := m.List()
+	if err != nil {
+		return nil, fmt.Errorf("listing polecats: %w", err)
+	}
+
+	if len(polecats) == 0 {
+		return nil, nil
+	}
+
+	// Get default branch from rig config
+	defaultBranch := "main"
+	if rigCfg, err := rig.LoadRigConfig(m.rig.Path); err == nil && rigCfg.DefaultBranch != "" {
+		defaultBranch = rigCfg.DefaultBranch
+	}
+
+	var results []*StalenessInfo
+	for _, p := range polecats {
+		info := &StalenessInfo{
+			Name: p.Name,
+		}
+
+		// Check for active tmux session via agents interface
+		agentID := m.agentID(p.Name)
+		info.HasActiveSession = m.agents.Exists(agentID)
+
+		// Check how far behind main
+		clonePath := m.remoteClonePath(p.Name)
+		remoteBranch := "origin/" + defaultBranch
+		info.CommitsBehind, _ = m.gitOps.CountCommitsBehind(clonePath, remoteBranch)
+
+		// Check for uncommitted work
+		gitState, err := m.GitState(p.Name)
+		if err == nil && !gitState.Clean {
+			info.HasUncommittedWork = true
+		}
+
+		// Check agent bead state (beads are local)
+		agentBeadID := m.agentBeadID(p.Name)
+		_, fields, err := m.beads.GetAgentBead(agentBeadID)
+		if err == nil && fields != nil {
+			info.AgentState = fields.AgentState
+		}
+
+		// Determine staleness using same logic as Manager
+		info.IsStale, info.Reason = assessStaleness(info, threshold)
+		results = append(results, info)
+	}
+
+	return results, nil
+}

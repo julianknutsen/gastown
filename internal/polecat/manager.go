@@ -1182,3 +1182,82 @@ func assessStaleness(info *StalenessInfo, threshold int) (bool, string) {
 	// (The session is the source of truth for liveness)
 	return true, "no active session"
 }
+
+// GitState returns the git state of a polecat's worktree.
+// Used for pre-kill verification to ensure no work is lost.
+func (m *Manager) GitState(name string) (*GitState, error) {
+	if !m.exists(name) {
+		return nil, ErrPolecatNotFound
+	}
+
+	clonePath := m.clonePath(name)
+	polecatGit := git.NewGit(clonePath)
+
+	state := &GitState{
+		Clean:            true,
+		UncommittedFiles: []string{},
+	}
+
+	// Check for uncommitted changes (git status --porcelain)
+	gitStatus, err := polecatGit.Status()
+	if err != nil {
+		return nil, fmt.Errorf("git status: %w", err)
+	}
+	if !gitStatus.Clean {
+		state.Clean = false
+		state.UncommittedFiles = append(state.UncommittedFiles, gitStatus.Modified...)
+		state.UncommittedFiles = append(state.UncommittedFiles, gitStatus.Added...)
+		state.UncommittedFiles = append(state.UncommittedFiles, gitStatus.Deleted...)
+		state.UncommittedFiles = append(state.UncommittedFiles, gitStatus.Untracked...)
+	}
+
+	// Check for unpushed commits
+	unpushed, err := polecatGit.UnpushedCommits()
+	if err == nil && unpushed > 0 {
+		// Check if there's any actual content difference (handle squash merges)
+		// Use git diff --quiet to check if content differs
+		mainRef := "origin/main"
+		diffCmd := exec.Command("git", "diff", mainRef, "HEAD", "--quiet") //nolint:gosec // G204: mainRef is hardcoded
+		diffCmd.Dir = clonePath
+		diffErr := diffCmd.Run()
+		if diffErr != nil {
+			// Exit code 1 means there's a diff - truly unpushed work
+			state.UnpushedCommits = unpushed
+			state.Clean = false
+		}
+		// Exit code 0 means no diff - content is on main (squash merged)
+	}
+
+	// Check for stashes
+	stashCount, _ := polecatGit.StashCount()
+	if stashCount > 0 {
+		state.StashCount = stashCount
+		state.Clean = false
+	}
+
+	return state, nil
+}
+
+// Sync runs bd sync in the polecat's worktree.
+// fromMain: only pull changes, don't push
+func (m *Manager) Sync(name string, fromMain bool) error {
+	if !m.exists(name) {
+		return ErrPolecatNotFound
+	}
+
+	clonePath := m.clonePath(name)
+
+	// Build sync command
+	args := []string{"sync"}
+	if fromMain {
+		args = append(args, "--from-main")
+	}
+
+	cmd := exec.Command("bd", args...) //nolint:gosec // G204: args are constructed internally
+	cmd.Dir = clonePath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("bd sync: %w: %s", err, string(output))
+	}
+	return nil
+}

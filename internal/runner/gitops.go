@@ -133,3 +133,64 @@ func (g *GitOps) CountCommitsBehind(repoDir, ref string) (int, error) {
 	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &count)
 	return count, nil
 }
+
+// Status returns the git status --porcelain output as lines.
+func (g *GitOps) Status(repoDir string) ([]string, error) {
+	out, err := g.runner.Output(repoDir, "git", "status", "--porcelain")
+	if err != nil {
+		return nil, fmt.Errorf("git status: %w", err)
+	}
+
+	var files []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			// Extract filename (skip the status prefix XY)
+			if len(line) > 3 {
+				files = append(files, line[3:])
+			} else {
+				files = append(files, line)
+			}
+		}
+	}
+	return files, nil
+}
+
+// StashCount returns the number of stashed entries.
+func (g *GitOps) StashCount(repoDir string) (int, error) {
+	out, err := g.runner.Output(repoDir, "git", "stash", "list")
+	if err != nil {
+		return 0, nil // stash list failing is not fatal
+	}
+
+	count := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// UnpushedCommitCount returns the number of commits ahead of the upstream.
+func (g *GitOps) UnpushedCommitCount(repoDir string) (int, error) {
+	out, err := g.runner.Output(repoDir, "git", "rev-list", "--count", "@{u}..HEAD")
+	if err != nil {
+		return 0, nil // may not have upstream configured
+	}
+	var count int
+	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &count)
+	return count, nil
+}
+
+// HasContentDiffFromRef checks if there's any actual content difference from a ref.
+// This handles the case where commits exist but content is identical (e.g., after squash merge).
+func (g *GitOps) HasContentDiffFromRef(repoDir, ref string) (bool, error) {
+	err := g.runner.Run(repoDir, "git", "diff", ref, "HEAD", "--quiet")
+	if err != nil {
+		// Exit code 1 means there's a diff
+		return true, nil
+	}
+	// Exit code 0 means no diff
+	return false, nil
+}

@@ -15,7 +15,7 @@ import (
 type polecatTarget struct {
 	rigName     string
 	polecatName string
-	mgr         *polecat.Manager
+	backend     polecat.Backend
 	r           *rig.Rig
 	townRoot    string
 }
@@ -34,12 +34,12 @@ func resolvePolecatTargets(args []string, useAll bool) ([]polecatTarget, error) 
 			return nil, fmt.Errorf("with --all, provide just the rig name (e.g., 'gt polecat <cmd> %s --all')", strings.Split(rigName, "/")[0])
 		}
 
-		mgr, r, townRoot, err := getPolecatManager(rigName)
+		backend, r, townRoot, err := getPolecatBackend(rigName)
 		if err != nil {
 			return nil, err
 		}
 
-		polecats, err := mgr.List()
+		polecats, err := backend.List()
 		if err != nil {
 			return nil, fmt.Errorf("listing polecats: %w", err)
 		}
@@ -48,7 +48,7 @@ func resolvePolecatTargets(args []string, useAll bool) ([]polecatTarget, error) 
 			targets = append(targets, polecatTarget{
 				rigName:     rigName,
 				polecatName: p.Name,
-				mgr:         mgr,
+				backend:     backend,
 				r:           r,
 				townRoot:    townRoot,
 			})
@@ -66,7 +66,7 @@ func resolvePolecatTargets(args []string, useAll bool) ([]polecatTarget, error) 
 				return nil, fmt.Errorf("invalid address '%s': %w", arg, err)
 			}
 
-			mgr, r, townRoot, err := getPolecatManager(rigName)
+			backend, r, townRoot, err := getPolecatBackend(rigName)
 			if err != nil {
 				return nil, err
 			}
@@ -74,7 +74,7 @@ func resolvePolecatTargets(args []string, useAll bool) ([]polecatTarget, error) 
 			targets = append(targets, polecatTarget{
 				rigName:     rigName,
 				polecatName: polecatName,
-				mgr:         mgr,
+				backend:     backend,
 				r:           r,
 				townRoot:    townRoot,
 			})
@@ -93,7 +93,7 @@ type SafetyCheckResult struct {
 	HookBead      string
 	HookStale     bool // true if hooked bead is closed
 	OpenMR        string
-	GitState      *GitState
+	GitState      *polecat.GitState
 }
 
 // checkPolecatSafety performs safety checks before destructive operations.
@@ -104,7 +104,7 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	}
 
 	// Get polecat info for branch name
-	polecatInfo, infoErr := target.mgr.Get(target.polecatName)
+	polecatInfo, infoErr := target.backend.Get(target.polecatName)
 
 	// Check 1: Unpushed commits via cleanup_status or git state
 	bd := beads.New(target.r.Path)
@@ -112,20 +112,18 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
 
 	if err != nil || fields == nil {
-		// No agent bead - fall back to git check
-		if infoErr == nil && polecatInfo != nil {
-			gitState, gitErr := getGitState(polecatInfo.ClonePath)
-			result.GitState = gitState
-			if gitErr != nil {
-				result.Reasons = append(result.Reasons, "cannot check git state")
-			} else if !gitState.Clean {
-				if gitState.UnpushedCommits > 0 {
-					result.Reasons = append(result.Reasons, fmt.Sprintf("has %d unpushed commit(s)", gitState.UnpushedCommits))
-				} else if len(gitState.UncommittedFiles) > 0 {
-					result.Reasons = append(result.Reasons, fmt.Sprintf("has %d uncommitted file(s)", len(gitState.UncommittedFiles)))
-				} else if gitState.StashCount > 0 {
-					result.Reasons = append(result.Reasons, fmt.Sprintf("has %d stash(es)", gitState.StashCount))
-				}
+		// No agent bead - fall back to git check using Backend.GitState
+		gitState, gitErr := target.backend.GitState(target.polecatName)
+		result.GitState = gitState
+		if gitErr != nil {
+			result.Reasons = append(result.Reasons, "cannot check git state")
+		} else if !gitState.Clean {
+			if gitState.UnpushedCommits > 0 {
+				result.Reasons = append(result.Reasons, fmt.Sprintf("has %d unpushed commit(s)", gitState.UnpushedCommits))
+			} else if len(gitState.UncommittedFiles) > 0 {
+				result.Reasons = append(result.Reasons, fmt.Sprintf("has %d uncommitted file(s)", len(gitState.UncommittedFiles)))
+			} else if gitState.StashCount > 0 {
+				result.Reasons = append(result.Reasons, fmt.Sprintf("has %d stash(es)", gitState.StashCount))
 			}
 		}
 	} else {
@@ -213,24 +211,20 @@ func displaySafetyCheckBlocked(blocked []*SafetyCheckResult) {
 // displayDryRunSafetyCheck shows safety check status for dry-run mode.
 func displayDryRunSafetyCheck(target polecatTarget) {
 	fmt.Printf("\n  Safety checks:\n")
-	polecatInfo, infoErr := target.mgr.Get(target.polecatName)
+	polecatInfo, infoErr := target.backend.Get(target.polecatName)
 	bd := beads.New(target.r.Path)
 	agentBeadID := polecatBeadIDForRig(target.r, target.rigName, target.polecatName)
 	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
 
 	// Check 1: Git state
 	if err != nil || fields == nil {
-		if infoErr == nil && polecatInfo != nil {
-			gitState, gitErr := getGitState(polecatInfo.ClonePath)
-			if gitErr != nil {
-				fmt.Printf("    - Git state: %s\n", style.Warning.Render("cannot check"))
-			} else if gitState.Clean {
-				fmt.Printf("    - Git state: %s\n", style.Success.Render("clean"))
-			} else {
-				fmt.Printf("    - Git state: %s\n", style.Error.Render("dirty"))
-			}
+		gitState, gitErr := target.backend.GitState(target.polecatName)
+		if gitErr != nil {
+			fmt.Printf("    - Git state: %s\n", style.Warning.Render("cannot check"))
+		} else if gitState.Clean {
+			fmt.Printf("    - Git state: %s\n", style.Success.Render("clean"))
 		} else {
-			fmt.Printf("    - Git state: %s\n", style.Dim.Render("unknown (no polecat info)"))
+			fmt.Printf("    - Git state: %s\n", style.Error.Render("dirty"))
 		}
 		fmt.Printf("    - Hook: %s\n", style.Dim.Render("unknown (no agent bead)"))
 	} else {

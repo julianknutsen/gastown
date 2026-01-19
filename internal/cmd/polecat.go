@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
@@ -336,18 +337,19 @@ type PolecatListItem struct {
 	SessionRunning bool          `json:"session_running"`
 }
 
-// getPolecatManager creates a polecat manager for the given rig.
-func getPolecatManager(rigName string) (*polecat.Manager, *rig.Rig, string, error) {
+// getPolecatBackend creates a polecat backend for the given rig.
+// This returns either a local Manager or RemoteManager based on rig config.
+func getPolecatBackend(rigName string) (polecat.Backend, *rig.Rig, string, error) {
 	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return nil, nil, "", err
 	}
 
 	polecatGit := git.NewGit(r.Path)
-	agents := agent.Default()
-	mgr := polecat.NewManager(agents, r, polecatGit)
+	agents := factory.Agents()
+	backend := polecat.BackendFor(agents, r, polecatGit)
 
-	return mgr, r, townRoot, nil
+	return backend, r, townRoot, nil
 }
 
 func runPolecatList(cmd *cobra.Command, args []string) error {
@@ -365,7 +367,7 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 		if len(args) < 1 {
 			return fmt.Errorf("rig name required (or use --all)")
 		}
-		_, r, _, err := getPolecatManager(args[0])
+		_, r, _, err := getPolecatBackend(args[0])
 		if err != nil {
 			return err
 		}
@@ -378,9 +380,9 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 
 	for _, r := range rigs {
 		polecatGit := git.NewGit(r.Path)
-		mgr := polecat.NewManager(agents, r, polecatGit)
+		backend := polecat.BackendFor(agents, r, polecatGit)
 
-		polecats, err := mgr.List()
+		polecats, err := backend.List()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to list polecats in %s: %v\n", r.Name, err)
 			continue
@@ -452,14 +454,14 @@ func runPolecatAdd(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 	polecatName := args[1]
 
-	mgr, _, _, err := getPolecatManager(rigName)
+	backend, _, _, err := getPolecatBackend(rigName)
 	if err != nil {
 		return err
 	}
 
 	fmt.Printf("Adding polecat %s to rig %s...\n", polecatName, rigName)
 
-	p, err := mgr.Add(polecatName)
+	p, err := backend.AddWithOptions(polecatName, polecat.AddOptions{})
 	if err != nil {
 		return fmt.Errorf("adding polecat: %w", err)
 	}
@@ -498,7 +500,7 @@ func runPolecatRemove(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("Removing polecat %s/%s...\n", p.rigName, p.polecatName)
 
-		if err := p.mgr.Remove(p.polecatName, polecatForce); err != nil {
+		if err := p.backend.Remove(p.polecatName, polecatForce); err != nil {
 			if errors.Is(err, polecat.ErrHasChanges) {
 				removeErrors = append(removeErrors, fmt.Sprintf("%s/%s: has uncommitted changes (use --force)", p.rigName, p.polecatName))
 			} else {
@@ -543,7 +545,7 @@ func runPolecatSync(cmd *cobra.Command, args []string) error {
 		polecatName = ""
 	}
 
-	mgr, _, _, err := getPolecatManager(rigName)
+	backend, _, _, err := getPolecatBackend(rigName)
 	if err != nil {
 		return err
 	}
@@ -551,7 +553,7 @@ func runPolecatSync(cmd *cobra.Command, args []string) error {
 	// Get list of polecats to sync
 	var polecatsToSync []string
 	if polecatSyncAll || polecatName == "" {
-		polecats, err := mgr.List()
+		polecats, err := backend.List()
 		if err != nil {
 			return fmt.Errorf("listing polecats: %w", err)
 		}
@@ -570,35 +572,10 @@ func runPolecatSync(cmd *cobra.Command, args []string) error {
 	// Sync each polecat
 	var syncErrors []string
 	for _, name := range polecatsToSync {
-		// Get polecat to get correct clone path (handles old vs new structure)
-		p, err := mgr.Get(name)
-		if err != nil {
-			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", name, err))
-			continue
-		}
-
-		// Check directory exists
-		if _, err := os.Stat(p.ClonePath); os.IsNotExist(err) {
-			syncErrors = append(syncErrors, fmt.Sprintf("%s: directory not found", name))
-			continue
-		}
-
-		// Build sync command
-		syncArgs := []string{"sync"}
-		if polecatSyncFromMain {
-			syncArgs = append(syncArgs, "--from-main")
-		}
-
 		fmt.Printf("Syncing %s/%s...\n", rigName, name)
 
-		syncCmd := exec.Command("bd", syncArgs...)
-		syncCmd.Dir = p.ClonePath
-		output, err := syncCmd.CombinedOutput()
-		if err != nil {
+		if err := backend.Sync(name, polecatSyncFromMain); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", name, err))
-			if len(output) > 0 {
-				fmt.Printf("  %s\n", style.Dim.Render(string(output)))
-			}
 		} else {
 			fmt.Printf("  %s\n", style.Success.Render("✓ synced"))
 		}
@@ -637,13 +614,13 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr, r, townRoot, err := getPolecatManager(rigName)
+	backend, r, townRoot, err := getPolecatBackend(rigName)
 	if err != nil {
 		return err
 	}
 
 	// Get polecat info
-	p, err := mgr.Get(polecatName)
+	p, err := backend.Get(polecatName)
 	if err != nil {
 		return fmt.Errorf("polecat '%s' not found in rig '%s'", polecatName, rigName)
 	}
@@ -763,33 +740,19 @@ func formatActivityTime(t time.Time) string {
 	}
 }
 
-// GitState represents the git state of a polecat's worktree.
-type GitState struct {
-	Clean            bool     `json:"clean"`
-	UncommittedFiles []string `json:"uncommitted_files"`
-	UnpushedCommits  int      `json:"unpushed_commits"`
-	StashCount       int      `json:"stash_count"`
-}
-
 func runPolecatGitState(cmd *cobra.Command, args []string) error {
 	rigName, polecatName, err := parseAddress(args[0])
 	if err != nil {
 		return err
 	}
 
-	mgr, r, _, err := getPolecatManager(rigName)
+	backend, r, _, err := getPolecatBackend(rigName)
 	if err != nil {
 		return err
 	}
 
-	// Verify polecat exists
-	p, err := mgr.Get(polecatName)
-	if err != nil {
-		return fmt.Errorf("polecat '%s' not found in rig '%s'", polecatName, rigName)
-	}
-
-	// Get git state from the polecat's worktree
-	state, err := getGitState(p.ClonePath)
+	// Get git state using the backend (works for local or remote polecats)
+	state, err := backend.GitState(polecatName)
 	if err != nil {
 		return fmt.Errorf("getting git state: %w", err)
 	}
@@ -840,101 +803,6 @@ func runPolecatGitState(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// getGitState checks the git state of a worktree.
-func getGitState(worktreePath string) (*GitState, error) {
-	state := &GitState{
-		Clean:            true,
-		UncommittedFiles: []string{},
-	}
-
-	// Check for uncommitted changes (git status --porcelain)
-	statusCmd := exec.Command("git", "status", "--porcelain")
-	statusCmd.Dir = worktreePath
-	output, err := statusCmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git status: %w", err)
-	}
-	if len(output) > 0 {
-		lines := splitLines(string(output))
-		for _, line := range lines {
-			if line != "" {
-				// Extract filename (skip the status prefix)
-				if len(line) > 3 {
-					state.UncommittedFiles = append(state.UncommittedFiles, line[3:])
-				} else {
-					state.UncommittedFiles = append(state.UncommittedFiles, line)
-				}
-			}
-		}
-		state.Clean = false
-	}
-
-	// Check for unpushed commits (git log origin/main..HEAD)
-	// We check commits first, then verify if content differs.
-	// After squash merge, commits may differ but content may be identical.
-	mainRef := "origin/main"
-	logCmd := exec.Command("git", "log", mainRef+"..HEAD", "--oneline")
-	logCmd.Dir = worktreePath
-	output, err = logCmd.Output()
-	if err != nil {
-		// origin/main might not exist - try origin/master
-		mainRef = "origin/master"
-		logCmd = exec.Command("git", "log", mainRef+"..HEAD", "--oneline")
-		logCmd.Dir = worktreePath
-		output, _ = logCmd.Output() // non-fatal: might be a new repo without remote tracking
-	}
-	if len(output) > 0 {
-		lines := splitLines(string(output))
-		count := 0
-		for _, line := range lines {
-			if line != "" {
-				count++
-			}
-		}
-		if count > 0 {
-			// Commits exist that aren't on main. But after squash merge,
-			// the content may actually be on main with different commit SHAs.
-			// Check if there's any actual diff between HEAD and main.
-			diffCmd := exec.Command("git", "diff", mainRef, "HEAD", "--quiet")
-			diffCmd.Dir = worktreePath
-			diffErr := diffCmd.Run()
-			if diffErr == nil {
-				// Exit code 0 means no diff - content IS on main (squash merged)
-				// Don't count these as unpushed
-				state.UnpushedCommits = 0
-			} else {
-				// Exit code 1 means there's a diff - truly unpushed work
-				state.UnpushedCommits = count
-				state.Clean = false
-			}
-		}
-	}
-
-	// Check for stashes (git stash list)
-	stashCmd := exec.Command("git", "stash", "list")
-	stashCmd.Dir = worktreePath
-	output, err = stashCmd.Output()
-	if err != nil {
-		// Ignore stash errors
-		output = nil
-	}
-	if len(output) > 0 {
-		lines := splitLines(string(output))
-		count := 0
-		for _, line := range lines {
-			if line != "" {
-				count++
-			}
-		}
-		state.StashCount = count
-		if count > 0 {
-			state.Clean = false
-		}
-	}
-
-	return state, nil
-}
-
 // RecoveryStatus represents whether a polecat needs recovery or is safe to nuke.
 type RecoveryStatus struct {
 	Rig           string                `json:"rig"`
@@ -952,13 +820,13 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr, r, _, err := getPolecatManager(rigName)
+	backend, r, _, err := getPolecatBackend(rigName)
 	if err != nil {
 		return err
 	}
 
 	// Verify polecat exists and get info
-	p, err := mgr.Get(polecatName)
+	p, err := backend.Get(polecatName)
 	if err != nil {
 		return fmt.Errorf("polecat '%s' not found in rig '%s'", polecatName, rigName)
 	}
@@ -980,7 +848,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	if err != nil || fields == nil {
 		// No agent bead or no cleanup_status - fall back to git check
 		// This handles polecats that haven't self-reported yet
-		gitState, gitErr := getGitState(p.ClonePath)
+		gitState, gitErr := backend.GitState(polecatName)
 		if gitErr != nil {
 			status.CleanupStatus = polecat.CleanupUnknown
 			status.NeedsRecovery = true
@@ -1051,7 +919,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 func runPolecatGC(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
-	mgr, r, _, err := getPolecatManager(rigName)
+	backend, r, _, err := getPolecatBackend(rigName)
 	if err != nil {
 		return err
 	}
@@ -1060,6 +928,13 @@ func runPolecatGC(cmd *cobra.Command, args []string) error {
 
 	if polecatGCDryRun {
 		// Dry run - list branches that would be deleted
+		// Note: dry-run requires local git access for branch listing
+		settingsPath := filepath.Join(r.Path, "settings", "config.json")
+		settings, _ := config.LoadRigSettings(settingsPath)
+		if settings != nil && settings.Remote != nil {
+			return fmt.Errorf("--dry-run not supported for remote rigs; run without --dry-run to perform cleanup")
+		}
+
 		repoGit := git.NewGit(r.Path)
 
 		// List all polecat branches
@@ -1074,7 +949,7 @@ func runPolecatGC(cmd *cobra.Command, args []string) error {
 		}
 
 		// Get current branches
-		polecats, err := mgr.List()
+		polecats, err := backend.List()
 		if err != nil {
 			return fmt.Errorf("listing polecats: %w", err)
 		}
@@ -1100,7 +975,7 @@ func runPolecatGC(cmd *cobra.Command, args []string) error {
 	}
 
 	// Actually clean up
-	deleted, err := mgr.CleanupStaleBranches()
+	deleted, err := backend.CleanupStaleBranches()
 	if err != nil {
 		return fmt.Errorf("cleanup failed: %w", err)
 	}
@@ -1193,14 +1068,14 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		}
 
 		// Step 2: Get polecat info before deletion (for branch name)
-		polecatInfo, err := p.mgr.Get(p.polecatName)
+		polecatInfo, err := p.backend.Get(p.polecatName)
 		var branchToDelete string
 		if err == nil && polecatInfo != nil {
 			branchToDelete = polecatInfo.Branch
 		}
 
 		// Step 3: Delete worktree (nuclear mode - bypass all safety checks)
-		if err := p.mgr.RemoveWithOptions(p.polecatName, true, true); err != nil {
+		if err := p.backend.RemoveWithOptions(p.polecatName, true, true); err != nil {
 			if errors.Is(err, polecat.ErrPolecatNotFound) {
 				fmt.Printf("  %s worktree already gone\n", style.Dim.Render("○"))
 			} else {
@@ -1273,14 +1148,14 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 
 func runPolecatStale(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
-	mgr, r, _, err := getPolecatManager(rigName)
+	backend, r, _, err := getPolecatBackend(rigName)
 	if err != nil {
 		return err
 	}
 
 	fmt.Printf("Detecting stale polecats in %s (threshold: %d commits behind main)...\n\n", r.Name, polecatStaleThreshold)
 
-	staleInfos, err := mgr.DetectStalePolecats(polecatStaleThreshold)
+	staleInfos, err := backend.DetectStalePolecats(polecatStaleThreshold)
 	if err != nil {
 		return fmt.Errorf("detecting stale polecats: %w", err)
 	}
@@ -1370,7 +1245,7 @@ func runPolecatStale(cmd *cobra.Command, args []string) error {
 					continue
 				}
 				fmt.Printf("  Nuking %s...", info.Name)
-				if err := mgr.RemoveWithOptions(info.Name, true, false); err != nil {
+				if err := backend.RemoveWithOptions(info.Name, true, false); err != nil {
 					fmt.Printf(" %s (%v)\n", style.Error.Render("failed"), err)
 				} else {
 					fmt.Printf(" %s\n", style.Success.Render("done"))
