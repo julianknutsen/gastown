@@ -530,6 +530,11 @@ func (g *Git) BranchExists(name string) (bool, error) {
 }
 
 // RemoteBranchExists checks if a branch exists on the remote.
+// TODO: This function calls ls-remote twice unnecessarily. The first call's
+// output is discarded and only used for error checking, then the second call
+// repeats the same operation to get the output. This should be refactored to
+// make a single ls-remote call and use its output for both error checking and
+// the existence check. (gt-yfl4a)
 func (g *Git) RemoteBranchExists(remote, branch string) (bool, error) {
 	_, err := g.run("ls-remote", "--heads", remote, branch)
 	if err != nil {
