@@ -781,6 +781,29 @@ func SaveTownSettings(path string, settings *TownSettings) error {
 	return nil
 }
 
+// GetPolecatCapacity returns the polecat capacity setting for a town.
+// Returns 0 if not set (meaning unlimited).
+func GetPolecatCapacity(townRoot string) int {
+	settings, err := LoadOrCreateTownSettings(TownSettingsPath(townRoot))
+	if err != nil {
+		return 0 // Default to unlimited on error
+	}
+	return settings.PolecatCapacity
+}
+
+// GetQueueDispatchParallelism returns the queue dispatch parallelism setting for a town.
+// Returns 5 if not set (default parallelism).
+func GetQueueDispatchParallelism(townRoot string) int {
+	settings, err := LoadOrCreateTownSettings(TownSettingsPath(townRoot))
+	if err != nil {
+		return 5 // Default parallelism on error
+	}
+	if settings.QueueDispatchParallelism <= 0 {
+		return 5 // Default parallelism
+	}
+	return settings.QueueDispatchParallelism
+}
+
 // ResolveAgentConfig resolves the agent configuration for a rig.
 // It looks up the agent by name in town settings (custom agents) and built-in presets.
 //
