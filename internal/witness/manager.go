@@ -1,3 +1,5 @@
+// Package witness provides the Manager type for controlling witness agent lifecycle,
+// including starting and stopping agents in tmux sessions and persisting state.
 package witness
 
 import (
