@@ -1,4 +1,7 @@
 // Package witness provides the polecat monitoring agent.
+//
+// This file defines protocol message patterns and parsers for Witness inbox routing,
+// handling structured messages like POLECAT_DONE, HELP requests, and merge notifications.
 package witness
 
 import (
