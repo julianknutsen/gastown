@@ -157,6 +157,10 @@ func Capture(polecatDir string) (*Checkpoint, error) {
 }
 
 // WithMolecule adds molecule context to a checkpoint.
+// Parameters:
+//   - moleculeID: the unique identifier of the molecule being executed
+//   - stepID: the unique identifier of the current step within the molecule
+//   - stepTitle: the human-readable title of the current step
 func (cp *Checkpoint) WithMolecule(moleculeID, stepID, stepTitle string) *Checkpoint {
 	cp.MoleculeID = moleculeID
 	cp.CurrentStep = stepID
