@@ -96,10 +96,10 @@ var (
 	slingForce    bool   // --force: force spawn even if polecat has unread mail
 	slingAccount  string // --account: Claude Code account handle to use
 	slingAgent    string // --agent: override runtime agent for this sling/spawn
-	slingNoConvoy bool   // --no-convoy: skip auto-convoy creation
-	slingParallel int    // --parallel: batch parallelism (default 5, use 1 for sequential)
-	slingCapacity int    // --capacity: max total polecats running (0 = unlimited)
-	slingQueue    bool   // --queue: add to queue and dispatch (opt-in queue workflow)
+	slingNoConvoy        bool // --no-convoy: skip auto-convoy creation
+	slingSpawnBatchSize  int  // --spawn-batch-size: batch parallelism (default 5, use 1 for sequential)
+	slingQueueMaxPolecats int // --queue-max-polecats: max total polecats running (0 = unlimited)
+	slingQueue           bool // --queue: add to queue and dispatch (opt-in queue workflow)
 )
 
 func init() {
@@ -116,8 +116,8 @@ func init() {
 	slingCmd.Flags().StringVar(&slingAccount, "account", "", "Claude Code account handle to use")
 	slingCmd.Flags().StringVar(&slingAgent, "agent", "", "Override agent/runtime for this sling (e.g., claude, gemini, codex, or custom alias)")
 	slingCmd.Flags().BoolVar(&slingNoConvoy, "no-convoy", false, "Skip auto-convoy creation for single-issue sling")
-	slingCmd.Flags().IntVar(&slingParallel, "parallel", 5, "Batch parallelism (number of concurrent polecats, use 1 for sequential)")
-	slingCmd.Flags().IntVar(&slingCapacity, "capacity", 0, "Max total polecats running (0 = unlimited, use with --queue)")
+	slingCmd.Flags().IntVar(&slingSpawnBatchSize, "spawn-batch-size", 5, "Number of polecats to spawn concurrently (use 1 for sequential)")
+	slingCmd.Flags().IntVar(&slingQueueMaxPolecats, "queue-max-polecats", 0, "Max total polecats running (0 = unlimited, use with --queue)")
 	slingCmd.Flags().BoolVar(&slingQueue, "queue", false, "Add to queue and dispatch (opt-in queue workflow)")
 
 	rootCmd.AddCommand(slingCmd)
