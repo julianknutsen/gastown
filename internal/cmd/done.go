@@ -60,6 +60,7 @@ var (
 	donePhaseComplete bool
 	doneGate          string
 	doneCleanupStatus string
+	doneSkipMerge     bool
 )
 
 // Valid exit types for gt done
@@ -77,6 +78,7 @@ func init() {
 	doneCmd.Flags().BoolVar(&donePhaseComplete, "phase-complete", false, "Signal phase complete - await gate before continuing")
 	doneCmd.Flags().StringVar(&doneGate, "gate", "", "Gate bead ID to wait on (with --phase-complete)")
 	doneCmd.Flags().StringVar(&doneCleanupStatus, "cleanup-status", "", "Git cleanup status: clean, uncommitted, unpushed, stash, unknown (ZFC: agent-observed)")
+	doneCmd.Flags().BoolVar(&doneSkipMerge, "skip-merge", false, "Skip MR creation but still nuke worktree (for branch-only workflows)")
 
 	rootCmd.AddCommand(doneCmd)
 }
@@ -285,96 +287,108 @@ func runDone(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("%s Branch pushed to origin\n", style.Bold.Render("✓"))
 
-		if issueID == "" {
-			return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
-		}
-
-		// Initialize beads
-		bd := beads.New(beads.ResolveBeadsDir(cwd))
-
-		// Determine target branch (auto-detect integration branch if applicable)
-		target := defaultBranch
-		autoTarget, err := detectIntegrationBranch(bd, g, issueID)
-		if err == nil && autoTarget != "" {
-			target = autoTarget
-		}
-
-		// Get source issue for priority inheritance
-		var priority int
-		if donePriority >= 0 {
-			priority = donePriority
+		// --skip-merge: Skip MR creation but still nuke worktree
+		if doneSkipMerge {
+			fmt.Printf("%s Skipping merge queue (--skip-merge)\n", style.Bold.Render("→"))
+			fmt.Printf("  Branch: %s\n", branch)
+			if issueID != "" {
+				fmt.Printf("  Issue: %s\n", issueID)
+			}
+			fmt.Println()
+			fmt.Printf("%s\n", style.Dim.Render("Branch pushed to origin. No MR created."))
 		} else {
-			// Try to inherit from source issue
-			sourceIssue, err := bd.Show(issueID)
-			if err != nil {
-				priority = 2 // Default
+			// Normal COMPLETED path: create MR
+			if issueID == "" {
+				return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
+			}
+
+			// Initialize beads
+			bd := beads.New(beads.ResolveBeadsDir(cwd))
+
+			// Determine target branch (auto-detect integration branch if applicable)
+			target := defaultBranch
+			autoTarget, err := detectIntegrationBranch(bd, g, issueID)
+			if err == nil && autoTarget != "" {
+				target = autoTarget
+			}
+
+			// Get source issue for priority inheritance
+			var priority int
+			if donePriority >= 0 {
+				priority = donePriority
 			} else {
-				priority = sourceIssue.Priority
-			}
-		}
-
-		// Check if MR bead already exists for this branch (idempotency)
-		existingMR, err := bd.FindMRForBranch(branch)
-		if err != nil {
-			style.PrintWarning("could not check for existing MR: %v", err)
-			// Continue with creation attempt - Create will fail if duplicate
-		}
-
-		if existingMR != nil {
-			// MR already exists - use it instead of creating a new one
-			mrID = existingMR.ID
-			fmt.Printf("%s MR already exists (idempotent)\n", style.Bold.Render("✓"))
-			fmt.Printf("  MR ID: %s\n", style.Bold.Render(mrID))
-		} else {
-			// Build MR bead title and description
-			title := fmt.Sprintf("Merge: %s", issueID)
-			description := fmt.Sprintf("branch: %s\ntarget: %s\nsource_issue: %s\nrig: %s",
-				branch, target, issueID, rigName)
-			if worker != "" {
-				description += fmt.Sprintf("\nworker: %s", worker)
-			}
-			if agentBeadID != "" {
-				description += fmt.Sprintf("\nagent_bead: %s", agentBeadID)
-			}
-
-			// Add conflict resolution tracking fields (initialized, updated by Refinery)
-			description += "\nretry_count: 0"
-			description += "\nlast_conflict_sha: null"
-			description += "\nconflict_task_id: null"
-
-			// Create MR bead (ephemeral wisp - will be cleaned up after merge)
-			mrIssue, err := bd.Create(beads.CreateOptions{
-				Title:       title,
-				Type:        "merge-request",
-				Priority:    priority,
-				Description: description,
-				Ephemeral:   true,
-			})
-			if err != nil {
-				return fmt.Errorf("creating merge request bead: %w", err)
-			}
-			mrID = mrIssue.ID
-
-			// Update agent bead with active_mr reference (for traceability)
-			if agentBeadID != "" {
-				if err := bd.UpdateAgentActiveMR(agentBeadID, mrID); err != nil {
-					style.PrintWarning("could not update agent bead with active_mr: %v", err)
+				// Try to inherit from source issue
+				sourceIssue, err := bd.Show(issueID)
+				if err != nil {
+					priority = 2 // Default
+				} else {
+					priority = sourceIssue.Priority
 				}
 			}
 
-			// Success output
-			fmt.Printf("%s Work submitted to merge queue\n", style.Bold.Render("✓"))
-			fmt.Printf("  MR ID: %s\n", style.Bold.Render(mrID))
+			// Check if MR bead already exists for this branch (idempotency)
+			existingMR, err := bd.FindMRForBranch(branch)
+			if err != nil {
+				style.PrintWarning("could not check for existing MR: %v", err)
+				// Continue with creation attempt - Create will fail if duplicate
+			}
+
+			if existingMR != nil {
+				// MR already exists - use it instead of creating a new one
+				mrID = existingMR.ID
+				fmt.Printf("%s MR already exists (idempotent)\n", style.Bold.Render("✓"))
+				fmt.Printf("  MR ID: %s\n", style.Bold.Render(mrID))
+			} else {
+				// Build MR bead title and description
+				title := fmt.Sprintf("Merge: %s", issueID)
+				description := fmt.Sprintf("branch: %s\ntarget: %s\nsource_issue: %s\nrig: %s",
+					branch, target, issueID, rigName)
+				if worker != "" {
+					description += fmt.Sprintf("\nworker: %s", worker)
+				}
+				if agentBeadID != "" {
+					description += fmt.Sprintf("\nagent_bead: %s", agentBeadID)
+				}
+
+				// Add conflict resolution tracking fields (initialized, updated by Refinery)
+				description += "\nretry_count: 0"
+				description += "\nlast_conflict_sha: null"
+				description += "\nconflict_task_id: null"
+
+				// Create MR bead (ephemeral wisp - will be cleaned up after merge)
+				mrIssue, err := bd.Create(beads.CreateOptions{
+					Title:       title,
+					Type:        "merge-request",
+					Priority:    priority,
+					Description: description,
+					Ephemeral:   true,
+				})
+				if err != nil {
+					return fmt.Errorf("creating merge request bead: %w", err)
+				}
+				mrID = mrIssue.ID
+
+				// Update agent bead with active_mr reference (for traceability)
+				if agentBeadID != "" {
+					if err := bd.UpdateAgentActiveMR(agentBeadID, mrID); err != nil {
+						style.PrintWarning("could not update agent bead with active_mr: %v", err)
+					}
+				}
+
+				// Success output
+				fmt.Printf("%s Work submitted to merge queue\n", style.Bold.Render("✓"))
+				fmt.Printf("  MR ID: %s\n", style.Bold.Render(mrID))
+			}
+			fmt.Printf("  Source: %s\n", branch)
+			fmt.Printf("  Target: %s\n", target)
+			fmt.Printf("  Issue: %s\n", issueID)
+			if worker != "" {
+				fmt.Printf("  Worker: %s\n", worker)
+			}
+			fmt.Printf("  Priority: P%d\n", priority)
+			fmt.Println()
+			fmt.Printf("%s\n", style.Dim.Render("The Refinery will process your merge request."))
 		}
-		fmt.Printf("  Source: %s\n", branch)
-		fmt.Printf("  Target: %s\n", target)
-		fmt.Printf("  Issue: %s\n", issueID)
-		if worker != "" {
-			fmt.Printf("  Worker: %s\n", worker)
-		}
-		fmt.Printf("  Priority: P%d\n", priority)
-		fmt.Println()
-		fmt.Printf("%s\n", style.Dim.Render("The Refinery will process your merge request."))
 	} else if exitType == ExitPhaseComplete {
 		// Phase complete - register as waiter on gate, then recycle
 		fmt.Printf("%s Phase complete, awaiting gate\n", style.Bold.Render("→"))
