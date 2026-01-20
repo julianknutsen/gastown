@@ -49,6 +49,68 @@ func trimJSONForError(jsonOutput []byte) string {
 	return s
 }
 
+// InstantiateFormulaOnBead creates a formula instance (wisp) and bonds it to an existing bead.
+// Returns the compound bead ID (the wisp root, which now contains the original bead).
+// This is the common function used by formula-on-bead slinging operations.
+func InstantiateFormulaOnBead(townRoot, formulaName, beadID, beadTitle string) (string, error) {
+	// Route bd mutations to the correct beads context for the target bead
+	formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, "")
+
+	// Step 1: Cook the formula (ensures proto exists)
+	fmt.Printf("  Cooking formula %s...\n", formulaName)
+	cookCmd := exec.Command("bd", "--no-daemon", "cook", formulaName)
+	cookCmd.Stderr = os.Stderr
+	if err := cookCmd.Run(); err != nil {
+		return "", fmt.Errorf("cooking formula %s: %w", formulaName, err)
+	}
+
+	// Step 2: Create wisp with feature and issue variables
+	fmt.Printf("  Creating wisp...\n")
+	featureVar := fmt.Sprintf("feature=%s", beadTitle)
+	issueVar := fmt.Sprintf("issue=%s", beadID)
+	wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--var", issueVar, "--json"}
+	wispCmd := exec.Command("bd", wispArgs...)
+	wispCmd.Dir = formulaWorkDir
+	wispCmd.Env = append(os.Environ(), "GT_ROOT="+townRoot)
+	wispCmd.Stderr = os.Stderr
+	wispOut, err := wispCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("creating wisp for formula %s: %w", formulaName, err)
+	}
+
+	wispRootID, err := parseWispIDFromJSON(wispOut)
+	if err != nil {
+		return "", fmt.Errorf("parsing wisp output: %w", err)
+	}
+	fmt.Printf("%s Formula wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
+
+	// Step 3: Bond wisp to original bead (creates compound)
+	bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
+	bondCmd := exec.Command("bd", bondArgs...)
+	bondCmd.Dir = formulaWorkDir
+	bondCmd.Stderr = os.Stderr
+	bondOut, err := bondCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("bonding formula to bead: %w", err)
+	}
+
+	// Parse bond output - the wisp root becomes the compound root
+	var bondResult struct {
+		RootID string `json:"root_id"`
+	}
+	if err := json.Unmarshal(bondOut, &bondResult); err == nil && bondResult.RootID != "" {
+		wispRootID = bondResult.RootID
+	}
+	fmt.Printf("%s Formula bonded to %s\n", style.Bold.Render("✓"), beadID)
+
+	// Step 4: Store attached molecule in the wisp's description
+	if err := storeAttachedMoleculeInBead(wispRootID, wispRootID); err != nil {
+		fmt.Printf("%s Could not store attached_molecule: %v\n", style.Dim.Render("Warning:"), err)
+	}
+
+	return wispRootID, nil
+}
+
 // verifyFormulaExists checks that the formula exists using bd formula show.
 // Formulas are TOML files (.formula.toml).
 // Uses --no-daemon with --allow-stale for consistency with verifyBeadExists.

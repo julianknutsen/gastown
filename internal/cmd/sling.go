@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -211,7 +210,6 @@ func runSling(cmd *cobra.Command, args []string) error {
 	// Determine target agent (self or specified)
 	var targetAgent string
 	var hookWorkDir string // Clone path for polecat spawns (used for molecule attachment)
-	var queueRig string    // Set when --queue with rig target (for deferred spawn)
 	var isRigTarget bool   // True when target is a rig name
 
 	if len(args) > 1 {
@@ -250,76 +248,226 @@ func runSling(cmd *cobra.Command, args []string) error {
 			if slingDryRun {
 				// Dry run - just indicate what would happen
 				fmt.Printf("Would spawn fresh polecat in rig '%s'\n", rigName)
-				targetAgent = fmt.Sprintf("%s/polecats/<new>", rigName)
-			} else if slingQueue && formulaName == "" {
-				// --queue mode for plain bead (not formula-on-bead)
-				// Formula-on-bead queue is handled after formula instantiation
-				fmt.Printf("Target is rig '%s', queueing and dispatching...\n", rigName)
+			targetAgent = fmt.Sprintf("%s/polecats/<new>", rigName)
+		} else if slingQueue && formulaName == "" {
+			// --queue mode for plain bead (not formula-on-bead)
+			fmt.Printf("Target is rig '%s', queueing and dispatching...\n", rigName)
 
-				// Create queue with town-wide ops
-				ops := beads.NewRealBeadsOps(townRoot)
-				q := queue.New(ops)
+			// Check bead status before queueing
+			info, err := getBeadInfo(beadID)
+			if err != nil {
+				return fmt.Errorf("checking bead status: %w", err)
+			}
+			if (info.Status == "pinned" || info.Status == "hooked") && !slingForce {
+				return fmt.Errorf("bead %s is already %s to %s\nUse --force to re-sling", beadID, info.Status, info.Assignee)
+			}
 
-				// Add bead to queue
-				if err := q.Add(beadID); err != nil {
-					return fmt.Errorf("adding bead to queue: %w", err)
+			// Auto-convoy before dispatch
+			if !slingNoConvoy && isTrackedByConvoy(beadID) == "" {
+				convoyID, convoyErr := createAutoConvoy(beadID, info.Title)
+				if convoyErr != nil {
+					fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), convoyErr)
+				} else {
+					fmt.Printf("%s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
 				}
-				fmt.Printf("%s Bead queued\n", style.Bold.Render("✓"))
+			}
 
-				// Create spawner - rigName comes from QueueItem now
-				spawner := &queue.RealSpawner{
-					SpawnInFunc: func(spawnRigName, bid string) error {
-						spawnOpts := SlingSpawnOptions{
-							Force:    slingForce,
-							Account:  slingAccount,
-							Create:   slingCreate,
-							HookBead: bid,
-							Agent:    slingAgent,
-						}
-						info, err := SpawnPolecatForSling(spawnRigName, spawnOpts)
-						if err != nil {
-							return err
-						}
-						// Capture for later use (used after dispatch)
-						targetAgent = info.AgentID()
-						hookWorkDir = info.ClonePath
-						return nil
-					},
-				}
-				dispatcher := queue.NewDispatcher(q, spawner)
+			// Create queue with town-wide ops
+			ops := beads.NewRealBeadsOps(townRoot)
+			q := queue.New(ops)
 
-				// Load and dispatch
-				if _, err := q.Load(); err != nil {
-					return fmt.Errorf("loading queue: %w", err)
-				}
-				if _, err := dispatcher.Dispatch(); err != nil {
-					return fmt.Errorf("dispatching from queue: %w", err)
-				}
+			// Add bead to queue
+			if err := q.Add(beadID); err != nil {
+				return fmt.Errorf("adding bead to queue: %w", err)
+			}
+			fmt.Printf("%s Bead queued\n", style.Bold.Render("✓"))
 
-				// Wake witness and refinery to monitor the new polecat
-				wakeRigAgents(townRoot, rigName)
-			} else if slingQueue && formulaName != "" {
-				// --queue mode for formula-on-bead: defer queue until after formula instantiation
-				queueRig = rigName
-			} else {
-				// Spawn a fresh polecat in the rig (default: no queue)
+			// Create spawner using SpawnAndHookBead
+			spawner := &queue.RealSpawner{
+				SpawnInFunc: func(spawnRigName, bid string) error {
+					_, err := SpawnAndHookBead(townRoot, spawnRigName, bid, SpawnAndHookOptions{
+						Force:    slingForce,
+						Account:  slingAccount,
+						Create:   slingCreate,
+						Agent:    slingAgent,
+						Subject:  slingSubject,
+						Args:     slingArgs,
+						LogEvent: true,
+					})
+					return err
+				},
+			}
+			dispatcher := queue.NewDispatcher(q, spawner)
+
+			// Load and dispatch
+			if _, err := q.Load(); err != nil {
+				return fmt.Errorf("loading queue: %w", err)
+			}
+			if _, err := dispatcher.Dispatch(); err != nil {
+				return fmt.Errorf("dispatching from queue: %w", err)
+			}
+
+			// Wake witness and refinery
+			wakeRigAgents(townRoot, rigName)
+
+			// SpawnAndHookBead did everything - return early
+			return nil
+		} else if slingQueue && formulaName != "" {
+			// --queue mode for formula-on-bead
+			fmt.Printf("Target is rig '%s', instantiating formula and queueing...\n", rigName)
+
+			// Check bead status before queueing
+			info, err := getBeadInfo(beadID)
+			if err != nil {
+				return fmt.Errorf("checking bead status: %w", err)
+			}
+			if (info.Status == "pinned" || info.Status == "hooked") && !slingForce {
+				return fmt.Errorf("bead %s is already %s to %s\nUse --force to re-sling", beadID, info.Status, info.Assignee)
+			}
+
+			// Auto-convoy before formula instantiation
+			if !slingNoConvoy && isTrackedByConvoy(beadID) == "" {
+				convoyID, convoyErr := createAutoConvoy(beadID, info.Title)
+				if convoyErr != nil {
+					fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), convoyErr)
+				} else {
+					fmt.Printf("%s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
+				}
+			}
+
+			// Formula instantiation -> compound ID (must happen before queue)
+			compoundID, err := InstantiateFormulaOnBead(townRoot, formulaName, beadID, info.Title)
+			if err != nil {
+				return err
+			}
+
+			// Create queue with town-wide ops
+			ops := beads.NewRealBeadsOps(townRoot)
+			q := queue.New(ops)
+
+			// Add compound to queue (not the original bead)
+			if err := q.Add(compoundID); err != nil {
+				return fmt.Errorf("adding compound to queue: %w", err)
+			}
+			fmt.Printf("%s Compound queued\n", style.Bold.Render("✓"))
+
+			// Create spawner using SpawnAndHookBead
+			spawner := &queue.RealSpawner{
+				SpawnInFunc: func(spawnRigName, bid string) error {
+					_, err := SpawnAndHookBead(townRoot, spawnRigName, bid, SpawnAndHookOptions{
+						Force:    slingForce,
+						Account:  slingAccount,
+						Create:   slingCreate,
+						Agent:    slingAgent,
+						Subject:  slingSubject,
+						Args:     slingArgs,
+						LogEvent: true,
+					})
+					return err
+				},
+			}
+			dispatcher := queue.NewDispatcher(q, spawner)
+
+			// Load and dispatch
+			if _, err := q.Load(); err != nil {
+				return fmt.Errorf("loading queue: %w", err)
+			}
+			if _, err := dispatcher.Dispatch(); err != nil {
+				return fmt.Errorf("dispatching from queue: %w", err)
+			}
+
+			// Wake witness and refinery
+			wakeRigAgents(townRoot, rigName)
+
+			// SpawnAndHookBead did everything - return early
+			return nil
+		} else if formulaName == "" {
+				// Non-queue plain bead to rig - use SpawnAndHookBead
 				fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
-				spawnOpts := SlingSpawnOptions{
+
+				// Check bead status before spawning
+				info, err := getBeadInfo(beadID)
+				if err != nil {
+					return fmt.Errorf("checking bead status: %w", err)
+				}
+				if (info.Status == "pinned" || info.Status == "hooked") && !slingForce {
+					return fmt.Errorf("bead %s is already %s to %s\nUse --force to re-sling", beadID, info.Status, info.Assignee)
+				}
+
+				// Auto-convoy before spawn
+				if !slingNoConvoy && isTrackedByConvoy(beadID) == "" {
+					convoyID, convoyErr := createAutoConvoy(beadID, info.Title)
+					if convoyErr != nil {
+						fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), convoyErr)
+					} else {
+						fmt.Printf("%s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
+					}
+				}
+
+				// SpawnAndHookBead does spawn + hook + nudge
+				_, spawnErr := SpawnAndHookBead(townRoot, rigName, beadID, SpawnAndHookOptions{
 					Force:    slingForce,
 					Account:  slingAccount,
 					Create:   slingCreate,
-					HookBead: beadID, // Set atomically at spawn time
 					Agent:    slingAgent,
-				}
-				spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
+					Subject:  slingSubject,
+					Args:     slingArgs,
+					LogEvent: true,
+				})
 				if spawnErr != nil {
 					return fmt.Errorf("spawning polecat: %w", spawnErr)
 				}
-				targetAgent = spawnInfo.AgentID()
-				hookWorkDir = spawnInfo.ClonePath
 
-				// Wake witness and refinery to monitor the new polecat
+				// Wake witness and refinery
 				wakeRigAgents(townRoot, rigName)
+
+				// SpawnAndHookBead did everything - return early
+				return nil
+			} else {
+				// Non-queue formula-on-bead to rig
+				fmt.Printf("Target is rig '%s'...\n", rigName)
+
+				// Check bead status before doing anything
+				info, err := getBeadInfo(beadID)
+				if err != nil {
+					return fmt.Errorf("checking bead status: %w", err)
+				}
+				if (info.Status == "pinned" || info.Status == "hooked") && !slingForce {
+					return fmt.Errorf("bead %s is already %s to %s\nUse --force to re-sling", beadID, info.Status, info.Assignee)
+				}
+
+				// Auto-convoy before formula instantiation
+				if !slingNoConvoy && isTrackedByConvoy(beadID) == "" {
+					convoyID, convoyErr := createAutoConvoy(beadID, info.Title)
+					if convoyErr != nil {
+						fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), convoyErr)
+					} else {
+						fmt.Printf("%s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
+					}
+				}
+
+				// Formula instantiation -> compound ID
+				compoundID, err := InstantiateFormulaOnBead(townRoot, formulaName, beadID, info.Title)
+				if err != nil {
+					return err
+				}
+
+				// Spawn and hook the compound
+				_, spawnErr := SpawnAndHookBead(townRoot, rigName, compoundID, SpawnAndHookOptions{
+					Force:    slingForce,
+					Account:  slingAccount,
+					Create:   slingCreate,
+					Agent:    slingAgent,
+					Subject:  slingSubject,
+					Args:     slingArgs,
+					LogEvent: true,
+				})
+				if spawnErr != nil {
+					return fmt.Errorf("spawning polecat: %w", spawnErr)
+				}
+
+				wakeRigAgents(townRoot, rigName)
+				return nil
 			}
 		} else {
 			// Slinging to an existing agent
@@ -333,22 +481,83 @@ func runSling(cmd *cobra.Command, args []string) error {
 					if len(parts) >= 3 && parts[1] == "polecats" {
 						rigName := parts[0]
 						fmt.Printf("Target polecat has no active session, spawning fresh polecat in rig '%s'...\n", rigName)
-						spawnOpts := SlingSpawnOptions{
+
+						if formulaName == "" {
+							// Plain bead - check status, convoy, use SpawnAndHookBead
+							info, infoErr := getBeadInfo(beadID)
+							if infoErr != nil {
+								return fmt.Errorf("checking bead status: %w", infoErr)
+							}
+							if (info.Status == "pinned" || info.Status == "hooked") && !slingForce {
+								return fmt.Errorf("bead %s is already %s to %s\nUse --force to re-sling", beadID, info.Status, info.Assignee)
+							}
+
+							// Auto-convoy
+							if !slingNoConvoy && isTrackedByConvoy(beadID) == "" {
+								convoyID, convoyErr := createAutoConvoy(beadID, info.Title)
+								if convoyErr != nil {
+									fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), convoyErr)
+								} else {
+									fmt.Printf("%s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
+								}
+							}
+
+							_, spawnErr := SpawnAndHookBead(townRoot, rigName, beadID, SpawnAndHookOptions{
+								Force:    slingForce,
+								Account:  slingAccount,
+								Create:   slingCreate,
+								Agent:    slingAgent,
+								Subject:  slingSubject,
+								Args:     slingArgs,
+								LogEvent: true,
+							})
+							if spawnErr != nil {
+								return fmt.Errorf("spawning polecat: %w", spawnErr)
+							}
+							wakeRigAgents(townRoot, rigName)
+							return nil
+						}
+
+						// Formula-on-bead - do formula instantiation first, then spawn+hook compound
+						info, infoErr := getBeadInfo(beadID)
+						if infoErr != nil {
+							return fmt.Errorf("checking bead status: %w", infoErr)
+						}
+						if (info.Status == "pinned" || info.Status == "hooked") && !slingForce {
+							return fmt.Errorf("bead %s is already %s to %s\nUse --force to re-sling", beadID, info.Status, info.Assignee)
+						}
+
+						// Auto-convoy
+						if !slingNoConvoy && isTrackedByConvoy(beadID) == "" {
+							convoyID, convoyErr := createAutoConvoy(beadID, info.Title)
+							if convoyErr != nil {
+								fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), convoyErr)
+							} else {
+								fmt.Printf("%s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
+							}
+						}
+
+						// Formula instantiation -> compound ID
+						compoundID, instErr := InstantiateFormulaOnBead(townRoot, formulaName, beadID, info.Title)
+						if instErr != nil {
+							return instErr
+						}
+
+						// Spawn and hook the compound
+						_, spawnErr := SpawnAndHookBead(townRoot, rigName, compoundID, SpawnAndHookOptions{
 							Force:    slingForce,
 							Account:  slingAccount,
 							Create:   slingCreate,
-							HookBead: beadID,
 							Agent:    slingAgent,
-						}
-						spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
+							Subject:  slingSubject,
+							Args:     slingArgs,
+							LogEvent: true,
+						})
 						if spawnErr != nil {
-							return fmt.Errorf("spawning polecat to replace dead polecat: %w", spawnErr)
+							return fmt.Errorf("spawning polecat: %w", spawnErr)
 						}
-						targetAgent = spawnInfo.AgentID()
-						hookWorkDir = spawnInfo.ClonePath
-
-						// Wake witness and refinery to monitor the new polecat
 						wakeRigAgents(townRoot, rigName)
+						return nil
 					} else {
 						return fmt.Errorf("resolving target: %w", err)
 					}
@@ -437,121 +646,20 @@ func runSling(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Formula-on-bead mode: instantiate formula and bond to original bead
+	// Formula-on-bead mode for non-rig targets (existing agents)
+	// Rig targets with formula-on-bead return early above
 	if formulaName != "" {
-		fmt.Printf("  Instantiating formula %s...\n", formulaName)
-
-		// Route bd mutations (wisp/bond) to the correct beads context for the target bead.
-		// Some bd mol commands don't support prefix routing, so we must run them from the
-		// rig directory that owns the bead's database.
-		formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, "")
-
-		// Step 1: Cook the formula (ensures proto exists)
-		// Cook doesn't need database context - runs from cwd like gt formula show
-		cookCmd := exec.Command("bd", "--no-daemon", "cook", formulaName)
-		cookCmd.Stderr = os.Stderr
-		if err := cookCmd.Run(); err != nil {
-			return fmt.Errorf("cooking formula %s: %w", formulaName, err)
-		}
-
-		// Step 2: Create wisp with feature and issue variables from bead
-		// Run from rig directory so wisp is created in correct database
-		featureVar := fmt.Sprintf("feature=%s", info.Title)
-		issueVar := fmt.Sprintf("issue=%s", beadID)
-		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--var", issueVar, "--json"}
-		wispCmd := exec.Command("bd", wispArgs...)
-		wispCmd.Dir = formulaWorkDir
-		wispCmd.Env = append(os.Environ(), "GT_ROOT="+townRoot)
-		wispCmd.Stderr = os.Stderr
-		wispOut, err := wispCmd.Output()
+		// Formula instantiation -> compound ID
+		compoundID, err := InstantiateFormulaOnBead(townRoot, formulaName, beadID, info.Title)
 		if err != nil {
-			return fmt.Errorf("creating wisp for formula %s: %w", formulaName, err)
+			return err
 		}
-
-		// Parse wisp output to get the root ID
-		wispRootID, err := parseWispIDFromJSON(wispOut)
-		if err != nil {
-			return fmt.Errorf("parsing wisp output: %w", err)
-		}
-		fmt.Printf("%s Formula wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
-
-		// Step 3: Bond wisp to original bead (creates compound)
-		// Use --no-daemon for mol bond (requires direct database access)
-		bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
-		bondCmd := exec.Command("bd", bondArgs...)
-		bondCmd.Dir = formulaWorkDir
-		bondCmd.Stderr = os.Stderr
-		bondOut, err := bondCmd.Output()
-		if err != nil {
-			return fmt.Errorf("bonding formula to bead: %w", err)
-		}
-
-		// Parse bond output - the wisp root becomes the compound root
-		// After bonding, we hook the wisp root (which now contains the original bead)
-		var bondResult struct {
-			RootID string `json:"root_id"`
-		}
-		if err := json.Unmarshal(bondOut, &bondResult); err != nil {
-			// Fallback: use wisp root as the compound root
-			fmt.Printf("%s Could not parse bond output, using wisp root\n", style.Dim.Render("Warning:"))
-		} else if bondResult.RootID != "" {
-			wispRootID = bondResult.RootID
-		}
-
-		fmt.Printf("%s Formula bonded to %s\n", style.Bold.Render("✓"), beadID)
 
 		// Record attached molecule after other description updates to avoid overwrite.
-		attachedMoleculeID = wispRootID
+		attachedMoleculeID = compoundID
 
-		// Update beadID to hook the compound root instead of bare bead
-		beadID = wispRootID
-
-		// --queue mode for formula-on-bead: now queue the compound bead
-		if slingQueue {
-			fmt.Printf("Queueing compound bead and dispatching...\n")
-
-			// Create queue with town-wide ops
-			ops := beads.NewRealBeadsOps(townRoot)
-			q := queue.New(ops)
-
-			// Add compound bead to queue
-			if err := q.Add(beadID); err != nil {
-				return fmt.Errorf("adding compound bead to queue: %w", err)
-			}
-			fmt.Printf("%s Compound bead queued\n", style.Bold.Render("✓"))
-
-			// Create spawner - rigName comes from QueueItem now
-			spawner := &queue.RealSpawner{
-				SpawnInFunc: func(spawnRigName, bid string) error {
-					spawnOpts := SlingSpawnOptions{
-						Force:    slingForce,
-						Account:  slingAccount,
-						Create:   slingCreate,
-						HookBead: bid,
-						Agent:    slingAgent,
-					}
-					info, err := SpawnPolecatForSling(spawnRigName, spawnOpts)
-					if err != nil {
-						return err
-					}
-					targetAgent = info.AgentID()
-					hookWorkDir = info.ClonePath
-					return nil
-				},
-			}
-			dispatcher := queue.NewDispatcher(q, spawner)
-
-			// Load and dispatch
-			if _, err := q.Load(); err != nil {
-				return fmt.Errorf("loading queue: %w", err)
-			}
-			if _, err := dispatcher.Dispatch(); err != nil {
-				return fmt.Errorf("dispatching from queue: %w", err)
-			}
-
-			// Wake witness and refinery to monitor the new polecat
-			wakeRigAgents(townRoot, queueRig)
-		}
+		// Hook the compound instead of bare bead
+		beadID = compoundID
 	}
 
 	// Hook the bead using bd update.
