@@ -1,3 +1,5 @@
+// rig_beads_check.go implements a health check that verifies rig identity beads
+// exist for all rigs and can create missing ones via the Fix method.
 package doctor
 
 import (
