@@ -549,3 +549,50 @@ func TestStartWithAgents_BootAgent(t *testing.T) {
 	assert.True(t, agents.Exists(agent.BootAddress))
 	assert.Equal(t, bootDir, agents.GetWorkDir(id))
 }
+
+// =============================================================================
+// GT_AGENT Preservation Tests
+//
+// When an agent override is specified via WithAgent(), we set GT_AGENT env var
+// so that handoff can read and preserve it across session restarts.
+// See: commit 48ace2cb - fix(handoff): preserve GT_AGENT across session restarts
+// =============================================================================
+
+func TestStartWithAgents_WithAgent_SetsGTAgent(t *testing.T) {
+	townRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755))
+
+	agents := agent.NewDouble()
+	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress, WithAgent("gemini"))
+
+	require.NoError(t, err)
+	cmd := agents.GetCommand(agent.MayorAddress)
+	// GT_AGENT should be set when WithAgent is used
+	assert.Contains(t, cmd, "GT_AGENT=gemini")
+}
+
+func TestStartWithAgents_NoOverride_NoGTAgent(t *testing.T) {
+	townRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755))
+
+	// Create town settings so auto-resolution works
+	settingsPath := filepath.Join(townRoot, "mayor", "town-settings.json")
+	require.NoError(t, os.WriteFile(settingsPath, []byte(`{"default_agent":"claude"}`), 0644))
+
+	agents := agent.NewDouble()
+	// Don't use WithAgent - agent will be auto-resolved
+	_, err := StartWithAgents(agents, nil, townRoot, agent.MayorAddress)
+
+	require.NoError(t, err)
+	cmd := agents.GetCommand(agent.MayorAddress)
+	// GT_AGENT should NOT be set when no override is used
+	assert.NotContains(t, cmd, "GT_AGENT=")
+}
+
+func TestWithAgent_EmptyString_IsNoOp(t *testing.T) {
+	cfg := &startConfig{}
+	WithAgent("")(cfg)
+
+	// Empty string should not set agent (allows safe optional usage)
+	assert.Equal(t, "", cfg.agent)
+}

@@ -2256,6 +2256,8 @@ func TestQuoteForShell(t *testing.T) {
 }
 
 // NOTE: TestBuildStartupCommandWithAgentOverride_SetsGTAgent and
-// TestBuildStartupCommandWithAgentOverride_NoGTAgentWhenNoOverride were removed -
-// they tested BuildStartupCommandWithAgentOverride which doesn't exist in the
-// factory-based architecture. GT_AGENT preservation should be handled in factory.Start().
+// TestBuildStartupCommandWithAgentOverride_NoGTAgentWhenNoOverride - these tests
+// are now in factory_test.go as TestStartWithAgents_WithAgent_SetsGTAgent and
+// TestStartWithAgents_NoOverride_NoGTAgent. The factory.Start() + WithAgent()
+// pattern replaces BuildStartupCommandWithAgentOverride.
+// See: commit 48ace2cb - fix(handoff): preserve GT_AGENT across session restarts

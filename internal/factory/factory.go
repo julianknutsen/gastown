@@ -215,6 +215,14 @@ func StartWithAgents(
 		envVars[k] = v
 	}
 
+	// GT_AGENT preservation: If an agent override was explicitly specified via
+	// WithAgent(), set GT_AGENT env var so handoff can read and preserve it.
+	// This ensures non-default agents persist across session restarts.
+	// See: commit 48ace2cb - fix(handoff): preserve GT_AGENT across session restarts
+	if cfg.agent != "" {
+		envVars["GT_AGENT"] = cfg.agent
+	}
+
 	// Ensure runtime settings exist
 	runtimeConfig := config.LoadRuntimeConfig(townRoot)
 	if err := runtime.EnsureSettingsForRole(workDir, role, runtimeConfig); err != nil {
