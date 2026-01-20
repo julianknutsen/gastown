@@ -117,6 +117,7 @@ func GetRepoRoot() (string, error) {
 	}
 
 	// Try common development paths relative to home
+	// TODO: Consider making these candidate paths configurable via environment variable
 	home := os.Getenv("HOME")
 	if home != "" {
 		candidates := []string{
