@@ -492,8 +492,10 @@ func runSling(cmd *cobra.Command, args []string) error {
 	updateAgentHookBead(targetAgent, beadID, "", townBeadsDir)
 
 	// Auto-attach mol-polecat-work to polecat agent beads
-	// This ensures polecats have the standard work molecule attached for guidance
-	if strings.Contains(targetAgent, "/polecats/") {
+	// This ensures polecats have the standard work molecule attached for guidance.
+	// Only do this for bare beads (no --on formula), since formula-on-bead
+	// mode already attaches the formula as a molecule.
+	if formulaName == "" && strings.Contains(targetAgent, "/polecats/") {
 		if err := attachPolecatWorkMolecule(targetAgent, hookWorkDir, townRoot); err != nil {
 			// Warn but don't fail - polecat will still work without molecule
 			fmt.Printf("%s Could not attach work molecule: %v\n", style.Dim.Render("Warning:"), err)
