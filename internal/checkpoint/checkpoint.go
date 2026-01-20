@@ -115,6 +115,9 @@ func Remove(polecatDir string) error {
 }
 
 // Capture creates a checkpoint by capturing current git and work state.
+// Returns a *Checkpoint with ModifiedFiles, LastCommit, and Branch populated
+// from git commands. Git failures are silently ignored, leaving fields empty.
+// The error return is always nil (reserved for future use).
 func Capture(polecatDir string) (*Checkpoint, error) {
 	cp := &Checkpoint{
 		Timestamp: time.Now(),
