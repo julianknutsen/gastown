@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -234,9 +235,15 @@ func (t *Tmux) Stop(id session.SessionID) error {
 		// Get all descendant PIDs recursively (returns deepest-first order)
 		descendants := getAllDescendants(pid)
 
+		// Exclude our own PID to avoid self-kill in scenarios like gt done
+		// where the caller is running inside the session being stopped.
+		myPID := strconv.Itoa(os.Getpid())
+
 		// Send SIGTERM to all descendants (deepest first to avoid orphaning)
 		for _, dpid := range descendants {
-			_ = exec.Command("kill", "-TERM", dpid).Run()
+			if dpid != myPID {
+				_ = exec.Command("kill", "-TERM", dpid).Run()
+			}
 		}
 
 		// Wait for graceful shutdown
@@ -244,13 +251,18 @@ func (t *Tmux) Stop(id session.SessionID) error {
 
 		// Send SIGKILL to any remaining descendants
 		for _, dpid := range descendants {
-			_ = exec.Command("kill", "-KILL", dpid).Run()
+			if dpid != myPID {
+				_ = exec.Command("kill", "-KILL", dpid).Run()
+			}
 		}
 
 		// Kill the pane process itself (may have called setsid() and detached)
-		_ = exec.Command("kill", "-TERM", pid).Run()
-		time.Sleep(100 * time.Millisecond)
-		_ = exec.Command("kill", "-KILL", pid).Run()
+		// Skip if it's our own process
+		if pid != myPID {
+			_ = exec.Command("kill", "-TERM", pid).Run()
+			time.Sleep(100 * time.Millisecond)
+			_ = exec.Command("kill", "-KILL", pid).Run()
+		}
 	}
 
 	// Kill the tmux session

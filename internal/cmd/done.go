@@ -759,9 +759,8 @@ func selfKillSession(townRoot string, roleInfo RoleInfo) error {
 	_ = events.LogFeed(events.TypeSessionDeath, agentID,
 		events.SessionDeathPayload(sessionName, agentID, "self-clean: done means gone", "gt done"))
 
-	// Kill our own session through factory.Agents() for consistency
-	// This will terminate Claude and all child processes, completing the self-cleaning cycle.
-	// Agents.Stop() recursively kills all descendant processes to prevent orphans.
+	// Kill our own session through factory.Agents() for consistency.
+	// Agents.Stop() will terminate Claude and all child processes, completing the self-cleaning cycle.
 	polecatID := agent.PolecatAddress(rigName, polecatName)
 	if err := factory.Agents().Stop(polecatID, true); err != nil {
 		return fmt.Errorf("killing session %s: %w", sessionName, err)
