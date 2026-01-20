@@ -1,4 +1,3 @@
-// Package deacon provides the Deacon agent infrastructure.
 package deacon
 
 import (
