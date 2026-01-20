@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/factory"
+	"github.com/steveyegge/gastown/internal/queue"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -89,6 +90,7 @@ func runSlingFormula(args []string) error {
 
 	// Resolve target agent
 	var targetAgent string
+	var queueRig string // Set when --queue with rig target (for deferred spawn)
 
 	if target != "" {
 		// Resolve "." to current agent identity (like git's "." meaning current directory)
@@ -123,6 +125,10 @@ func runSlingFormula(args []string) error {
 				// Dry run - just indicate what would happen
 				fmt.Printf("Would spawn fresh polecat in rig '%s'\n", rigName)
 				targetAgent = fmt.Sprintf("%s/polecats/<new>", rigName)
+			} else if slingQueue {
+				// --queue mode: defer spawn until after wisp creation
+				// Will queue and dispatch after wisp is created
+				queueRig = rigName
 			} else {
 				// Spawn a fresh polecat in the rig
 				fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
@@ -156,13 +162,23 @@ func runSlingFormula(args []string) error {
 		}
 	}
 
+	// --queue requires a rig target (spawning polecats)
+	if slingQueue && queueRig == "" {
+		return fmt.Errorf("--queue requires a rig target (e.g., 'gt sling %s gastown --queue')", formulaName)
+	}
+
 	// --wisp-only mode: just create the wisp, don't spawn or attach
 	if slingWispOnly {
 		fmt.Printf("%s Creating wisp for formula %s (wisp-only mode)...\n", style.Bold.Render("🎯"), formulaName)
 		return runWispOnly(formulaName, townBeadsDir)
 	}
 
-	fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, targetAgent)
+	// Display target (queueRig for queue mode, targetAgent otherwise)
+	displayTarget := targetAgent
+	if queueRig != "" {
+		displayTarget = queueRig
+	}
+	fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, displayTarget)
 
 	if slingDryRun {
 		fmt.Printf("Would cook formula: %s\n", formulaName)
@@ -211,6 +227,52 @@ func runSlingFormula(args []string) error {
 	if err := storeAttachedMoleculeInBead(wispRootID, wispRootID); err != nil {
 		// Warn but don't fail - polecat can still work through steps
 		fmt.Printf("%s Could not store attached_molecule: %v\n", style.Dim.Render("Warning:"), err)
+	}
+
+	// --queue mode for formula + rig target: queue wisp and dispatch
+	if queueRig != "" {
+		fmt.Printf("Queueing wisp and dispatching...\n")
+
+		// Create queue with town-wide ops
+		ops := beads.NewRealBeadsOps(townRoot)
+		q := queue.New(ops)
+
+		// Add wisp bead to queue
+		if err := q.Add(wispRootID); err != nil {
+			return fmt.Errorf("adding wisp to queue: %w", err)
+		}
+		fmt.Printf("%s Wisp queued\n", style.Bold.Render("✓"))
+
+		// Create spawner - rigName comes from QueueItem now
+		spawner := &queue.RealSpawner{
+			SpawnInFunc: func(spawnRigName, bid string) error {
+				spawnOpts := SlingSpawnOptions{
+					Force:    slingForce,
+					Account:  slingAccount,
+					Create:   slingCreate,
+					HookBead: bid,
+					Agent:    slingAgent,
+				}
+				info, err := SpawnPolecatForSling(spawnRigName, spawnOpts)
+				if err != nil {
+					return err
+				}
+				targetAgent = info.AgentID()
+				return nil
+			},
+		}
+		dispatcher := queue.NewDispatcher(q, spawner)
+
+		// Load and dispatch
+		if _, err := q.Load(); err != nil {
+			return fmt.Errorf("loading queue: %w", err)
+		}
+		if _, err := dispatcher.Dispatch(); err != nil {
+			return fmt.Errorf("dispatching from queue: %w", err)
+		}
+
+		// Wake witness and refinery
+		wakeRigAgents(townRoot, queueRig)
 	}
 
 	// Step 3: Hook the wisp bead using bd update.

@@ -1,11 +1,17 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/queue"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -40,21 +46,6 @@ var queueStatusCmd = &cobra.Command{
 This is the same as running 'gt queue' with no subcommand.`,
 	Args: cobra.NoArgs,
 	RunE: runQueueStatus,
-}
-
-var queueAddCmd = &cobra.Command{
-	Use:   "add <bead-id>...",
-	Short: "Add beads to the queue",
-	Long: `Add one or more beads to the work queue.
-
-Beads are marked with the "queued" label. Town-level beads (hq-*) cannot be
-queued since polecats are rig-local.
-
-Examples:
-  gt queue add gt-abc
-  gt queue add gt-abc gt-def gt-ghi`,
-	Args: cobra.MinimumNArgs(1),
-	RunE: runQueueAdd,
 }
 
 var queueListCmd = &cobra.Command{
@@ -126,7 +117,6 @@ func init() {
 	queueListCmd.Flags().BoolVar(&queueListRunning, "running", false, "Show only running beads")
 
 	queueCmd.AddCommand(queueStatusCmd)
-	queueCmd.AddCommand(queueAddCmd)
 	queueCmd.AddCommand(queueListCmd)
 	queueCmd.AddCommand(queueRunCmd)
 	queueCmd.AddCommand(queueClearCmd)
@@ -182,34 +172,6 @@ func runQueueStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runQueueAdd(cmd *cobra.Command, args []string) error {
-	townRoot, err := workspace.FindFromCwd()
-	if err != nil {
-		return fmt.Errorf("finding town root: %w", err)
-	}
-
-	ops := beads.NewRealBeadsOps(townRoot)
-	q := queue.New(ops)
-
-	var added, failed int
-	for _, beadID := range args {
-		if err := q.Add(beadID); err != nil {
-			fmt.Printf("%s Failed to queue %s: %v\n", style.Warning.Render("!"), beadID, err)
-			failed++
-			continue
-		}
-		fmt.Printf("%s Queued %s\n", style.Bold.Render("✓"), beadID)
-		added++
-	}
-
-	if failed > 0 {
-		return fmt.Errorf("%d of %d beads failed to queue", failed, len(args))
-	}
-
-	fmt.Printf("\n%d bead(s) added to queue\n", added)
-	return nil
-}
-
 func runQueueList(cmd *cobra.Command, args []string) error {
 	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
@@ -230,16 +192,36 @@ func runQueueList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Group by rig
-	byRig := make(map[string][]string)
+	byRig := make(map[string][]queue.QueueItem)
 	for _, item := range items {
-		byRig[item.RigName] = append(byRig[item.RigName], item.BeadID)
+		byRig[item.RigName] = append(byRig[item.RigName], item)
 	}
 
+	// Collect wisp IDs for batch lookup of bonded titles
+	var wispIDs []string
+	for _, item := range items {
+		if strings.HasPrefix(item.BeadID, "gt-wisp-") {
+			wispIDs = append(wispIDs, item.BeadID)
+		}
+	}
+
+	// Batch lookup bonded titles
+	bondedTitles := getBondedBeadTitles(townRoot, wispIDs)
+
 	fmt.Printf("Queued beads: %d\n\n", len(items))
-	for rigName, beadIDs := range byRig {
-		fmt.Printf("%s (%d):\n", style.Bold.Render(rigName), len(beadIDs))
-		for _, id := range beadIDs {
-			fmt.Printf("  %s\n", id)
+	for rigName, rigItems := range byRig {
+		fmt.Printf("%s (%d):\n", style.Bold.Render(rigName), len(rigItems))
+		for _, item := range rigItems {
+			// For wisps, show the bonded bead's title instead
+			title := item.Title
+			if bondedTitle, ok := bondedTitles[item.BeadID]; ok && bondedTitle != "" {
+				title = bondedTitle
+			}
+			if title != "" {
+				fmt.Printf("  %s  %s\n", item.BeadID, style.Dim.Render(title))
+			} else {
+				fmt.Printf("  %s\n", item.BeadID)
+			}
 		}
 	}
 
@@ -371,50 +353,73 @@ func runQueueClear(cmd *cobra.Command, args []string) error {
 
 // countRunningPolecats counts the number of active polecat sessions across all rigs.
 func countRunningPolecats(townRoot string) int {
-	// Load agents and count polecat sessions
-	agents, err := loadAllAgents(townRoot)
+	// Load rigs config to iterate through each rig
+	rigsConfigPath := townRoot + "/mayor/rigs.json"
+	rigsConfig, err := config.LoadRigsConfig(rigsConfigPath)
 	if err != nil {
 		return 0
 	}
 
 	count := 0
-	for _, a := range agents {
-		if a.Type == "polecat" && a.HasActiveSession {
-			count++
+	for rigName := range rigsConfig.Rigs {
+		// Use AgentsFor with real rig name to get proper MirroredSessions for remote rigs
+		id := agent.PolecatAddress(rigName, "_")
+		agents := factory.AgentsFor(townRoot, id)
+		agentIDs, err := agents.List()
+		if err != nil {
+			continue
+		}
+
+		for _, aid := range agentIDs {
+			if aid.Role == "polecat" {
+				count++
+			}
 		}
 	}
 	return count
 }
 
-// agentInfo holds basic agent information for counting.
-type agentInfo struct {
-	Type             string
-	HasActiveSession bool
-}
-
-// loadAllAgents loads basic agent info from all rigs.
-func loadAllAgents(townRoot string) ([]agentInfo, error) {
-	// This is a simplified implementation - in practice you'd use the agent package
-	// to enumerate all agents across rigs
-	rigsConfigPath := townRoot + "/mayor/rigs.json"
-	rigsConfig, err := config.LoadRigsConfig(rigsConfigPath)
-	if err != nil {
-		return nil, err
+// getBondedBeadTitles returns the titles of beads bonded to wisps (batch lookup).
+// For wisps, the bonded bead is the dependent with dependency_type "blocks".
+func getBondedBeadTitles(townRoot string, beadIDs []string) map[string]string {
+	result := make(map[string]string)
+	if len(beadIDs) == 0 {
+		return result
 	}
 
-	var agents []agentInfo
-	for rigName := range rigsConfig.Rigs {
-		rigAgents := loadRigAgents(townRoot, rigName)
-		agents = append(agents, rigAgents...)
+	// Run bd show with all IDs at once
+	args := append([]string{"--no-daemon", "show", "--json"}, beadIDs...)
+	cmd := exec.Command("bd", args...)
+	cmd.Dir = townRoot
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return result
 	}
 
-	return agents, nil
-}
+	// Parse the JSON array
+	var issues []struct {
+		ID         string `json:"id"`
+		Dependents []struct {
+			Title          string `json:"title"`
+			DependencyType string `json:"dependency_type"`
+		} `json:"dependents"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
+		return result
+	}
 
-// loadRigAgents loads agent info for a specific rig.
-func loadRigAgents(townRoot, rigName string) []agentInfo {
-	// Check for polecat sessions in this rig
-	// This would typically check tmux sessions or agent state files
-	// For now, return empty - the real implementation would use agent.List()
-	return nil
+	// Extract bonded bead titles
+	for _, issue := range issues {
+		for _, dep := range issue.Dependents {
+			if dep.DependencyType == "blocks" {
+				result[issue.ID] = dep.Title
+				break
+			}
+		}
+	}
+
+	return result
 }

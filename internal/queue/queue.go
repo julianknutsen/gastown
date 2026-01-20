@@ -13,6 +13,7 @@ const QueueLabel = "queued"
 // QueueItem represents a bead in the queue with its target rig.
 type QueueItem struct {
 	BeadID  string // Bead ID
+	Title   string // Bead title
 	RigName string // Target rig for dispatch
 }
 
@@ -71,6 +72,7 @@ func (q *Queue) Load() ([]QueueItem, error) {
 			}
 			q.items = append(q.items, QueueItem{
 				BeadID:  bead.ID,
+				Title:   bead.Title,
 				RigName: rigName,
 			})
 		}

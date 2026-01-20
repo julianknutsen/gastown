@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/mail"
+	"github.com/steveyegge/gastown/internal/queue"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -100,6 +101,8 @@ var (
 	slingWispOnly bool   // --wisp-only: create wisp only, don't spawn or attach
 	slingSkipCook bool   // --skip-cook: skip formula cooking (assumes pre-cooked)
 	slingParallel int    // --parallel: batch parallelism (default 5, use 1 for sequential)
+	slingCapacity int    // --capacity: max total polecats running (0 = unlimited)
+	slingQueue    bool   // --queue: add to queue and dispatch (opt-in queue workflow)
 )
 
 func init() {
@@ -119,6 +122,8 @@ func init() {
 	slingCmd.Flags().BoolVar(&slingWispOnly, "wisp-only", false, "Create formula wisp only, don't spawn polecat or attach (for pre-staging)")
 	slingCmd.Flags().BoolVar(&slingSkipCook, "skip-cook", false, "Skip formula cooking (assumes formula is pre-cooked)")
 	slingCmd.Flags().IntVar(&slingParallel, "parallel", 5, "Batch parallelism (number of concurrent polecats, use 1 for sequential)")
+	slingCmd.Flags().IntVar(&slingCapacity, "capacity", 0, "Max total polecats running (0 = unlimited, use with --queue)")
+	slingCmd.Flags().BoolVar(&slingQueue, "queue", false, "Add to queue and dispatch (opt-in queue workflow)")
 
 	rootCmd.AddCommand(slingCmd)
 }
@@ -211,6 +216,8 @@ func runSling(cmd *cobra.Command, args []string) error {
 	// Determine target agent (self or specified)
 	var targetAgent string
 	var hookWorkDir string // Clone path for polecat spawns (used for molecule attachment)
+	var queueRig string    // Set when --queue with rig target (for deferred spawn)
+	var isRigTarget bool   // True when target is a rig name
 
 	if len(args) > 1 {
 		target := args[1]
@@ -244,6 +251,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 			}
 		} else if rigName, isRig := IsRigName(target); isRig {
 			// Check if target is a rig name (auto-spawn polecat)
+			isRigTarget = true
 			if slingDryRun {
 				// Dry run - just indicate what would happen
 				fmt.Printf("Would spawn fresh polecat in rig '%s'\n", rigName)
@@ -252,8 +260,58 @@ func runSling(cmd *cobra.Command, args []string) error {
 				// --wisp-only mode: just create the wisp, don't spawn polecat
 				// Polecat will be spawned separately and the compound bead will be slung to it
 				targetAgent = fmt.Sprintf("%s/polecats/<pending>", rigName)
+			} else if slingQueue && formulaName == "" {
+				// --queue mode for plain bead (not formula-on-bead)
+				// Formula-on-bead queue is handled after formula instantiation
+				fmt.Printf("Target is rig '%s', queueing and dispatching...\n", rigName)
+
+				// Create queue with town-wide ops
+				ops := beads.NewRealBeadsOps(townRoot)
+				q := queue.New(ops)
+
+				// Add bead to queue
+				if err := q.Add(beadID); err != nil {
+					return fmt.Errorf("adding bead to queue: %w", err)
+				}
+				fmt.Printf("%s Bead queued\n", style.Bold.Render("✓"))
+
+				// Create spawner - rigName comes from QueueItem now
+				spawner := &queue.RealSpawner{
+					SpawnInFunc: func(spawnRigName, bid string) error {
+						spawnOpts := SlingSpawnOptions{
+							Force:    slingForce,
+							Account:  slingAccount,
+							Create:   slingCreate,
+							HookBead: bid,
+							Agent:    slingAgent,
+						}
+						info, err := SpawnPolecatForSling(spawnRigName, spawnOpts)
+						if err != nil {
+							return err
+						}
+						// Capture for later use (used after dispatch)
+						targetAgent = info.AgentID()
+						hookWorkDir = info.ClonePath
+						return nil
+					},
+				}
+				dispatcher := queue.NewDispatcher(q, spawner)
+
+				// Load and dispatch
+				if _, err := q.Load(); err != nil {
+					return fmt.Errorf("loading queue: %w", err)
+				}
+				if _, err := dispatcher.Dispatch(); err != nil {
+					return fmt.Errorf("dispatching from queue: %w", err)
+				}
+
+				// Wake witness and refinery to monitor the new polecat
+				wakeRigAgents(townRoot, rigName)
+			} else if slingQueue && formulaName != "" {
+				// --queue mode for formula-on-bead: defer queue until after formula instantiation
+				queueRig = rigName
 			} else {
-				// Spawn a fresh polecat in the rig
+				// Spawn a fresh polecat in the rig (default: no queue)
 				fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
 				spawnOpts := SlingSpawnOptions{
 					Force:    slingForce,
@@ -320,6 +378,11 @@ func runSling(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
+	}
+
+	// --queue requires a rig target (spawning polecats)
+	if slingQueue && !isRigTarget {
+		return fmt.Errorf("--queue requires a rig target (e.g., 'gt sling %s gastown --queue')", beadID)
 	}
 
 	// Display what we're doing
@@ -514,6 +577,53 @@ func runSling(cmd *cobra.Command, args []string) error {
 			fmt.Printf("%s Compound bead ready: %s\n", style.Bold.Render("✓"), beadID)
 			fmt.Printf("  (wisp-only mode: polecat spawn and hook attachment skipped)\n")
 			return nil
+		}
+
+		// --queue mode for formula-on-bead: now queue the compound bead
+		if slingQueue {
+			fmt.Printf("Queueing compound bead and dispatching...\n")
+
+			// Create queue with town-wide ops
+			ops := beads.NewRealBeadsOps(townRoot)
+			q := queue.New(ops)
+
+			// Add compound bead to queue
+			if err := q.Add(beadID); err != nil {
+				return fmt.Errorf("adding compound bead to queue: %w", err)
+			}
+			fmt.Printf("%s Compound bead queued\n", style.Bold.Render("✓"))
+
+			// Create spawner - rigName comes from QueueItem now
+			spawner := &queue.RealSpawner{
+				SpawnInFunc: func(spawnRigName, bid string) error {
+					spawnOpts := SlingSpawnOptions{
+						Force:    slingForce,
+						Account:  slingAccount,
+						Create:   slingCreate,
+						HookBead: bid,
+						Agent:    slingAgent,
+					}
+					info, err := SpawnPolecatForSling(spawnRigName, spawnOpts)
+					if err != nil {
+						return err
+					}
+					targetAgent = info.AgentID()
+					hookWorkDir = info.ClonePath
+					return nil
+				},
+			}
+			dispatcher := queue.NewDispatcher(q, spawner)
+
+			// Load and dispatch
+			if _, err := q.Load(); err != nil {
+				return fmt.Errorf("loading queue: %w", err)
+			}
+			if _, err := dispatcher.Dispatch(); err != nil {
+				return fmt.Errorf("dispatching from queue: %w", err)
+			}
+
+			// Wake witness and refinery to monitor the new polecat
+			wakeRigAgents(townRoot, queueRig)
 		}
 	}
 

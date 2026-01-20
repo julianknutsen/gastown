@@ -77,6 +77,7 @@ func (r *RealBeadsOps) ListByLabelAllRigs(label string) (map[string][]BeadInfo, 
 		for _, issue := range issues {
 			beads = append(beads, BeadInfo{
 				ID:     issue.ID,
+				Title:  issue.Title,
 				Status: issue.Status,
 				Labels: issue.Labels,
 			})

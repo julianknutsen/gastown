@@ -4,10 +4,12 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/agent"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/factory"
@@ -20,10 +22,12 @@ import (
 
 // SpawnedPolecatInfo contains info about a spawned polecat session.
 type SpawnedPolecatInfo struct {
-	RigName     string // Rig name (e.g., "gastown")
-	PolecatName string // Polecat name (e.g., "Toast")
-	ClonePath   string // Path to polecat's git worktree
-	SessionName string // Tmux session name (e.g., "gt-gastown-p-Toast")
+	RigName        string // Rig name (e.g., "gastown")
+	PolecatName    string // Polecat name (e.g., "Toast")
+	ClonePath      string // Path to polecat's git worktree
+	SessionName    string // Tmux session name (e.g., "gt-gastown-p-Toast")
+	TownRoot       string // Town root path (needed for deferred session start)
+	SessionStarted bool   // Whether session was started (false if DeferSession)
 }
 
 // AgentID returns the agent identifier (e.g., "gastown/polecats/Toast")
@@ -33,11 +37,12 @@ func (s *SpawnedPolecatInfo) AgentID() string {
 
 // SlingSpawnOptions contains options for spawning a polecat via sling.
 type SlingSpawnOptions struct {
-	Force    bool   // Force spawn even if polecat has uncommitted work
-	Account  string // Claude Code account handle to use
-	Create   bool   // Create polecat if it doesn't exist (currently always true for sling)
-	HookBead string // Bead ID to set as hook_bead at spawn time (atomic assignment)
-	Agent    string // Agent override for this spawn (e.g., "gemini", "codex", "claude-haiku")
+	Force        bool   // Force spawn even if polecat has uncommitted work
+	Account      string // Claude Code account handle to use
+	Create       bool   // Create polecat if it doesn't exist (currently always true for sling)
+	HookBead     string // Bead ID to set as hook_bead at spawn time (atomic assignment)
+	Agent        string // Agent override for this spawn (e.g., "gemini", "codex", "claude-haiku")
+	DeferSession bool   // Don't start session - caller will start after hooking bead
 }
 
 // SpawnPolecatForSling creates a fresh polecat and optionally starts its session.
@@ -121,23 +126,27 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		fmt.Printf("Warning: could not create local mirror directory: %v\n", err)
 	}
 
-	// Start the session if not already running
+	sessionName := backend.SessionName(polecatName)
+	sessionStarted := false
+
+	// Start the session unless caller wants to defer (hook-before-spawn pattern)
 	// Always use factory.Start which goes through SessionFactory for proper
 	// local vs remote session routing (MirroredSessions for remote polecats)
-	id := agent.PolecatAddress(rigName, polecatName)
-	factoryAgents := factory.AgentsFor(townRoot, id)
-	if !factoryAgents.Exists(id) {
-		fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-		var startOpts []factory.StartOption
-		if opts.Agent != "" {
-			startOpts = append(startOpts, factory.WithAgent(opts.Agent))
+	if !opts.DeferSession {
+		id := agent.PolecatAddress(rigName, polecatName)
+		factoryAgents := factory.AgentsFor(townRoot, id)
+		if !factoryAgents.Exists(id) {
+			fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
+			var startOpts []factory.StartOption
+			if opts.Agent != "" {
+				startOpts = append(startOpts, factory.WithAgent(opts.Agent))
+			}
+			if _, err := factory.Start(townRoot, id, startOpts...); err != nil {
+				return nil, fmt.Errorf("starting session: %w", err)
+			}
 		}
-		if _, err := factory.Start(townRoot, id, startOpts...); err != nil {
-			return nil, fmt.Errorf("starting session: %w", err)
-		}
+		sessionStarted = true
 	}
-
-	sessionName := backend.SessionName(polecatName)
 
 	fmt.Printf("%s Polecat %s spawned\n", style.Bold.Render("✓"), polecatName)
 
@@ -145,10 +154,12 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 	_ = events.LogFeed(events.TypeSpawn, "gt", events.SpawnPayload(rigName, polecatName))
 
 	return &SpawnedPolecatInfo{
-		RigName:     rigName,
-		PolecatName: polecatName,
-		ClonePath:   polecatObj.ClonePath,
-		SessionName: sessionName,
+		RigName:        rigName,
+		PolecatName:    polecatName,
+		ClonePath:      polecatObj.ClonePath,
+		SessionName:    sessionName,
+		TownRoot:       townRoot,
+		SessionStarted: sessionStarted,
 	}, nil
 }
 
@@ -186,4 +197,107 @@ func IsRigName(target string) (string, bool) {
 	}
 
 	return target, true
+}
+
+// SpawnAndHookOptions contains options for the complete spawn+hook workflow.
+type SpawnAndHookOptions struct {
+	// Spawn options
+	Force   bool   // Force spawn even if polecat has uncommitted work
+	Account string // Claude Code account handle
+	Create  bool   // Create polecat if it doesn't exist
+	Agent   string // Agent override (e.g., "gemini", "codex")
+
+	// Hook options
+	Subject string // Subject for start prompt
+	Args    string // Args for start prompt
+
+	// Event logging
+	LogEvent bool // Whether to log sling event to feed
+}
+
+// SpawnAndHookResult contains the result of a spawn+hook operation.
+type SpawnAndHookResult struct {
+	TargetAgent string // Agent ID (e.g., "gastown/polecats/Toast")
+	PolecatName string // Polecat name
+	HookWorkDir string // Path to polecat's worktree
+}
+
+// SpawnAndHookBead is the common function for spawning a polecat and hooking a bead.
+// This handles the complete workflow using hook-before-spawn pattern:
+// 1. Create polecat (without starting session)
+// 2. Hook bead via bd update (so polecat finds work ready)
+// 3. Start session (polecat wakes up with work already hooked)
+// 4. Update state, attach molecule, nudge
+// Used by both queue dispatch and batch sling.
+func SpawnAndHookBead(townRoot, rigName, beadID string, opts SpawnAndHookOptions) (*SpawnAndHookResult, error) {
+	// Step 1: Spawn polecat with deferred session start
+	spawnOpts := SlingSpawnOptions{
+		Force:        opts.Force,
+		Account:      opts.Account,
+		Create:       opts.Create,
+		HookBead:     beadID,
+		Agent:        opts.Agent,
+		DeferSession: true, // Don't start session yet - hook first
+	}
+	spawnInfo, err := SpawnPolecatForSling(rigName, spawnOpts)
+	if err != nil {
+		return nil, fmt.Errorf("spawning polecat: %w", err)
+	}
+
+	targetAgent := spawnInfo.AgentID()
+	hookWorkDir := spawnInfo.ClonePath
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+
+	// Step 2: Hook the bead BEFORE starting session (avoids race condition)
+	hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
+	hookCmd.Dir = resolveHookDir(townRoot, beadID, hookWorkDir)
+	if err := hookCmd.Run(); err != nil {
+		return nil, fmt.Errorf("hooking bead: %w", err)
+	}
+
+	// Step 3: Now start the session (polecat will find its bead already hooked)
+	id := agent.PolecatAddress(rigName, spawnInfo.PolecatName)
+	factoryAgents := factory.AgentsFor(townRoot, id)
+	if !factoryAgents.Exists(id) {
+		fmt.Printf("Starting session for %s/%s...\n", rigName, spawnInfo.PolecatName)
+		var startOpts []factory.StartOption
+		if opts.Agent != "" {
+			startOpts = append(startOpts, factory.WithAgent(opts.Agent))
+		}
+		if _, err := factory.Start(townRoot, id, startOpts...); err != nil {
+			return nil, fmt.Errorf("starting session: %w", err)
+		}
+	}
+
+	// Log sling event if requested
+	if opts.LogEvent {
+		actor := detectActor()
+		_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadID, targetAgent))
+	}
+
+	// Update agent bead state
+	updateAgentHookBead(targetAgent, beadID, hookWorkDir, townBeadsDir)
+
+	// Auto-attach work molecule
+	_ = attachPolecatWorkMolecule(targetAgent, hookWorkDir, townRoot)
+
+	// Nudge the polecat
+	agentID, err := addressToAgentID(targetAgent)
+	if err == nil {
+		_ = ensureAgentReady(townRoot, agentID)
+		_ = injectStartPrompt(townRoot, agentID, beadID, opts.Subject, opts.Args)
+	}
+
+	return &SpawnAndHookResult{
+		TargetAgent: targetAgent,
+		PolecatName: spawnInfo.PolecatName,
+		HookWorkDir: hookWorkDir,
+	}, nil
+}
+
+// resolveHookDir determines the directory for running bd update on a bead.
+// This is a local wrapper around beads.ResolveHookDir to avoid import cycles.
+func resolveHookDir(townRoot, beadID, hookWorkDir string) string {
+	// Use beads package function via import
+	return beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 }

@@ -77,6 +77,11 @@ func ParseSessionName(sessionName string) (ids.AgentID, error) {
 	}
 
 	// Default to polecat: rig is everything except the last segment
+	// Handle -mirror suffix for remote polecats (e.g., gt-gastown-capable-mirror)
+	if len(parts) >= 2 && parts[len(parts)-1] == "mirror" {
+		parts = parts[:len(parts)-1] // Strip -mirror suffix
+	}
+
 	if len(parts) < 2 {
 		return ids.AgentID{}, fmt.Errorf("invalid session name %q: cannot determine rig/name", sessionName)
 	}
