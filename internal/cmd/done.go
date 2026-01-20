@@ -152,6 +152,13 @@ func runDone(cmd *cobra.Command, args []string) error {
 
 	// Auto-detect cleanup status if not explicitly provided
 	// This prevents premature polecat cleanup by ensuring witness knows git state
+	//
+	// Error handling strategy: fail-safe with conservative defaults
+	// - If cwd unavailable: default to "unknown" (safest - triggers manual review)
+	// - If git status check fails: warn but continue (don't block completion)
+	// - If branch push check fails: default to "unpushed" (err on side of caution)
+	// The goal is to never lose work: when in doubt, report a state that prevents
+	// premature cleanup rather than one that might cause work loss.
 	if doneCleanupStatus == "" {
 		if !cwdAvailable {
 			// Can't detect git state without working directory, default to unknown
