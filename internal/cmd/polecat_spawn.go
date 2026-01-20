@@ -189,8 +189,57 @@ type SpawnAndHookOptions struct {
 	LogEvent bool   // Whether to log a sling event
 }
 
+// HookOptions contains options for hooking a bead to an agent.
+type HookOptions struct {
+	Subject  string // Subject for the nudge prompt
+	Args     string // Args to pass to the agent
+	LogEvent bool   // Whether to log a sling event
+}
+
+// HookBeadToAgent hooks a bead to an existing agent (polecat).
+// This does the hooking, logging, and nudging - everything except spawning.
+func HookBeadToAgent(townRoot, beadID, targetAgent, hookWorkDir string, opts HookOptions) error {
+	townBeadsDir := townRoot + "/.beads"
+
+	// Hook the bead using bd update
+	hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
+	hookCmd.Dir = hookWorkDir
+	if err := hookCmd.Run(); err != nil {
+		return fmt.Errorf("hooking bead: %w", err)
+	}
+
+	// Log sling event and store dispatcher
+	actor := detectActor()
+	if opts.LogEvent {
+		_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadID, targetAgent))
+	}
+
+	// Store dispatcher in bead (enables completion notification)
+	_ = storeDispatcherInBead(beadID, actor)
+
+	// Store args in bead (durable for no-tmux mode)
+	if opts.Args != "" {
+		_ = storeArgsInBead(beadID, opts.Args)
+	}
+
+	// Update agent bead state
+	updateAgentHookBead(targetAgent, beadID, hookWorkDir, townBeadsDir)
+
+	// Auto-attach work molecule
+	_ = attachPolecatWorkMolecule(targetAgent, hookWorkDir, townRoot)
+
+	// Nudge the agent
+	agentID, err := addressToAgentID(targetAgent)
+	if err == nil {
+		_ = ensureAgentReady(townRoot, agentID)
+		_ = injectStartPrompt(townRoot, agentID, beadID, opts.Subject, opts.Args)
+	}
+
+	return nil
+}
+
 // SpawnAndHookBead spawns a polecat and hooks a bead to it.
-// This is the common function used by batch slinging operations.
+// This is the common function used by single and batch slinging operations.
 func SpawnAndHookBead(townRoot, rigName, beadID string, opts SpawnAndHookOptions) (*SpawnedPolecatInfo, error) {
 	// Spawn polecat with hook_bead set atomically
 	spawnOpts := SlingSpawnOptions{
@@ -205,34 +254,14 @@ func SpawnAndHookBead(townRoot, rigName, beadID string, opts SpawnAndHookOptions
 		return nil, fmt.Errorf("spawning polecat: %w", err)
 	}
 
-	targetAgent := spawnInfo.AgentID()
-	hookWorkDir := spawnInfo.ClonePath
-	townBeadsDir := townRoot + "/.beads"
-
-	// Hook the bead using bd update
-	hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
-	hookCmd.Dir = hookWorkDir
-	if err := hookCmd.Run(); err != nil {
-		return nil, fmt.Errorf("hooking bead: %w", err)
+	// Hook the bead to the spawned polecat
+	hookOpts := HookOptions{
+		Subject:  opts.Subject,
+		Args:     opts.Args,
+		LogEvent: opts.LogEvent,
 	}
-
-	// Log sling event
-	if opts.LogEvent {
-		actor := detectActor()
-		_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadID, targetAgent))
-	}
-
-	// Update agent bead state
-	updateAgentHookBead(targetAgent, beadID, hookWorkDir, townBeadsDir)
-
-	// Auto-attach work molecule
-	_ = attachPolecatWorkMolecule(targetAgent, hookWorkDir, townRoot)
-
-	// Nudge the polecat
-	agentID, err := addressToAgentID(targetAgent)
-	if err == nil {
-		_ = ensureAgentReady(townRoot, agentID)
-		_ = injectStartPrompt(townRoot, agentID, beadID, opts.Subject, opts.Args)
+	if err := HookBeadToAgent(townRoot, beadID, spawnInfo.AgentID(), spawnInfo.ClonePath, hookOpts); err != nil {
+		return nil, err
 	}
 
 	return spawnInfo, nil
