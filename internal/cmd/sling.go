@@ -97,6 +97,7 @@ var (
 	slingAccount  string // --account: Claude Code account handle to use
 	slingAgent    string // --agent: override runtime agent for this sling/spawn
 	slingNoConvoy bool   // --no-convoy: skip auto-convoy creation
+	slingParallel int    // --parallel: batch parallelism (default 5, use 1 for sequential)
 )
 
 func init() {
@@ -113,6 +114,7 @@ func init() {
 	slingCmd.Flags().StringVar(&slingAccount, "account", "", "Claude Code account handle to use")
 	slingCmd.Flags().StringVar(&slingAgent, "agent", "", "Override agent/runtime for this sling (e.g., claude, gemini, codex, or custom alias)")
 	slingCmd.Flags().BoolVar(&slingNoConvoy, "no-convoy", false, "Skip auto-convoy creation for single-issue sling")
+	slingCmd.Flags().IntVar(&slingParallel, "parallel", 5, "Batch parallelism (number of concurrent polecats, use 1 for sequential)")
 
 	rootCmd.AddCommand(slingCmd)
 }
@@ -134,6 +136,21 @@ func runSling(cmd *cobra.Command, args []string) error {
 	// --var is only for standalone formula mode, not formula-on-bead mode
 	if slingOnTarget != "" && len(slingVars) > 0 {
 		return fmt.Errorf("--var cannot be used with --on (formula-on-bead mode doesn't support variables)")
+	}
+
+	// Batch formula-on-bead mode detection:
+	// Pattern: gt sling <formula> --on gt-abc,gt-def,gt-ghi <rig>
+	// Pattern: gt sling <formula> --on @beads.txt <rig>
+	// When --on contains multiple beads (comma-separated or @file) and target is a rig
+	if slingOnTarget != "" && len(args) >= 2 {
+		beadIDs := parseBatchOnTarget(slingOnTarget)
+		if len(beadIDs) > 1 {
+			lastArg := args[len(args)-1]
+			if rigName, isRig := IsRigName(lastArg); isRig {
+				return runBatchSlingFormulaOn(args[0], beadIDs, rigName, townBeadsDir)
+			}
+			return fmt.Errorf("batch --on mode requires a rig target (got %q)", lastArg)
+		}
 	}
 
 	// Batch mode detection: multiple beads with rig target
@@ -358,7 +375,8 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 	// Auto-convoy: check if issue is already tracked by a convoy
 	// If not, create one for dashboard visibility (unless --no-convoy is set)
-	if !slingNoConvoy && formulaName == "" {
+	// Applies to both plain bead sling and formula-on-bead (single)
+	if !slingNoConvoy {
 		existingConvoy := isTrackedByConvoy(beadID)
 		if existingConvoy == "" {
 			if slingDryRun {
