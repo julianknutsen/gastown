@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -745,9 +746,12 @@ func selfKillSession(townRoot string, roleInfo RoleInfo) error {
 
 	// Kill our own tmux session with proper process cleanup
 	// This will terminate Claude and all child processes, completing the self-cleaning cycle.
-	// We use KillSessionWithProcesses to ensure no orphaned processes are left behind.
+	// We use KillSessionWithProcessesExcluding to ensure no orphaned processes are left behind,
+	// while excluding our own PID to avoid killing ourselves before cleanup completes.
+	// The tmux kill-session at the end will terminate us along with the session.
 	t := tmux.NewTmux()
-	if err := t.KillSessionWithProcesses(sessionName); err != nil {
+	myPID := strconv.Itoa(os.Getpid())
+	if err := t.KillSessionWithProcessesExcluding(sessionName, []string{myPID}); err != nil {
 		return fmt.Errorf("killing session %s: %w", sessionName, err)
 	}
 
