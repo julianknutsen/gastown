@@ -1,6 +1,8 @@
 // Package cmd provides CLI commands for the gt tool.
 package cmd
 
+// Test comment added by batch sling test
+
 import (
 	"encoding/json"
 	"fmt"
