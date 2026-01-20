@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// TODO: Cleanup - ExecWithOutput and ExecRun have duplicate error handling logic.
+// Consider extracting a common helper function for stderr-based error construction.
+
 // ExecWithOutput runs a command in the specified directory and returns stdout.
 // If the command fails, stderr content is included in the error message.
 func ExecWithOutput(workDir, cmd string, args ...string) (string, error) {
