@@ -59,10 +59,10 @@ func parseBatchOnTarget(target string) []string {
 // batchParallelism returns the configured parallelism for batch operations.
 // Controlled by --parallel flag (default 5). Use 1 for sequential execution.
 func batchParallelism() int {
-	if slingParallel < 1 {
+	if slingSpawnBatchSize < 1 {
 		return 1
 	}
-	return slingParallel
+	return slingSpawnBatchSize
 }
 
 // runBatchSling handles slinging multiple beads to a rig.
@@ -82,8 +82,12 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 
 	if slingDryRun {
 		fmt.Printf("%s Batch slinging %d beads to rig '%s':\n", style.Bold.Render("🎯"), len(beadIDs), rigName)
+		fmt.Printf("  Spawn batch size: %d (concurrent spawns)\n", slingSpawnBatchSize)
+		numBatches := (len(beadIDs) + slingSpawnBatchSize - 1) / slingSpawnBatchSize
+		fmt.Printf("  Will run in %d batch(es)\n", numBatches)
+		fmt.Printf("  Beads:\n")
 		for _, beadID := range beadIDs {
-			fmt.Printf("  Would spawn polecat for: %s\n", beadID)
+			fmt.Printf("    - %s\n", beadID)
 		}
 		if !slingNoConvoy {
 			fmt.Printf("Would create batch convoy tracking %d beads\n", len(beadIDs))
@@ -237,10 +241,48 @@ func runBatchSlingFormulaOn(formulaName string, beadIDs []string, rigName string
 	}
 
 	if slingDryRun {
-		fmt.Printf("%s Batch slinging formula %s onto %d beads to rig '%s':\n",
-			style.Bold.Render("🎯"), formulaName, len(beadIDs), rigName)
-		for _, beadID := range beadIDs {
-			fmt.Printf("  Would create wisp, bond to %s, spawn polecat\n", beadID)
+		if slingQueue {
+			// Queue mode dry-run
+			fmt.Printf("%s Batch slinging formula %s onto %d beads to rig '%s' (--queue mode):\n",
+				style.Bold.Render("🎯"), formulaName, len(beadIDs), rigName)
+			fmt.Printf("  Spawn batch size: %d (concurrent spawns)\n", slingSpawnBatchSize)
+
+			// In queue mode, max polecats limits how many run at once
+			spawnCount := len(beadIDs)
+			queueCount := 0
+			if slingQueueMaxPolecats > 0 {
+				if slingQueueMaxPolecats < len(beadIDs) {
+					spawnCount = slingQueueMaxPolecats
+					queueCount = len(beadIDs) - slingQueueMaxPolecats
+				}
+				fmt.Printf("  Max polecats: %d\n", slingQueueMaxPolecats)
+			} else {
+				fmt.Printf("  Max polecats: unlimited\n")
+			}
+
+			if spawnCount > 0 {
+				fmt.Printf("  Would spawn immediately (%d):\n", spawnCount)
+				for i := 0; i < spawnCount && i < len(beadIDs); i++ {
+					fmt.Printf("    - %s: create wisp, bond, spawn polecat\n", beadIDs[i])
+				}
+			}
+			if queueCount > 0 {
+				fmt.Printf("  Would remain queued until slots free (%d):\n", queueCount)
+				for i := spawnCount; i < len(beadIDs); i++ {
+					fmt.Printf("    - %s: create wisp, bond, queue\n", beadIDs[i])
+				}
+			}
+		} else {
+			// Non-queue mode dry-run
+			fmt.Printf("%s Batch slinging formula %s onto %d beads to rig '%s':\n",
+				style.Bold.Render("🎯"), formulaName, len(beadIDs), rigName)
+			fmt.Printf("  Spawn batch size: %d (concurrent spawns)\n", slingSpawnBatchSize)
+			numBatches := (len(beadIDs) + slingSpawnBatchSize - 1) / slingSpawnBatchSize
+			fmt.Printf("  Will run in %d batch(es)\n", numBatches)
+			fmt.Printf("  Beads:\n")
+			for _, beadID := range beadIDs {
+				fmt.Printf("    - %s: create wisp, bond, spawn polecat\n", beadID)
+			}
 		}
 		if !slingNoConvoy {
 			fmt.Printf("Would create batch convoy tracking %d beads\n", len(beadIDs))
@@ -466,11 +508,34 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 	townRoot := filepath.Dir(townBeadsDir)
 
 	if slingDryRun {
-		fmt.Printf("%s Batch queueing %d beads:\n", style.Bold.Render("🎯"), len(beadIDs))
-		for _, beadID := range beadIDs {
-			fmt.Printf("  Would queue: %s\n", beadID)
+		fmt.Printf("%s Batch queueing %d beads (--queue mode):\n", style.Bold.Render("🎯"), len(beadIDs))
+		fmt.Printf("  Spawn batch size: %d (concurrent spawns)\n", slingSpawnBatchSize)
+
+		// In queue mode, max polecats limits how many run at once
+		spawnCount := len(beadIDs)
+		queueCount := 0
+		if slingQueueMaxPolecats > 0 {
+			if slingQueueMaxPolecats < len(beadIDs) {
+				spawnCount = slingQueueMaxPolecats
+				queueCount = len(beadIDs) - slingQueueMaxPolecats
+			}
+			fmt.Printf("  Max polecats: %d\n", slingQueueMaxPolecats)
+		} else {
+			fmt.Printf("  Max polecats: unlimited\n")
 		}
-		fmt.Printf("Would dispatch all queued beads\n")
+
+		if spawnCount > 0 {
+			fmt.Printf("  Would spawn immediately (%d):\n", spawnCount)
+			for i := 0; i < spawnCount && i < len(beadIDs); i++ {
+				fmt.Printf("    - %s\n", beadIDs[i])
+			}
+		}
+		if queueCount > 0 {
+			fmt.Printf("  Would remain queued until slots free (%d):\n", queueCount)
+			for i := spawnCount; i < len(beadIDs); i++ {
+				fmt.Printf("    - %s\n", beadIDs[i])
+			}
+		}
 		return nil
 	}
 
@@ -527,19 +592,19 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 	}
 	// Calculate dispatch limit based on capacity
 	limit := 0 // 0 means unlimited
-	if slingCapacity > 0 {
+	if slingQueueMaxPolecats > 0 {
 		running := countRunningPolecats()
-		slots := slingCapacity - running
+		slots := slingQueueMaxPolecats - running
 		if slots <= 0 {
-			fmt.Printf("At capacity: %d polecats running (capacity=%d)\n", running, slingCapacity)
+			fmt.Printf("At capacity: %d polecats running (max=%d)\n", running, slingQueueMaxPolecats)
 			return nil
 		}
 		limit = slots
-		fmt.Printf("Capacity: %d/%d polecats running, %d slots available\n", running, slingCapacity, slots)
+		fmt.Printf("Capacity: %d/%d polecats running, %d slots available\n", running, slingQueueMaxPolecats, slots)
 	}
 
 	dispatcher := queue.NewDispatcher(q, spawner).
-		WithParallelism(slingParallel).
+		WithParallelism(slingSpawnBatchSize).
 		WithLimit(limit)
 
 	// Load and dispatch
@@ -657,19 +722,19 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 	}
 	// Calculate dispatch limit based on capacity
 	limit := 0 // 0 means unlimited
-	if slingCapacity > 0 {
+	if slingQueueMaxPolecats > 0 {
 		running := countRunningPolecats()
-		slots := slingCapacity - running
+		slots := slingQueueMaxPolecats - running
 		if slots <= 0 {
-			fmt.Printf("At capacity: %d polecats running (capacity=%d)\n", running, slingCapacity)
+			fmt.Printf("At capacity: %d polecats running (max=%d)\n", running, slingQueueMaxPolecats)
 			return nil
 		}
 		limit = slots
-		fmt.Printf("Capacity: %d/%d polecats running, %d slots available\n", running, slingCapacity, slots)
+		fmt.Printf("Capacity: %d/%d polecats running, %d slots available\n", running, slingQueueMaxPolecats, slots)
 	}
 
 	dispatcher := queue.NewDispatcher(q, spawner).
-		WithParallelism(slingParallel).
+		WithParallelism(slingSpawnBatchSize).
 		WithLimit(limit)
 
 	// Load and dispatch
