@@ -1,3 +1,6 @@
+// pause.go provides pause/resume functionality for the Deacon agent,
+// allowing external processes to temporarily halt patrol actions.
+
 // Package deacon provides the Deacon agent infrastructure.
 package deacon
 
