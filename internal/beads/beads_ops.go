@@ -4,6 +4,7 @@ package beads
 // BeadInfo represents basic bead information for queue operations.
 type BeadInfo struct {
 	ID     string
+	Title  string
 	Status string
 	Labels []string
 }
