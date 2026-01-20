@@ -260,6 +260,11 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting status: %w", err)
 	}
 
+	// Update monitored polecats (getRig populates r.Polecats via polecat backend)
+	if _, r, rigErr := getRig(rigName); rigErr == nil {
+		w.MonitoredPolecats = r.Polecats
+	}
+
 	// Check actual session state (more reliable than state file)
 	agents := factory.Agents()
 	witnessID := agent.WitnessAddress(rigName)

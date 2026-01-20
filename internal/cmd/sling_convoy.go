@@ -108,6 +108,57 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 	return convoyID, nil
 }
 
+// createBatchConvoy creates a convoy that tracks multiple beads.
+// Used for batch sling operations to group all work together.
+// Returns the created convoy ID.
+func createBatchConvoy(beadIDs []string, title string) (string, error) {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return "", fmt.Errorf("finding town root: %w", err)
+	}
+
+	townBeads := filepath.Join(townRoot, ".beads")
+
+	// Generate convoy ID
+	convoyID := fmt.Sprintf("hq-cv-%s", slingGenerateShortID())
+
+	// Create convoy
+	description := fmt.Sprintf("Batch convoy tracking %d beads", len(beadIDs))
+
+	createArgs := []string{
+		"create",
+		"--type=convoy",
+		"--id=" + convoyID,
+		"--title=" + title,
+		"--description=" + description,
+	}
+	if beads.NeedsForceForID(convoyID) {
+		createArgs = append(createArgs, "--force")
+	}
+
+	createCmd := exec.Command("bd", append([]string{"--no-daemon"}, createArgs...)...)
+	createCmd.Dir = townBeads
+	createCmd.Stderr = os.Stderr
+
+	if err := createCmd.Run(); err != nil {
+		return "", fmt.Errorf("creating convoy: %w", err)
+	}
+
+	// Add tracking relations for all beads
+	for _, beadID := range beadIDs {
+		trackBeadID := formatTrackBeadID(beadID)
+		depArgs := []string{"--no-daemon", "dep", "add", convoyID, trackBeadID, "--type=tracks"}
+		depCmd := exec.Command("bd", depArgs...)
+		depCmd.Dir = townBeads
+		// Don't fail the whole operation if one tracking relation fails
+		if err := depCmd.Run(); err != nil {
+			fmt.Printf("%s Could not track %s: %v\n", style.Dim.Render("Warning:"), beadID, err)
+		}
+	}
+
+	return convoyID, nil
+}
+
 // formatTrackBeadID formats a bead ID for use in convoy tracking dependencies.
 // Cross-rig beads (non-hq- prefixed) are formatted as external references
 // so the bd tool can resolve them when running from HQ context.

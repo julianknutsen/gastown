@@ -247,7 +247,7 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Check polecat exists
+	// Check polecat exists (r.Polecats is populated by getRig via polecat backend)
 	found := false
 	for _, p := range r.Polecats {
 		if p == polecatName {
@@ -638,21 +638,29 @@ func runSessionCheck(cmd *cobra.Command, args []string) error {
 	for _, r := range rigs {
 		polecatMgr := factory.New(townRoot).PolecatSessionManager(r, "")
 
-		for _, polecatName := range r.Polecats {
+		// Query polecat manager for list
+		polecatBackend := polecat.NewManager(nil, r, git.NewGit(r.Path))
+		polecats, err := polecatBackend.List()
+		if err != nil {
+			fmt.Printf("  %s %s: %s\n", style.Bold.Render("⚠"), r.Name, style.Dim.Render("error listing polecats"))
+			continue
+		}
+
+		for _, p := range polecats {
 			totalChecked++
 
 			// Check if session is running
-			running, err := polecatMgr.IsRunning(polecatName)
+			running, err := polecatMgr.IsRunning(p.Name)
 			if err != nil {
-				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("⚠"), r.Name, polecatName, style.Dim.Render("error checking session"))
+				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("⚠"), r.Name, p.Name, style.Dim.Render("error checking session"))
 				continue
 			}
 
 			if running {
-				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("✓"), r.Name, polecatName, style.Dim.Render("session alive"))
+				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("✓"), r.Name, p.Name, style.Dim.Render("session alive"))
 				totalHealthy++
 			} else {
-				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("✗"), r.Name, polecatName, style.Dim.Render("session not running"))
+				fmt.Printf("  %s %s/%s: %s\n", style.Bold.Render("✗"), r.Name, p.Name, style.Dim.Render("session not running"))
 				totalCrashed++
 			}
 		}
