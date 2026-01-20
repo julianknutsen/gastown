@@ -1,3 +1,5 @@
+// Package witness handlers implement protocol message processing for polecat lifecycle events.
+// This includes handling completion, shutdown, help requests, merge results, and swarm tracking.
 package witness
 
 import (
