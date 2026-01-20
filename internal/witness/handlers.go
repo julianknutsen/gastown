@@ -1,3 +1,6 @@
+// handlers.go implements protocol message handlers for the Witness agent.
+// It processes polecat lifecycle events (done, shutdown), merge signals from
+// the Refinery, help requests requiring intervention, and swarm tracking.
 package witness
 
 import (
