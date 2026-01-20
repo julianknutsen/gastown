@@ -1,5 +1,7 @@
 package cmd
 
+// Test comment added by batch sling test
+
 import (
 	"os"
 	"os/exec"
