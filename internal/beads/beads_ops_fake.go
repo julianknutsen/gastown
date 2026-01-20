@@ -77,7 +77,13 @@ func (f *FakeBeadsOps) GetRigForBead(beadID string) string {
 }
 
 // LabelAdd adds a label to a bead.
+// Routes to the correct FakeBeadsOps based on the bead's prefix.
 func (f *FakeBeadsOps) LabelAdd(beadID, label string) error {
+	// Route to the correct ops based on prefix
+	if targetOps := f.getOpsForBead(beadID); targetOps != nil && targetOps != f {
+		return targetOps.LabelAdd(beadID, label)
+	}
+
 	bead, ok := f.beads[beadID]
 	if !ok {
 		return fmt.Errorf("bead %s not found", beadID)
@@ -95,7 +101,13 @@ func (f *FakeBeadsOps) LabelAdd(beadID, label string) error {
 }
 
 // LabelRemove removes a label from a bead.
+// Routes to the correct FakeBeadsOps based on the bead's prefix.
 func (f *FakeBeadsOps) LabelRemove(beadID, label string) error {
+	// Route to the correct ops based on prefix
+	if targetOps := f.getOpsForBead(beadID); targetOps != nil && targetOps != f {
+		return targetOps.LabelRemove(beadID, label)
+	}
+
 	bead, ok := f.beads[beadID]
 	if !ok {
 		return fmt.Errorf("bead %s not found", beadID)
@@ -108,6 +120,19 @@ func (f *FakeBeadsOps) LabelRemove(beadID, label string) error {
 		}
 	}
 	bead.labels = newLabels
+	return nil
+}
+
+// getOpsForBead returns the BeadsOps that handles the given bead based on its prefix.
+// Returns nil if no route is configured for the prefix.
+func (f *FakeBeadsOps) getOpsForBead(beadID string) BeadsOps {
+	prefix := extractPrefix(beadID)
+	if prefix == "" {
+		return nil
+	}
+	if route, ok := f.routes[prefix]; ok {
+		return route.ops
+	}
 	return nil
 }
 

@@ -234,3 +234,107 @@ func TestQueue_Clear_Empty(t *testing.T) {
 		t.Errorf("Expected 0 cleared, got %d", cleared)
 	}
 }
+
+// Tests below demonstrate a bug in FakeBeadsOps where LabelAdd/LabelRemove
+// don't route through configured routes like ListByLabelAllRigs does.
+// These tests SHOULD pass but currently FAIL due to the routing bug.
+
+func TestQueue_Remove_MultipleRigs(t *testing.T) {
+	gasOps := beads.NewFakeBeadsOpsForRig("gastown")
+	greenOps := beads.NewFakeBeadsOpsForRig("greenplace")
+
+	// Set up routes - gasOps knows how to route to greenOps
+	gasOps.AddRouteWithRig("gt-", "gastown", gasOps)
+	gasOps.AddRouteWithRig("gp-", "greenplace", greenOps)
+
+	// Add beads to each rig's ops
+	gasOps.AddBead("gt-abc", "open", []string{QueueLabel})
+	greenOps.AddBead("gp-xyz", "open", []string{QueueLabel})
+
+	q := New(gasOps)
+	items, err := q.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if len(items) != 2 {
+		t.Fatalf("Expected 2 items, got %d", len(items))
+	}
+
+	// Try to remove the bead from the other rig
+	// BUG: This fails because LabelRemove looks in gasOps.beads, not greenOps.beads
+	err = q.Remove("gp-xyz")
+	if err != nil {
+		t.Errorf("Remove failed for cross-rig bead: %v", err)
+	}
+
+	// Verify it was actually removed
+	if q.Len() != 1 {
+		t.Errorf("Expected 1 item after remove, got %d", q.Len())
+	}
+}
+
+func TestQueue_Clear_MultipleRigs(t *testing.T) {
+	gasOps := beads.NewFakeBeadsOpsForRig("gastown")
+	greenOps := beads.NewFakeBeadsOpsForRig("greenplace")
+
+	// Set up routes
+	gasOps.AddRouteWithRig("gt-", "gastown", gasOps)
+	gasOps.AddRouteWithRig("gp-", "greenplace", greenOps)
+
+	// Add beads to each rig
+	gasOps.AddBead("gt-abc", "open", []string{QueueLabel})
+	greenOps.AddBead("gp-xyz", "open", []string{QueueLabel})
+
+	q := New(gasOps)
+
+	// Clear should remove labels from beads across ALL rigs
+	// BUG: Clear only successfully removes from gasOps, fails silently for greenOps
+	cleared, err := q.Clear()
+	if err != nil {
+		t.Fatalf("Clear failed: %v", err)
+	}
+
+	// This should be 2, but due to the bug, only 1 gets cleared
+	if cleared != 2 {
+		t.Errorf("Expected 2 cleared, got %d", cleared)
+	}
+
+	// Verify labels were actually removed from both beads
+	gasLabels := gasOps.GetLabels("gt-abc")
+	if len(gasLabels) != 0 {
+		t.Errorf("Expected gt-abc to have no labels, got %v", gasLabels)
+	}
+
+	greenLabels := greenOps.GetLabels("gp-xyz")
+	if len(greenLabels) != 0 {
+		t.Errorf("Expected gp-xyz to have no labels, got %v", greenLabels)
+	}
+}
+
+func TestQueue_Add_CrossRig(t *testing.T) {
+	gasOps := beads.NewFakeBeadsOpsForRig("gastown")
+	greenOps := beads.NewFakeBeadsOpsForRig("greenplace")
+
+	// Set up routes
+	gasOps.AddRouteWithRig("gt-", "gastown", gasOps)
+	gasOps.AddRouteWithRig("gp-", "greenplace", greenOps)
+
+	// Add a bead to greenOps (simulating a bead that exists on that rig)
+	greenOps.AddBead("gp-xyz", "open", []string{})
+
+	q := New(gasOps)
+
+	// Try to add a bead from the other rig to the queue
+	// BUG: This fails because LabelAdd looks in gasOps.beads, not greenOps.beads
+	err := q.Add("gp-xyz")
+	if err != nil {
+		t.Errorf("Add failed for cross-rig bead: %v", err)
+	}
+
+	// Verify the label was added to the correct ops
+	labels := greenOps.GetLabels("gp-xyz")
+	if len(labels) != 1 || labels[0] != QueueLabel {
+		t.Errorf("Expected [queued] label on greenOps bead, got %v", labels)
+	}
+}
