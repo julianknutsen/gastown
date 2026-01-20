@@ -1,3 +1,5 @@
+// Package swarm's landing.go implements the witness landing protocol for safely
+// terminating swarm workers and auditing their git state for uncommitted code.
 package swarm
 
 import (
