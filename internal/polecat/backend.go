@@ -22,6 +22,10 @@ type Backend interface {
 	// List returns all polecats in this rig.
 	List() ([]*Polecat, error)
 
+	// ListPolecatNames returns just the names of all polecats.
+	// Implements rig.PolecatLister interface for remote rig support.
+	ListPolecatNames() ([]string, error)
+
 	// AddWithOptions creates a new polecat with the specified options.
 	AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 

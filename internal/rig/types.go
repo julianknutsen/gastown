@@ -49,6 +49,19 @@ var AgentDirs = []string{
 	"mayor/rig",
 }
 
+// PolecatLister lists polecat names for a rig.
+// Used to support remote polecats where local filesystem scanning doesn't work.
+type PolecatLister interface {
+	// ListPolecatNames returns the names of all polecats in the rig.
+	ListPolecatNames() ([]string, error)
+}
+
+// LoadOptions configures rig loading behavior.
+type LoadOptions struct {
+	// PolecatLister provides polecat names. If nil, local filesystem scan is used.
+	PolecatLister PolecatLister
+}
+
 // RigSummary provides a concise overview of a rig.
 type RigSummary struct {
 	Name         string `json:"name"`

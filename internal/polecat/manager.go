@@ -5,8 +5,10 @@ package polecat
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -52,16 +54,18 @@ type Manager struct {
 	targetFS      Filesystem     // Filesystem for target operations (local or SSH)
 	localFS       Filesystem     // Filesystem for local reads (always local)
 	gitOps        *git.Ops       // Git operations on target (local or SSH)
+	runner        runner.Runner  // Command execution on target (local or SSH)
 	targetRigPath string         // Where rig is on target (may differ from rig.Path for remote)
 }
 
 // ManagerDeps provides filesystem and git operations for polecat managers.
 // This is passed to NewManagerWithDeps.
 type ManagerDeps struct {
-	TargetFS      Filesystem // For file operations on the target (local or remote)
-	LocalFS       Filesystem // For reading local files (always local)
-	GitOps        *git.Ops   // For git operations on target
-	TargetRigPath string     // Where rig is on target (may differ from rig.Path)
+	TargetFS      Filesystem    // For file operations on the target (local or remote)
+	LocalFS       Filesystem    // For reading local files (always local)
+	GitOps        *git.Ops      // For git operations on target
+	Runner        runner.Runner // For command execution on target
+	TargetRigPath string        // Where rig is on target (may differ from rig.Path)
 }
 
 // NewManager creates a new polecat manager for local polecats.
@@ -69,10 +73,12 @@ type ManagerDeps struct {
 // Deprecated: Use NewManagerWithDeps for new code.
 func NewManager(agents agent.Agents, r *rig.Rig, g *git.Git) *Manager {
 	localFS := NewLocalFilesystem()
+	localRunner := runner.NewLocal()
 	deps := &ManagerDeps{
 		TargetFS:      localFS,
 		LocalFS:       localFS,
-		GitOps:        git.NewOps(runner.NewLocal()),
+		GitOps:        git.NewOps(localRunner),
+		Runner:        localRunner,
 		TargetRigPath: r.Path,
 	}
 	return NewManagerWithDeps(agents, r, deps)
@@ -81,10 +87,12 @@ func NewManager(agents agent.Agents, r *rig.Rig, g *git.Git) *Manager {
 // NewManagerWithFilesystem creates a new polecat manager with a custom filesystem.
 // Deprecated: Use NewManagerWithDeps for new code.
 func NewManagerWithFilesystem(agents agent.Agents, r *rig.Rig, g *git.Git, fs Filesystem) *Manager {
+	localRunner := runner.NewLocal()
 	deps := &ManagerDeps{
 		TargetFS:      fs,
 		LocalFS:       NewLocalFilesystem(),
-		GitOps:        git.NewOps(runner.NewLocal()),
+		GitOps:        git.NewOps(localRunner),
+		Runner:        localRunner,
 		TargetRigPath: r.Path,
 	}
 	return NewManagerWithDeps(agents, r, deps)
@@ -130,6 +138,7 @@ func NewManagerWithDeps(agents agent.Agents, r *rig.Rig, deps *ManagerDeps) *Man
 		targetFS:      deps.TargetFS,
 		localFS:       deps.LocalFS,
 		gitOps:        deps.GitOps,
+		runner:        deps.Runner,
 		targetRigPath: deps.TargetRigPath,
 	}
 }
@@ -408,17 +417,13 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 
 	// Copy overlay files from .runtime/overlay/ to polecat root.
 	// This allows services to have .env and other config files at their root.
-	if err := rig.CopyOverlay(m.rig.Path, clonePath); err != nil {
-		// Non-fatal - log warning but continue
-		fmt.Printf("Warning: could not copy overlay files: %v\n", err)
-	}
+	// Uses localFS/targetFS to work for both local and remote polecats.
+	m.copyOverlay(clonePath)
 
 	// Run setup hooks from .runtime/setup-hooks/.
 	// These hooks can inject local git config, copy secrets, or perform other setup tasks.
-	if err := rig.RunSetupHooks(m.rig.Path, clonePath); err != nil {
-		// Non-fatal - log warning but continue
-		fmt.Printf("Warning: could not run setup hooks: %v\n", err)
-	}
+	// Uses runner to execute hooks on the target (local or remote).
+	m.runSetupHooks(clonePath)
 
 	// NOTE: Slash commands (.claude/commands/) are provisioned at town level by gt install.
 	// All agents inherit them via Claude's directory traversal - no per-workspace copies needed.
@@ -553,6 +558,12 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 
 	// Prune any stale worktree entries (non-fatal: cleanup only)
 	_ = m.gitOps.WorktreePrune(repoPath)
+
+	// For remote polecats, also clean up the local marker directory
+	if m.isRemote() {
+		localPolecatDir := filepath.Join(m.rig.Path, "polecats", name)
+		_ = m.localFS.RemoveAll(localPolecatDir)
+	}
 
 	// Release name back to pool if it's a pooled name (non-fatal: state file update)
 	m.namePool.Release(name)
@@ -715,9 +726,12 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	}
 
 	// Copy overlay files from .runtime/overlay/ to polecat root.
-	if err := rig.CopyOverlay(m.rig.Path, newClonePath); err != nil {
-		fmt.Printf("Warning: could not copy overlay files: %v\n", err)
-	}
+	// Uses localFS/targetFS to work for both local and remote polecats.
+	m.copyOverlay(newClonePath)
+
+	// Run setup hooks from .runtime/setup-hooks/.
+	// Uses runner to execute hooks on the target (local or remote).
+	m.runSetupHooks(newClonePath)
 
 	// NOTE: Slash commands inherited from town level - no per-workspace copies needed.
 
@@ -821,7 +835,7 @@ func (m *Manager) PoolStatus() (active int, names []string) {
 
 // List returns all polecats in the rig.
 func (m *Manager) List() ([]*Polecat, error) {
-	polecatsDir := filepath.Join(m.rig.Path, "polecats")
+	polecatsDir := filepath.Join(m.targetRigPath, "polecats")
 
 	entries, err := m.targetFS.ReadDir(polecatsDir)
 	if err != nil {
@@ -849,6 +863,20 @@ func (m *Manager) List() ([]*Polecat, error) {
 	}
 
 	return polecats, nil
+}
+
+// ListPolecatNames returns just the names of all polecats.
+// This implements rig.PolecatLister interface for remote rig support.
+func (m *Manager) ListPolecatNames() ([]string, error) {
+	polecats, err := m.List()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(polecats))
+	for i, p := range polecats {
+		names[i] = p.Name
+	}
+	return names, nil
 }
 
 // Get returns a specific polecat by name.
@@ -1017,6 +1045,140 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 func (m *Manager) setupSharedBeads(clonePath string) error {
 	townRoot := filepath.Dir(m.rig.Path)
 	return beads.SetupRedirect(townRoot, clonePath)
+}
+
+// copyOverlay copies files from <rigPath>/.runtime/overlay/ to the polecat worktree.
+// This allows storing gitignored files (like .env) that polecats need at their root.
+// Uses localFS/targetFS so it works for both local and remote polecats.
+// File permissions from the source are preserved.
+func (m *Manager) copyOverlay(clonePath string) {
+	overlayDir := filepath.Join(m.rig.Path, ".runtime", "overlay")
+
+	// Read overlay directory from local filesystem
+	entries, err := m.localFS.ReadDir(overlayDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No overlay directory - not an error, just nothing to copy
+			return
+		}
+		fmt.Printf("Warning: could not read overlay dir: %v\n", err)
+		return
+	}
+
+	// Copy each file (not directories) to the target
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		srcPath := filepath.Join(overlayDir, entry.Name())
+		dstPath := filepath.Join(clonePath, entry.Name())
+
+		// Get source file permissions (overlay is always local)
+		srcInfo, err := os.Stat(srcPath)
+		if err != nil {
+			fmt.Printf("Warning: could not stat overlay file %s: %v\n", entry.Name(), err)
+			continue
+		}
+		perm := srcInfo.Mode().Perm()
+
+		// Read from local, write to target with same permissions
+		data, err := m.localFS.ReadFile(srcPath)
+		if err != nil {
+			fmt.Printf("Warning: could not read overlay file %s: %v\n", entry.Name(), err)
+			continue
+		}
+
+		if err := m.targetFS.WriteFile(dstPath, data, perm); err != nil {
+			fmt.Printf("Warning: could not write overlay file %s: %v\n", entry.Name(), err)
+			continue
+		}
+	}
+}
+
+// runSetupHooks executes setup hooks from <rigPath>/.runtime/setup-hooks/.
+// Hooks run on the target with the polecat worktree as working directory.
+// Uses runner so it works for both local and remote polecats.
+// Hooks must be executable (chmod +x) - non-executable files are skipped with a warning.
+func (m *Manager) runSetupHooks(clonePath string) {
+	hooksDir := filepath.Join(m.rig.Path, ".runtime", "setup-hooks")
+
+	// Read hooks directory from local filesystem
+	entries, err := m.localFS.ReadDir(hooksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No setup-hooks directory - not an error, just nothing to run
+			return
+		}
+		fmt.Printf("Warning: could not read setup-hooks dir: %v\n", err)
+		return
+	}
+
+	if len(entries) == 0 {
+		return
+	}
+
+	// Sort hooks alphabetically for consistent execution order
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+
+	// Execute each hook
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		hookName := entry.Name()
+		localHookPath := filepath.Join(hooksDir, hookName)
+
+		// Check if hook is executable (hooks are always local)
+		info, err := os.Stat(localHookPath)
+		if err != nil {
+			fmt.Printf("Warning: could not stat hook %s: %v\n", hookName, err)
+			continue
+		}
+		if info.Mode().Perm()&0111 == 0 {
+			fmt.Printf("Warning: skipping non-executable hook %s (use chmod +x to make it executable)\n", hookName)
+			continue
+		}
+
+		// Read hook content from local
+		content, err := m.localFS.ReadFile(localHookPath)
+		if err != nil {
+			fmt.Printf("Warning: could not read hook %s: %v\n", hookName, err)
+			continue
+		}
+
+		// Write hook to temp file on target (preserve executable permission)
+		tmpHookPath := filepath.Join(clonePath, ".gt-setup-hook-tmp")
+		if err := m.targetFS.WriteFile(tmpHookPath, content, 0755); err != nil {
+			fmt.Printf("Warning: could not copy hook %s to target: %v\n", hookName, err)
+			continue
+		}
+
+		// Execute hook on target with clonePath as working directory
+		// Set environment variables for the hook
+		envScript := fmt.Sprintf(
+			"export GT_WORKTREE_PATH=%s && export GT_RIG_PATH=%s && %s",
+			shellQuote(clonePath),
+			shellQuote(m.targetRigPath),
+			tmpHookPath,
+		)
+		if err := m.runner.Run(clonePath, "sh", "-c", envScript); err != nil {
+			fmt.Printf("Warning: setup hook %s failed: %v\n", hookName, err)
+		} else {
+			fmt.Printf("Ran setup hook: %s\n", hookName)
+		}
+
+		// Clean up temp file
+		_ = m.targetFS.RemoveAll(tmpHookPath)
+	}
+}
+
+// shellQuote quotes a string for safe use in shell commands.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // CleanupStaleBranches removes orphaned polecat branches that are no longer in use.

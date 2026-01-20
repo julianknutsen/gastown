@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/gastown/internal/factory"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -341,11 +342,23 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 			defer wg.Done()
 
 			rs := RigStatus{
-				Name:         r.Name,
-				Polecats:     r.Polecats,
-				PolecatCount: len(r.Polecats),
-				HasWitness:   r.HasWitness,
-				HasRefinery:  r.HasRefinery,
+				Name:        r.Name,
+				HasWitness:  r.HasWitness,
+				HasRefinery: r.HasRefinery,
+			}
+
+			// Query polecat backend for polecats (handles both local and remote rigs)
+			polecatGit := git.NewGit(r.Path)
+			polecatBackend := polecat.BackendFor(r, polecatGit)
+			if polecats, err := polecatBackend.List(); err == nil {
+				for _, p := range polecats {
+					rs.Polecats = append(rs.Polecats, p.Name)
+				}
+				rs.PolecatCount = len(polecats)
+			} else {
+				// Fallback to rig's cached list if backend query fails
+				rs.Polecats = r.Polecats
+				rs.PolecatCount = len(r.Polecats)
 			}
 
 			// Count crew workers
@@ -359,7 +372,7 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 			}
 
 			// Discover hooks for all agents in this rig
-			rs.Hooks = discoverRigHooks(r, rs.Crews)
+			rs.Hooks = discoverRigHooks(r, rs.Polecats, rs.Crews)
 			activeHooks := 0
 			for _, hook := range rs.Hooks {
 				if hook.HasWork {
@@ -369,7 +382,7 @@ func runStatusOnce(_ *cobra.Command, _ []string) error {
 			rigActiveHooks[idx] = activeHooks
 
 			// Discover runtime state for all agents in this rig
-			rs.Agents = discoverRigAgents(allSessions, r, rs.Crews, allAgentBeads, allHookBeads, mailRouter, statusFast)
+			rs.Agents = discoverRigAgents(allSessions, r, rs.Polecats, rs.Crews, allAgentBeads, allHookBeads, mailRouter, statusFast)
 
 			// Get MQ summary if rig has a refinery
 			rs.MQ = getMQSummary(r)
@@ -873,14 +886,14 @@ func capitalizeFirst(s string) string {
 
 // discoverRigHooks finds all hook attachments for agents in a rig.
 // It scans polecats, crew workers, witness, and refinery for handoff beads.
-func discoverRigHooks(r *rig.Rig, crews []string) []AgentHookInfo {
+func discoverRigHooks(r *rig.Rig, polecats []string, crews []string) []AgentHookInfo {
 	var hooks []AgentHookInfo
 
 	// Create beads instance for the rig
 	b := beads.New(r.Path)
 
 	// Check polecats
-	for _, name := range r.Polecats {
+	for _, name := range polecats {
 		hook := getAgentHook(b, name, r.Name+"/"+name, "polecat")
 		hooks = append(hooks, hook)
 	}
@@ -1015,7 +1028,8 @@ type agentDef struct {
 // allSessions is a preloaded map of tmux sessions for O(1) lookup.
 // allAgentBeads is a preloaded map of agent beads for O(1) lookup.
 // allHookBeads is a preloaded map of hook beads for O(1) lookup.
-func discoverRigAgents(allSessions map[string]bool, r *rig.Rig, crews []string, allAgentBeads map[string]*beads.Issue, allHookBeads map[string]*beads.Issue, mailRouter *mail.Router, skipMail bool) []AgentRuntime {
+// polecats and crews are passed explicitly to support remote rigs where r.Polecats is stale.
+func discoverRigAgents(allSessions map[string]bool, r *rig.Rig, polecats []string, crews []string, allAgentBeads map[string]*beads.Issue, allHookBeads map[string]*beads.Issue, mailRouter *mail.Router, skipMail bool) []AgentRuntime {
 	// Build list of all agents to discover
 	var defs []agentDef
 	townRoot := filepath.Dir(r.Path)
@@ -1043,8 +1057,8 @@ func discoverRigAgents(allSessions map[string]bool, r *rig.Rig, crews []string, 
 		})
 	}
 
-	// Polecats
-	for _, name := range r.Polecats {
+	// Polecats (use passed list, not r.Polecats which may be stale for remote rigs)
+	for _, name := range polecats {
 		defs = append(defs, agentDef{
 			name:    name,
 			address: r.Name + "/" + name,

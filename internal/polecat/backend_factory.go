@@ -39,6 +39,7 @@ func BackendFor(r *rig.Rig, g *git.Git) Backend {
 			TargetFS:      NewRemoteFilesystem(sshRunner),
 			LocalFS:       NewLocalFilesystem(),
 			GitOps:        git.NewOps(sshRunner),
+			Runner:        sshRunner,
 			TargetRigPath: remoteRigPath,
 		}
 		return NewManagerWithDeps(agents, r, deps)
@@ -46,10 +47,12 @@ func BackendFor(r *rig.Rig, g *git.Git) Backend {
 
 	// Default to local manager
 	localFS := NewLocalFilesystem()
+	localRunner := runner.NewLocal()
 	deps := &ManagerDeps{
 		TargetFS:      localFS,
 		LocalFS:       localFS,
-		GitOps:        git.NewOps(runner.NewLocal()),
+		GitOps:        git.NewOps(localRunner),
+		Runner:        localRunner,
 		TargetRigPath: r.Path,
 	}
 	return NewManagerWithDeps(agents, r, deps)

@@ -736,6 +736,115 @@ func TestLooksLikeBeadID(t *testing.T) {
 	}
 }
 
+// TestParseBatchOnTarget tests the batch --on flag value parsing.
+func TestParseBatchOnTarget(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   []string
+	}{
+		{
+			name:  "single bead",
+			input: "gt-abc123",
+			want:  []string{"gt-abc123"},
+		},
+		{
+			name:  "comma separated",
+			input: "gt-abc,gt-def,gt-ghi",
+			want:  []string{"gt-abc", "gt-def", "gt-ghi"},
+		},
+		{
+			name:  "comma separated with whitespace",
+			input: "gt-abc, gt-def , gt-ghi",
+			want:  []string{"gt-abc", "gt-def", "gt-ghi"},
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  []string{},
+		},
+		{
+			name:  "trailing comma",
+			input: "gt-abc,gt-def,",
+			want:  []string{"gt-abc", "gt-def"},
+		},
+		{
+			name:  "leading comma",
+			input: ",gt-abc,gt-def",
+			want:  []string{"gt-abc", "gt-def"},
+		},
+		{
+			name:  "multiple commas",
+			input: "gt-abc,,gt-def",
+			want:  []string{"gt-abc", "gt-def"},
+		},
+		{
+			name:  "only commas",
+			input: ",,,",
+			want:  []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseBatchOnTarget(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("parseBatchOnTarget(%q) = %v (len %d), want %v (len %d)",
+					tt.input, got, len(got), tt.want, len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("parseBatchOnTarget(%q)[%d] = %q, want %q",
+						tt.input, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestParseBatchOnTargetFile tests file input for batch --on flag.
+func TestParseBatchOnTargetFile(t *testing.T) {
+	// Create temp file with bead IDs
+	tmpDir := t.TempDir()
+	beadsFile := filepath.Join(tmpDir, "beads.txt")
+
+	content := `gt-abc123
+gt-def456
+# This is a comment
+gt-ghi789
+
+# Another comment
+gt-jkl012
+`
+	if err := os.WriteFile(beadsFile, []byte(content), 0644); err != nil {
+		t.Fatalf("write beads file: %v", err)
+	}
+
+	got := parseBatchOnTarget("@" + beadsFile)
+	want := []string{"gt-abc123", "gt-def456", "gt-ghi789", "gt-jkl012"}
+
+	if len(got) != len(want) {
+		t.Fatalf("parseBatchOnTarget(@file) = %v (len %d), want %v (len %d)",
+			got, len(got), want, len(want))
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("parseBatchOnTarget(@file)[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestParseBatchOnTargetFileNotFound tests file not found case.
+func TestParseBatchOnTargetFileNotFound(t *testing.T) {
+	// When file doesn't exist, returns the @filename as-is (will fail validation later)
+	got := parseBatchOnTarget("@nonexistent.txt")
+	want := []string{"@nonexistent.txt"}
+
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("parseBatchOnTarget(@nonexistent) = %v, want %v", got, want)
+	}
+}
+
 // TestSlingFormulaOnBeadSetsAttachedMolecule verifies that when using
 // gt sling <formula> --on <bead>, the attached_molecule field is set in the
 // hooked bead's description after bonding. This is required for gt hook to

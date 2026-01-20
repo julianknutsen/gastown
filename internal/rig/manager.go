@@ -109,11 +109,18 @@ func NewManager(townRoot string, rigsConfig *config.RigsConfig, g *git.Git) *Man
 
 // DiscoverRigs returns all rigs registered in the workspace.
 // Rigs that fail to load are logged to stderr and skipped; partial results are returned.
+// Uses local filesystem scanning for polecats. For remote rig support, use DiscoverRigsWithOptions.
 func (m *Manager) DiscoverRigs() ([]*Rig, error) {
+	return m.DiscoverRigsWithOptions(nil)
+}
+
+// DiscoverRigsWithOptions returns all rigs with custom loading options.
+// If opts is nil, local filesystem scanning is used for polecats.
+func (m *Manager) DiscoverRigsWithOptions(opts *LoadOptions) ([]*Rig, error) {
 	var rigs []*Rig
 
 	for name, entry := range m.config.Rigs {
-		rig, err := m.loadRig(name, entry)
+		rig, err := m.loadRig(name, entry, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to load rig %q: %v\n", name, err)
 			continue
@@ -126,12 +133,18 @@ func (m *Manager) DiscoverRigs() ([]*Rig, error) {
 
 // GetRig returns a specific rig by name.
 func (m *Manager) GetRig(name string) (*Rig, error) {
+	return m.GetRigWithOptions(name, nil)
+}
+
+// GetRigWithOptions returns a specific rig by name with custom loading options.
+// If opts is nil or opts.PolecatLister is nil, local filesystem scanning is used for polecats.
+func (m *Manager) GetRigWithOptions(name string, opts *LoadOptions) (*Rig, error) {
 	entry, ok := m.config.Rigs[name]
 	if !ok {
 		return nil, ErrRigNotFound
 	}
 
-	return m.loadRig(name, entry)
+	return m.loadRig(name, entry, opts)
 }
 
 // RigExists checks if a rig is registered.
@@ -141,7 +154,7 @@ func (m *Manager) RigExists(name string) bool {
 }
 
 // loadRig loads rig details from the filesystem.
-func (m *Manager) loadRig(name string, entry config.RigEntry) (*Rig, error) {
+func (m *Manager) loadRig(name string, entry config.RigEntry, opts *LoadOptions) (*Rig, error) {
 	rigPath := filepath.Join(m.townRoot, name)
 
 	// Verify directory exists
@@ -161,30 +174,37 @@ func (m *Manager) loadRig(name string, entry config.RigEntry) (*Rig, error) {
 		Config:    entry.BeadsConfig,
 	}
 
-	// Scan for polecats
-	// Reserved names that conflict with rig-level agents
-	reservedNames := map[string]bool{
-		"witness":  true,
-		"refinery": true,
-		"crew":     true,
-		"mayor":    true,
-		"deacon":   true,
-	}
-	polecatsDir := filepath.Join(rigPath, "polecats")
-	if entries, err := os.ReadDir(polecatsDir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
+	// Get polecats - use provided lister if available, otherwise scan local filesystem
+	if opts != nil && opts.PolecatLister != nil {
+		if names, err := opts.PolecatLister.ListPolecatNames(); err == nil {
+			rig.Polecats = names
+		}
+	} else {
+		// Scan for polecats locally (fallback for local rigs)
+		// Reserved names that conflict with rig-level agents
+		reservedNames := map[string]bool{
+			"witness":  true,
+			"refinery": true,
+			"crew":     true,
+			"mayor":    true,
+			"deacon":   true,
+		}
+		polecatsDir := filepath.Join(rigPath, "polecats")
+		if entries, err := os.ReadDir(polecatsDir); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				entryName := e.Name()
+				if strings.HasPrefix(entryName, ".") {
+					continue
+				}
+				// Skip reserved names that conflict with rig-level agents
+				if reservedNames[entryName] {
+					continue
+				}
+				rig.Polecats = append(rig.Polecats, entryName)
 			}
-			name := e.Name()
-			if strings.HasPrefix(name, ".") {
-				continue
-			}
-			// Skip reserved names that conflict with rig-level agents
-			if reservedNames[name] {
-				continue
-			}
-			rig.Polecats = append(rig.Polecats, name)
 		}
 	}
 
@@ -591,7 +611,7 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	}
 
 	success = true
-	return m.loadRig(opts.Name, m.config.Rigs[opts.Name])
+	return m.loadRig(opts.Name, m.config.Rigs[opts.Name], nil)
 }
 
 // saveRigConfig writes the rig configuration to config.json.
