@@ -7,6 +7,8 @@ import (
 	"github.com/steveyegge/gastown/internal/cmd"
 )
 
+// main is the entry point for the Gas Town CLI. It delegates all command
+// parsing and execution to cmd.Execute() and exits with its return code.
 func main() {
 	os.Exit(cmd.Execute())
 }
