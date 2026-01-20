@@ -1,4 +1,5 @@
 // Package witness provides the polecat monitoring agent.
+// This file defines the core types for witness configuration and state tracking.
 package witness
 
 import (
