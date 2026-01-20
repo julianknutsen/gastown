@@ -1,3 +1,5 @@
+// Package witness provides lifecycle management for witness agents that monitor
+// polecats in a Gas Town rig.
 package witness
 
 import (
