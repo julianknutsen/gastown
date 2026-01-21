@@ -82,6 +82,14 @@ func init() {
 }
 
 func runDone(cmd *cobra.Command, args []string) error {
+	// Guard: Only polecats should call gt done
+	// Crew, deacons, witnesses etc. don't use gt done - they persist across tasks.
+	// Polecats are ephemeral workers that self-destruct after completing work.
+	actor := os.Getenv("BD_ACTOR")
+	if actor != "" && !isPolecatActor(actor) {
+		return fmt.Errorf("gt done is for polecats only (you are %s)\nPolecats are ephemeral workers that self-destruct after completing work.\nOther roles persist across tasks and don't use gt done.", actor)
+	}
+
 	// Handle --phase-complete flag (overrides --status)
 	var exitType string
 	if donePhaseComplete {
@@ -706,6 +714,14 @@ func selfNukePolecat(roleInfo RoleInfo, _ string) error {
 	}
 
 	return nil
+}
+
+// isPolecatActor checks if a BD_ACTOR value represents a polecat.
+// Polecat actors have format: rigname/polecats/polecatname
+// Non-polecat actors have formats like: gastown/crew/name, rigname/witness, etc.
+func isPolecatActor(actor string) bool {
+	parts := strings.Split(actor, "/")
+	return len(parts) >= 2 && parts[1] == "polecats"
 }
 
 // selfKillSession terminates the polecat's own tmux session after logging the event.
