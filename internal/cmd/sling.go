@@ -482,11 +482,22 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("%s Formula bonded to %s\n", style.Bold.Render("✓"), beadID)
 
-		// Record attached molecule after other description updates to avoid overwrite.
+		// Record attached molecule - will be stored in BASE bead (not wisp).
+		// The base bead is hooked, and its attached_molecule points to the wisp.
+		// This enables:
+		// - gt hook/gt prime: read base bead, follow attached_molecule to show wisp steps
+		// - gt done: close attached_molecule (wisp) first, then close base bead
+		// - Compound resolution: base bead -> attached_molecule -> wisp
 		attachedMoleculeID = wispRootID
 
-		// Update beadID to hook the compound root instead of bare bead
-		beadID = wispRootID
+		// NOTE: We intentionally keep beadID as the ORIGINAL base bead, not the wisp.
+		// The base bead is hooked so that:
+		// 1. gt done closes both the base bead AND the attached molecule (wisp)
+		// 2. The base bead's attached_molecule field points to the wisp for compound resolution
+		// Previously, this line incorrectly set beadID = wispRootID, causing:
+		// - Wisp hooked instead of base bead
+		// - attached_molecule stored as self-reference in wisp (meaningless)
+		// - Base bead left orphaned after gt done
 	}
 
 	// Hook the bead using bd update.
@@ -534,8 +545,11 @@ func runSling(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Record the attached molecule in the wisp's description.
-	// This is required for gt hook to recognize the molecule attachment.
+	// Record the attached molecule in the BASE bead's description.
+	// This field points to the wisp (compound root) and enables:
+	// - gt hook/gt prime: follow attached_molecule to show molecule steps
+	// - gt done: close attached_molecule (wisp) before closing hooked bead
+	// - Compound resolution: base bead -> attached_molecule -> wisp
 	if attachedMoleculeID != "" {
 		if err := storeAttachedMoleculeInBead(beadID, attachedMoleculeID); err != nil {
 			// Warn but don't fail - polecat can still work through steps
