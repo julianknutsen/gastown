@@ -453,7 +453,7 @@ func isPolecatTarget(target string) bool {
 // FormulaOnBeadResult contains the result of instantiating a formula on a bead.
 type FormulaOnBeadResult struct {
 	WispRootID string // The wisp root ID (compound root after bonding)
-	BeadToHook string // The bead ID to hook (wisp root)
+	BeadToHook string // The bead ID to hook (BASE bead, not wisp - lifecycle fix)
 }
 
 // InstantiateFormulaOnBead creates a wisp from a formula, bonds it to a bead.
@@ -521,7 +521,7 @@ func InstantiateFormulaOnBead(formulaName, beadID, title, hookWorkDir, townRoot 
 
 	return &FormulaOnBeadResult{
 		WispRootID: wispRootID,
-		BeadToHook: wispRootID, // Hook the wisp root (compound root)
+		BeadToHook: beadID, // Hook the BASE bead (lifecycle fix: wisp is attached_molecule)
 	}, nil
 }
 

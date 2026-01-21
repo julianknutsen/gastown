@@ -603,6 +603,19 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 		hookedBeadID := agentBead.HookBead
 		// Only close if the hooked bead exists and is still in "hooked" status
 		if hookedBead, err := bd.Show(hookedBeadID); err == nil && hookedBead.Status == beads.StatusHooked {
+			// BUG FIX: Close attached molecule (wisp) BEFORE closing hooked bead.
+			// When using formula-on-bead (gt sling formula --on bead), the base bead
+			// has attached_molecule pointing to the wisp. Without this fix, gt done
+			// only closed the hooked bead, leaving the wisp orphaned.
+			// Order matters: wisp closes -> unblocks base bead -> base bead closes.
+			attachment := beads.ParseAttachmentFields(hookedBead)
+			if attachment != nil && attachment.AttachedMolecule != "" {
+				if err := bd.Close(attachment.AttachedMolecule); err != nil {
+					// Non-fatal: warn but continue
+					fmt.Fprintf(os.Stderr, "Warning: couldn't close attached molecule %s: %v\n", attachment.AttachedMolecule, err)
+				}
+			}
+
 			if err := bd.Close(hookedBeadID); err != nil {
 				// Non-fatal: warn but continue
 				fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)

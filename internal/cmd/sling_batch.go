@@ -23,8 +23,9 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 
 	if slingDryRun {
 		fmt.Printf("%s Batch slinging %d beads to rig '%s':\n", style.Bold.Render("🎯"), len(beadIDs), rigName)
+		fmt.Printf("  Would cook mol-polecat-work formula once\n")
 		for _, beadID := range beadIDs {
-			fmt.Printf("  Would spawn polecat for: %s\n", beadID)
+			fmt.Printf("  Would spawn polecat and apply mol-polecat-work to: %s\n", beadID)
 		}
 		return nil
 	}
