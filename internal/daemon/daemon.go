@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -666,17 +665,16 @@ func IsRunning(townRoot string) (bool, int, error) {
 
 // isGasTownDaemon checks if a PID is actually a gt daemon run process.
 // This prevents false positives from PID reuse.
+// Uses ps command for cross-platform compatibility (Linux, macOS).
 func isGasTownDaemon(pid int) bool {
-	// Read /proc/<pid>/cmdline to verify process name
-	cmdlineFile := fmt.Sprintf("/proc/%d/cmdline", pid)
-	data, err := os.ReadFile(cmdlineFile)
+	// Use ps to get command for the PID (works on Linux and macOS)
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
+	output, err := cmd.Output()
 	if err != nil {
 		return false
 	}
 
-	// cmdline is null-separated, convert to space-separated
-	cmdline := string(bytes.ReplaceAll(data, []byte{0}, []byte(" ")))
-	cmdline = strings.TrimSpace(cmdline)
+	cmdline := strings.TrimSpace(string(output))
 
 	// Check if it's "gt daemon run" or "/path/to/gt daemon run"
 	return strings.Contains(cmdline, "gt") && strings.Contains(cmdline, "daemon") && strings.Contains(cmdline, "run")
