@@ -1,7 +1,6 @@
 package witness
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,70 +80,38 @@ func TestManager_witnessDir_FallsBackToRigPath(t *testing.T) {
 }
 
 // =============================================================================
-// Status Error Path Tests
+// ZFC-Compliant Status Tests
+// Status() returns *session.Info from tmux (source of truth)
 // =============================================================================
 
-func TestManager_Status_WhenLoadStateFails_ReturnsError(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	require.NoError(t, os.MkdirAll(filepath.Join(rigPath, ".runtime"), 0755))
+func TestManager_Status_WhenNotRunning_ReturnsNil(t *testing.T) {
+	mgr, _ := setupTestManagerInternal(t)
 
-	// Write invalid JSON
-	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	require.NoError(t, os.WriteFile(stateFile, []byte("invalid json"), 0644))
-
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r)
-
-	_, err := mgr.Status()
-	assert.Error(t, err)
+	// Agent doesn't exist
+	status, err := mgr.Status()
+	require.NoError(t, err)
+	assert.Nil(t, status, "Status should be nil when not running")
 }
 
-// =============================================================================
-// LoadState/SaveState Tests
-// =============================================================================
-
-func TestManager_LoadState_ReturnsPersistedState(t *testing.T) {
+func TestManager_Status_WhenRunning_ReturnsSessionInfo(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigPath := filepath.Join(tmpDir, "testrig")
-	runtimeDir := filepath.Join(rigPath, ".runtime")
-	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
+	require.NoError(t, os.MkdirAll(rigPath, 0755))
 
-	// Write a state file
-	stateFile := filepath.Join(runtimeDir, "witness.json")
-	state := Witness{RigName: "testrig", State: agent.StateRunning}
-	data, _ := json.MarshalIndent(state, "", "  ")
-	require.NoError(t, os.WriteFile(stateFile, data, 0644))
+	r := &rig.Rig{Name: "testrig", Path: rigPath, Polecats: []string{}}
+	agents := agent.NewDouble()
+	mgr := NewManager(agents, r)
 
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r)
+	// Create running agent
+	agentID := mgr.Address()
+	agents.CreateAgent(agentID)
 
-	loaded, err := mgr.LoadState()
+	status, err := mgr.Status()
 	require.NoError(t, err)
-	assert.Equal(t, "testrig", loaded.RigName)
-	assert.Equal(t, agent.StateRunning, loaded.State)
+	assert.NotNil(t, status, "Status should return session info when running")
 }
 
-func TestManager_SaveState_PersistsState(t *testing.T) {
-	tmpDir := t.TempDir()
-	rigPath := filepath.Join(tmpDir, "testrig")
-	runtimeDir := filepath.Join(rigPath, ".runtime")
-	require.NoError(t, os.MkdirAll(runtimeDir, 0755))
-
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(agent.NewDouble(), r)
-
-	state := &Witness{RigName: "testrig", State: agent.StateRunning}
-	err := mgr.SaveState(state)
-	require.NoError(t, err)
-
-	// Verify file was written
-	stateFile := filepath.Join(runtimeDir, "witness.json")
-	data, err := os.ReadFile(stateFile)
-	require.NoError(t, err)
-
-	var loaded Witness
-	require.NoError(t, json.Unmarshal(data, &loaded))
-	assert.Equal(t, "testrig", loaded.RigName)
-	assert.Equal(t, agent.StateRunning, loaded.State)
-}
+// NOTE: Tests for LoadState/SaveState have been removed.
+// These methods no longer exist - ZFC-compliant: no state files.
+// NOTE: Tests for Status() returning Witness state have been removed.
+// Status() now returns *session.Info (tmux is source of truth).

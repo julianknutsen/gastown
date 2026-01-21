@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 // ErrNoQueue indicates there are no items in the queue.
@@ -23,14 +24,14 @@ var ErrNoQueue = errors.New("no items in queue")
 
 // Manager handles refinery status and queue operations.
 // Start/Stop operations are handled via factory.Start()/factory.Agents().Stop().
+// ZFC-compliant: tmux session existence is the source of truth.
 type Manager struct {
-	stateManager *agent.StateManager[Refinery]
-	agents       agent.AgentObserver // Only needs Exists() for status checks
-	rigName      string
-	rigPath      string
-	address      agent.AgentID
-	rig          *rig.Rig
-	output       io.Writer // Output destination for user-facing messages
+	agents  agent.AgentObserver // Only needs Exists(), GetInfo() for status checks
+	rigName string
+	rigPath string
+	address agent.AgentID
+	rig     *rig.Rig
+	output  io.Writer // Output destination for user-facing messages
 }
 
 // NewManager creates a new refinery manager for a rig.
@@ -40,17 +41,13 @@ type Manager struct {
 // The agents parameter only needs to implement AgentObserver (Exists, GetInfo, List).
 // In production, pass factory.Agents(). In tests, use agent.NewObserverDouble().
 func NewManager(agents agent.AgentObserver, r *rig.Rig) *Manager {
-	stateFactory := func() *Refinery {
-		return &Refinery{RigName: r.Name, State: agent.StateStopped}
-	}
 	return &Manager{
-		stateManager: agent.NewStateManager[Refinery](r.Path, "refinery.json", stateFactory),
-		agents:       agents,
-		rigName:      r.Name,
-		rigPath:      r.Path,
-		address:      agent.RefineryAddress(r.Name),
-		rig:          r,
-		output:       os.Stdout,
+		agents:  agents,
+		rigName: r.Name,
+		rigPath: r.Path,
+		address: agent.RefineryAddress(r.Name),
+		rig:     r,
+		output:  os.Stdout,
 	}
 }
 
@@ -71,23 +68,13 @@ func (m *Manager) refineryDir() string {
 	return filepath.Join(m.rig.Path, "mayor", "rig")
 }
 
-// Status returns the current refinery status.
-// Reconciles persisted state with actual agent existence.
-func (m *Manager) Status() (*Refinery, error) {
-	ref, err := m.stateManager.Load()
-	if err != nil {
-		return nil, err
+// Status returns the tmux session info if running, nil otherwise.
+// ZFC-compliant: tmux session is the source of truth.
+func (m *Manager) Status() (*session.Info, error) {
+	if !m.agents.Exists(m.address) {
+		return nil, nil
 	}
-
-	// Reconcile state with reality (don't persist, just report accurately)
-	agentExists := m.agents.Exists(m.address)
-	if ref.IsRunning() && !agentExists {
-		ref.SetStopped() // Agent crashed
-	} else if !ref.IsRunning() && agentExists {
-		ref.SetRunning(time.Now()) // Agent started via factory.Start()
-	}
-
-	return ref, nil
+	return m.agents.GetInfo(m.address)
 }
 
 // SessionName returns the tmux session name for this refinery.
@@ -110,14 +97,9 @@ func (m *Manager) RigPath() string {
 	return m.rigPath
 }
 
-// LoadState loads the refinery state from disk.
-func (m *Manager) LoadState() (*Refinery, error) {
-	return m.stateManager.Load()
-}
-
-// SaveState persists the refinery state to disk.
-func (m *Manager) SaveState(ref *Refinery) error {
-	return m.stateManager.Save(ref)
+// Rig returns the rig this refinery processes.
+func (m *Manager) Rig() *rig.Rig {
+	return m.rig
 }
 
 // Queue returns the current merge queue.
@@ -328,29 +310,8 @@ var (
 	ErrMRNotFailed = errors.New("merge request has not failed")
 )
 
-// GetMR returns a merge request by ID from the state.
-func (m *Manager) GetMR(id string) (*MergeRequest, error) {
-	ref, err := m.LoadState()
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if it's the current MR
-	if ref.CurrentMR != nil && ref.CurrentMR.ID == id {
-		return ref.CurrentMR, nil
-	}
-
-	// Check pending MRs
-	if ref.PendingMRs != nil {
-		if mr, ok := ref.PendingMRs[id]; ok {
-			return mr, nil
-		}
-	}
-
-	return nil, ErrMRNotFound
-}
-
 // FindMR finds a merge request by ID or branch name in the queue.
+// ZFC-compliant: queries beads, not state file.
 func (m *Manager) FindMR(idOrBranch string) (*MergeRequest, error) {
 	queue, err := m.Queue()
 	if err != nil {

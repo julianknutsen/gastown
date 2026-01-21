@@ -1050,14 +1050,8 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s\n", style.Bold.Render("Witness"))
 	witnessID := agent.WitnessAddress(rigName)
 	witnessRunning := agents.Exists(witnessID)
-	witMgr := factory.New(townRoot).WitnessManager(r, "")
-	witStatus, _ := witMgr.Status()
 	if witnessRunning {
-		fmt.Printf("  %s running", style.Success.Render("●"))
-		if witStatus != nil && witStatus.StartedAt != nil {
-			fmt.Printf(" (uptime: %s)", formatDuration(time.Since(*witStatus.StartedAt)))
-		}
-		fmt.Printf("\n")
+		fmt.Printf("  %s running\n", style.Success.Render("●"))
 	} else {
 		fmt.Printf("  %s stopped\n", style.Dim.Render("○"))
 	}
@@ -1067,15 +1061,10 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s\n", style.Bold.Render("Refinery"))
 	refineryID := agent.RefineryAddress(rigName)
 	refineryRunning := agents.Exists(refineryID)
-	refMgr := factory.New(townRoot).RefineryManager(r, "")
-	refStatus, _ := refMgr.Status()
 	if refineryRunning {
-		fmt.Printf("  %s running", style.Success.Render("●"))
-		if refStatus != nil && refStatus.StartedAt != nil {
-			fmt.Printf(" (uptime: %s)", formatDuration(time.Since(*refStatus.StartedAt)))
-		}
-		fmt.Printf("\n")
+		fmt.Printf("  %s running\n", style.Success.Render("●"))
 		// Show queue size
+		refMgr := factory.New(townRoot).RefineryManager(r, "")
 		queue, err := refMgr.Queue()
 		if err == nil && len(queue) > 0 {
 			fmt.Printf("  Queue: %d items\n", len(queue))

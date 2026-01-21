@@ -4,43 +4,34 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 // Manager handles witness status and monitoring operations.
 // Start/Stop operations are handled via factory.Start()/factory.Agents().Stop().
+// ZFC-compliant: tmux session existence is the source of truth.
 type Manager struct {
-	stateManager *agent.StateManager[Witness]
-	agents       agent.AgentObserver // Only needs Exists() for status checks
-	rigName      string
-	rigPath      string
-	address      agent.AgentID
-	rig          *rig.Rig
+	agents  agent.AgentObserver // Only needs Exists(), GetInfo() for status checks
+	rigName string
+	address agent.AgentID
+	rig     *rig.Rig
 }
 
 // NewManager creates a new witness manager for a rig.
-// The manager handles status queries and state reconciliation.
+// The manager handles status queries.
 // Lifecycle operations (Start/Stop) should use factory.Start()/factory.Agents().Stop().
 //
 // The agents parameter only needs to implement AgentObserver (Exists, GetInfo, List).
 // In production, pass factory.Agents(). In tests, use agent.NewObserverDouble().
 func NewManager(agents agent.AgentObserver, r *rig.Rig) *Manager {
-	stateFactory := func() *Witness {
-		return &Witness{
-			RigName: r.Name,
-			State:   agent.StateStopped,
-		}
-	}
 	return &Manager{
-		stateManager: agent.NewStateManager[Witness](r.Path, "witness.json", stateFactory),
-		agents:       agents,
-		rigName:      r.Name,
-		rigPath:      r.Path,
-		address:      agent.WitnessAddress(r.Name),
-		rig:          r,
+		agents:  agents,
+		rigName: r.Name,
+		address: agent.WitnessAddress(r.Name),
+		rig:     r,
 	}
 }
 
@@ -60,26 +51,13 @@ func (m *Manager) witnessDir() string {
 	return m.rig.Path
 }
 
-// Status returns the current witness status.
-// Reconciles persisted state with actual agent existence.
-func (m *Manager) Status() (*Witness, error) {
-	w, err := m.stateManager.Load()
-	if err != nil {
-		return nil, err
+// Status returns the tmux session info if running, nil otherwise.
+// ZFC-compliant: tmux session is the source of truth.
+func (m *Manager) Status() (*session.Info, error) {
+	if !m.agents.Exists(m.address) {
+		return nil, nil
 	}
-
-	// Reconcile state with reality (don't persist, just report accurately)
-	agentExists := m.agents.Exists(m.address)
-	if w.IsRunning() && !agentExists {
-		w.SetStopped() // Agent crashed
-	} else if !w.IsRunning() && agentExists {
-		w.SetRunning(time.Now()) // Agent started via factory.Start()
-	}
-
-	// Update monitored polecats list (still useful for display)
-	w.MonitoredPolecats = m.rig.Polecats
-
-	return w, nil
+	return m.agents.GetInfo(m.address)
 }
 
 // SessionName returns the tmux session name for this witness.
@@ -88,6 +66,7 @@ func (m *Manager) SessionName() string {
 }
 
 // IsRunning checks if the witness session is currently active.
+// ZFC-compliant: checks tmux session existence.
 func (m *Manager) IsRunning() bool {
 	return m.agents.Exists(m.address)
 }
@@ -97,16 +76,7 @@ func (m *Manager) Address() agent.AgentID {
 	return m.address
 }
 
-// LoadState loads the witness state from disk.
-func (m *Manager) LoadState() (*Witness, error) {
-	return m.stateManager.Load()
-}
-
-// NOTE: buildWitnessStartCommand was removed in the agent refactor.
-// The GUPP initial prompt feature (from fd612593) should be added to
-// factory.Start() if needed - agents should start patrol immediately.
-
-// SaveState persists the witness state to disk.
-func (m *Manager) SaveState(w *Witness) error {
-	return m.stateManager.Save(w)
+// Rig returns the rig this witness monitors.
+func (m *Manager) Rig() *rig.Rig {
+	return m.rig
 }

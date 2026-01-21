@@ -370,54 +370,43 @@ func runRefineryStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ref, err := mgr.Status()
-	if err != nil {
-		return fmt.Errorf("getting status: %w", err)
-	}
+	// ZFC: tmux is source of truth for running state
+	running := mgr.IsRunning()
+	sessionInfo, _ := mgr.Status() // may be nil if not running
+
+	// Get queue from beads
+	queue, _ := mgr.Queue()
 
 	// JSON output
 	if refineryStatusJSON {
+		output := refinery.RefineryStatusOutput{
+			Running:   running,
+			RigName:   rigName,
+			QueueSize: len(queue),
+			Queue:     queue,
+		}
+		if sessionInfo != nil {
+			output.Session = sessionInfo.Name
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(ref)
+		return enc.Encode(output)
 	}
 
 	// Human-readable output
 	fmt.Printf("%s Refinery: %s\n\n", style.Bold.Render("⚙"), rigName)
 
-	stateStr := string(ref.State)
-	switch ref.State {
-	case agent.StateRunning:
-		stateStr = style.Bold.Render("● running")
-	case agent.StateStopped:
-		stateStr = style.Dim.Render("○ stopped")
-	case agent.StatePaused:
-		stateStr = style.Dim.Render("⏸ paused")
-	}
-	fmt.Printf("  State: %s\n", stateStr)
-
-	if ref.StartedAt != nil {
-		fmt.Printf("  Started: %s\n", ref.StartedAt.Format("2006-01-02 15:04:05"))
-	}
-
-	if ref.CurrentMR != nil {
-		fmt.Printf("\n  %s\n", style.Bold.Render("Currently Processing:"))
-		fmt.Printf("    Branch: %s\n", ref.CurrentMR.Branch)
-		fmt.Printf("    Worker: %s\n", ref.CurrentMR.Worker)
-		if ref.CurrentMR.IssueID != "" {
-			fmt.Printf("    Issue:  %s\n", ref.CurrentMR.IssueID)
+	if running {
+		fmt.Printf("  State: %s\n", style.Bold.Render("● running"))
+		if sessionInfo != nil {
+			fmt.Printf("  Session: %s\n", sessionInfo.Name)
 		}
+	} else {
+		fmt.Printf("  State: %s\n", style.Dim.Render("○ stopped"))
 	}
 
-	// Get queue length
-	queue, _ := mgr.Queue()
-	pendingCount := 0
-	for _, item := range queue {
-		if item.Position > 0 { // Not currently processing
-			pendingCount++
-		}
-	}
-	fmt.Printf("\n  Queue: %d pending\n", pendingCount)
+	// Show queue
+	fmt.Printf("\n  Queue: %d items\n", len(queue))
 
 	return nil
 }

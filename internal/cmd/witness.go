@@ -250,63 +250,57 @@ func runWitnessStop(cmd *cobra.Command, args []string) error {
 func runWitnessStatus(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
+	// Get rig for polecat info
+	_, r, err := getRig(rigName)
+	if err != nil {
+		return err
+	}
+
 	mgr, err := getWitnessManager(rigName, "")
 	if err != nil {
 		return err
 	}
 
-	w, err := mgr.Status()
-	if err != nil {
-		return fmt.Errorf("getting status: %w", err)
-	}
+	// ZFC: tmux is source of truth for running state
+	running := mgr.IsRunning()
+	sessionInfo, _ := mgr.Status() // may be nil if not running
 
-	// Check actual session state (more reliable than state file)
-	agents := factory.Agents()
-	witnessID := agent.WitnessAddress(rigName)
-	sessionRunning := agents.Exists(witnessID)
-	sessionName := witnessSessionName(rigName)
-
-	// Reconcile state: session is the source of truth for background mode
-	if sessionRunning && w.State != agent.StateRunning {
-		w.State = agent.StateRunning
-	} else if !sessionRunning && w.State == agent.StateRunning {
-		w.State = agent.StateStopped
-	}
+	// Polecats come from rig config, not state file
+	polecats := r.Polecats
 
 	// JSON output
 	if witnessStatusJSON {
+		output := witness.WitnessStatusOutput{
+			Running:           running,
+			RigName:           rigName,
+			MonitoredPolecats: polecats,
+		}
+		if sessionInfo != nil {
+			output.Session = sessionInfo.Name
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(w)
+		return enc.Encode(output)
 	}
 
 	// Human-readable output
 	fmt.Printf("%s Witness: %s\n\n", style.Bold.Render(AgentTypeIcons[AgentWitness]), rigName)
 
-	stateStr := string(w.State)
-	switch w.State {
-	case agent.StateRunning:
-		stateStr = style.Bold.Render("● running")
-	case agent.StateStopped:
-		stateStr = style.Dim.Render("○ stopped")
-	case agent.StatePaused:
-		stateStr = style.Dim.Render("⏸ paused")
-	}
-	fmt.Printf("  State: %s\n", stateStr)
-	if sessionRunning {
-		fmt.Printf("  Session: %s\n", sessionName)
-	}
-
-	if w.StartedAt != nil {
-		fmt.Printf("  Started: %s\n", w.StartedAt.Format("2006-01-02 15:04:05"))
+	if running {
+		fmt.Printf("  State: %s\n", style.Bold.Render("● running"))
+		if sessionInfo != nil {
+			fmt.Printf("  Session: %s\n", sessionInfo.Name)
+		}
+	} else {
+		fmt.Printf("  State: %s\n", style.Dim.Render("○ stopped"))
 	}
 
 	// Show monitored polecats
 	fmt.Printf("\n  %s\n", style.Bold.Render("Monitored Polecats:"))
-	if len(w.MonitoredPolecats) == 0 {
+	if len(polecats) == 0 {
 		fmt.Printf("    %s\n", style.Dim.Render("(none)"))
 	} else {
-		for _, p := range w.MonitoredPolecats {
+		for _, p := range polecats {
 			fmt.Printf("    • %s\n", p)
 		}
 	}

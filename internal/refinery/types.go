@@ -5,46 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/steveyegge/gastown/internal/agent"
 )
 
-// Refinery represents a rig's merge queue processor.
-type Refinery struct {
-	// RigName is the rig this refinery processes.
-	RigName string `json:"rig_name"`
-
-	// State is the current running state.
-	State agent.State `json:"state"`
-
-	// StartedAt is when the refinery was started.
-	StartedAt *time.Time `json:"started_at,omitempty"`
-
-	// CurrentMR is the merge request currently being processed.
-	CurrentMR *MergeRequest `json:"current_mr,omitempty"`
-
-	// PendingMRs tracks merge requests that have been submitted.
-	// Key is the MR ID.
-	PendingMRs map[string]*MergeRequest `json:"pending_mrs,omitempty"`
-}
-
-// Ensure Refinery implements RigAgentState
-var _ agent.RigAgentState = (*Refinery)(nil)
-
-// SetRunning updates the state to running with the given start time.
-func (r *Refinery) SetRunning(startedAt time.Time) {
-	r.State = agent.StateRunning
-	r.StartedAt = &startedAt
-}
-
-// SetStopped updates the state to stopped.
-func (r *Refinery) SetStopped() {
-	r.State = agent.StateStopped
-}
-
-// IsRunning returns true if the state indicates running.
-func (r *Refinery) IsRunning() bool {
-	return r.State == agent.StateRunning
+// RefineryStatusOutput is used for JSON output of refinery status command.
+// ZFC-compliant: running state comes from tmux, queue from beads.
+type RefineryStatusOutput struct {
+	Running   bool        `json:"running"`
+	RigName   string      `json:"rig_name"`
+	Session   string      `json:"session,omitempty"`
+	QueueSize int         `json:"queue_size"`
+	Queue     []QueueItem `json:"queue,omitempty"`
 }
 
 // MergeRequest represents a branch waiting to be merged.

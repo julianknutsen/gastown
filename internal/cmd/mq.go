@@ -369,8 +369,8 @@ func runMQRetry(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Get the MR first to show info
-	mr, err := mgr.GetMR(mrID)
+	// Get the MR first to show info (uses beads queue)
+	mr, err := mgr.FindMR(mrID)
 	if err != nil {
 		if err == refinery.ErrMRNotFound {
 			return fmt.Errorf("merge request '%s' not found in rig '%s'", mrID, rigName)

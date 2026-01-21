@@ -1,7 +1,6 @@
 package witness_test
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,7 +17,7 @@ import (
 // Using agent.Double for testable abstraction
 //
 // Note: Start/Stop operations are handled by factory.Start()/factory.Agents().Stop()
-// The Manager only handles status queries and state persistence.
+// The Manager handles status queries (ZFC-compliant: tmux is source of truth).
 // =============================================================================
 
 func setupTestRig(t *testing.T) (*rig.Rig, string) {
@@ -42,66 +41,32 @@ func setupTestRig(t *testing.T) (*rig.Rig, string) {
 	}, rigPath
 }
 
-// --- Status() Tests ---
+// --- ZFC-Compliant Status() Tests ---
+// Status() returns *session.Info from tmux (source of truth)
 
-func TestManager_Status_WhenAgentRunning_ReportsRunning(t *testing.T) {
-	r, rigPath := setupTestRig(t)
+func TestManager_Status_WhenNotRunning_ReturnsNil(t *testing.T) {
+	r, _ := setupTestRig(t)
 	agents := agent.NewDouble()
 	mgr := witness.NewManager(agents, r)
 
-	// Simulate running agent
+	// Agent doesn't exist
+	status, err := mgr.Status()
+	require.NoError(t, err)
+	assert.Nil(t, status, "Status should be nil when not running")
+}
+
+func TestManager_Status_WhenRunning_ReturnsSessionInfo(t *testing.T) {
+	r, _ := setupTestRig(t)
+	agents := agent.NewDouble()
+	mgr := witness.NewManager(agents, r)
+
+	// Create running agent
 	agentID := agent.WitnessAddress(r.Name)
 	agents.CreateAgent(agentID)
 
-	// Write state file that says running
-	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	state := witness.Witness{RigName: "testrig", State: agent.StateRunning}
-	data, _ := json.Marshal(state)
-	require.NoError(t, os.WriteFile(stateFile, data, 0644))
-
 	status, err := mgr.Status()
 	require.NoError(t, err)
-	assert.Equal(t, agent.StateRunning, status.State)
-	assert.Equal(t, []string{"p1", "p2"}, status.MonitoredPolecats)
-}
-
-func TestManager_Status_WhenAgentCrashed_DetectsMismatch(t *testing.T) {
-	// Scenario: State says running but agent doesn't exist (crashed).
-	// Status() should detect mismatch and report stopped.
-	r, rigPath := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r)
-
-	// Write state that says running (but don't create agent)
-	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	staleState := witness.Witness{RigName: "testrig", State: agent.StateRunning}
-	data, _ := json.Marshal(staleState)
-	require.NoError(t, os.WriteFile(stateFile, data, 0644))
-
-	// Agent doesn't exist
-	agentID := agent.WitnessAddress(r.Name)
-	assert.False(t, agents.Exists(agentID), "agent should not exist")
-
-	// Status() detects the mismatch and reports stopped
-	status, err := mgr.Status()
-	require.NoError(t, err)
-	assert.Equal(t, agent.StateStopped, status.State, "should detect crashed agent")
-}
-
-func TestManager_Status_WhenStateStopped_ReportsStopped(t *testing.T) {
-	r, rigPath := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r)
-
-	// Write state that says stopped
-	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	state := witness.Witness{RigName: "testrig", State: agent.StateStopped}
-	data, _ := json.Marshal(state)
-	require.NoError(t, os.WriteFile(stateFile, data, 0644))
-
-	status, err := mgr.Status()
-	require.NoError(t, err)
-	assert.Equal(t, agent.StateStopped, status.State)
+	assert.NotNil(t, status, "Status should return session info when running")
 }
 
 // --- IsRunning() Tests ---
@@ -146,53 +111,7 @@ func TestManager_Address_ReturnsCorrectAgentID(t *testing.T) {
 	assert.Equal(t, expected, mgr.Address())
 }
 
-// --- LoadState/SaveState Tests ---
-
-func TestManager_LoadState_ReturnsPersistedState(t *testing.T) {
-	r, rigPath := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r)
-
-	// Write a state file
-	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	state := witness.Witness{RigName: "testrig", State: agent.StateRunning}
-	data, _ := json.MarshalIndent(state, "", "  ")
-	require.NoError(t, os.WriteFile(stateFile, data, 0644))
-
-	loaded, err := mgr.LoadState()
-	require.NoError(t, err)
-	assert.Equal(t, "testrig", loaded.RigName)
-	assert.Equal(t, agent.StateRunning, loaded.State)
-}
-
-func TestManager_SaveState_PersistsState(t *testing.T) {
-	r, rigPath := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r)
-
-	state := &witness.Witness{RigName: "testrig", State: agent.StateRunning}
-	err := mgr.SaveState(state)
-	require.NoError(t, err)
-
-	// Verify file was written
-	stateFile := filepath.Join(rigPath, ".runtime", "witness.json")
-	data, err := os.ReadFile(stateFile)
-	require.NoError(t, err)
-
-	var loaded witness.Witness
-	require.NoError(t, json.Unmarshal(data, &loaded))
-	assert.Equal(t, "testrig", loaded.RigName)
-	assert.Equal(t, agent.StateRunning, loaded.State)
-}
-
-func TestManager_LoadState_WhenNoFile_ReturnsDefaultState(t *testing.T) {
-	r, _ := setupTestRig(t)
-	agents := agent.NewDouble()
-	mgr := witness.NewManager(agents, r)
-
-	// Don't create state file - should return default
-	state, err := mgr.LoadState()
-	require.NoError(t, err)
-	assert.Equal(t, "testrig", state.RigName)
-	assert.Equal(t, agent.StateStopped, state.State)
-}
+// NOTE: Tests for LoadState/SaveState have been removed.
+// These methods no longer exist - ZFC-compliant: no state files.
+// NOTE: Tests for Status() returning Witness state have been removed.
+// Status() now returns *session.Info (tmux is source of truth).
