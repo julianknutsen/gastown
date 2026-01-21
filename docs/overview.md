@@ -141,6 +141,13 @@ bd create --prefix beads "Fix authentication bug"
 # Create convoy and sling to target rig
 gt convoy create "Auth fix" bd-xyz
 gt sling bd-xyz beads
+
+# Batch sling multiple beads with a formula
+gt sling mol-bugfix --batch --on bd-xyz,bd-abc beads
+
+# Queue work for controlled dispatch
+gt sling bd-xyz beads --queue
+gt queue run                     # Process when ready
 ```
 
 ### When to Use Which

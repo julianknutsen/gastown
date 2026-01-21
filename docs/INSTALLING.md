@@ -192,6 +192,15 @@ gt convoy create "Feature X" gt-abc12 gt-def34
 gt sling gt-abc12 myproject
 gt sling gt-def34 myproject
 
+# Or use queue mode for controlled dispatch
+gt sling gt-abc12 myproject --queue
+gt sling gt-def34 myproject --queue
+gt queue status                  # Check queue state
+gt queue run                     # Process next item
+
+# Batch sling multiple beads at once
+gt sling mol-bugfix --batch --on gt-abc12,gt-def34 myproject
+
 # Monitor on dashboard
 gt convoy list
 
