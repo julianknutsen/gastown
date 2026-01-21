@@ -299,8 +299,14 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 
 	// Create convoy issue in town beads
 	description := fmt.Sprintf("Convoy tracking %d issues", len(trackedIssues))
-	if convoyOwner != "" {
-		description += fmt.Sprintf("\nOwner: %s", convoyOwner)
+
+	// Default owner to creator identity if not specified
+	owner := convoyOwner
+	if owner == "" {
+		owner = detectSender()
+	}
+	if owner != "" {
+		description += fmt.Sprintf("\nOwner: %s", owner)
 	}
 	if convoyNotify != "" {
 		description += fmt.Sprintf("\nNotify: %s", convoyNotify)
@@ -365,8 +371,8 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 	if len(trackedIssues) > 0 {
 		fmt.Printf("  Issues:   %s\n", strings.Join(trackedIssues, ", "))
 	}
-	if convoyOwner != "" {
-		fmt.Printf("  Owner:    %s\n", convoyOwner)
+	if owner != "" {
+		fmt.Printf("  Owner:    %s\n", owner)
 	}
 	if convoyNotify != "" {
 		fmt.Printf("  Notify:   %s\n", convoyNotify)
