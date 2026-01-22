@@ -764,12 +764,56 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	}, nil
 }
 
+// extractPolecatNameFromID extracts the polecat name from an agent bead ID.
+// Format: "gastown/polecats/furiosa" -> "furiosa"
+// Returns empty string if the ID doesn't match the expected format.
+func extractPolecatNameFromID(agentID string) string {
+	parts := strings.Split(agentID, "/")
+	if len(parts) == 3 && parts[1] == "polecats" {
+		return parts[2]
+	}
+	return ""
+}
+
+// getNamesWithOpenAgentBeads returns polecat names that have open agent beads.
+// These names are reserved because either:
+// - The polecat is actively working (has hooked work)
+// - The polecat finished (gt done) but hasn't been nuked yet (waiting for merge)
+//
+// Names become available only after the agent bead is closed (via nuke).
+// Uses ListAgentBeads() which returns only open agent beads.
+func (m *Manager) getNamesWithOpenAgentBeads() []string {
+	var names []string
+
+	// ListAgentBeads() returns only OPEN agent beads (bd list default behavior)
+	agents, err := m.beads.ListAgentBeads()
+	if err != nil {
+		return nil
+	}
+
+	// Filter for this rig's polecats
+	prefix := fmt.Sprintf("%s/polecats/", m.rig.Name)
+	for agentID := range agents {
+		if strings.HasPrefix(agentID, prefix) {
+			// Extract polecat name from agent ID
+			// Format: "gastown/polecats/furiosa" -> "furiosa"
+			name := extractPolecatNameFromID(agentID)
+			if name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+
+	return names
+}
+
 // ReconcilePool derives pool InUse state from existing polecat directories and active sessions.
 // This implements ZFC: InUse is discovered from filesystem and tmux, not tracked separately.
 // Called before each allocation to ensure InUse reflects reality.
 //
 // In addition to directory checks, this also:
 // - Kills orphaned tmux sessions (sessions without directories are broken)
+// - Reserves names with hooked work (prevents fresh spawns from orphaning work)
 func (m *Manager) ReconcilePool() {
 	// Get polecats with existing directories
 	polecats, err := m.List()
@@ -795,7 +839,13 @@ func (m *Manager) ReconcilePool() {
 		}
 	}
 
-	m.ReconcilePoolWith(namesWithDirs, namesWithSessions)
+	// Get names with open agent beads (reserved until nuked)
+	// These names are reserved even if their directories are gone because either:
+	// - Polecat crashed and has unfinished work (needs restart or nuke)
+	// - Polecat finished (gt done) but waiting for Witness to nuke after merge
+	namesWithHooks := m.getNamesWithOpenAgentBeads()
+
+	m.ReconcilePoolWith(namesWithDirs, namesWithSessions, namesWithHooks)
 
 	// Prune any stale git worktree entries (handles manually deleted directories)
 	if repoGit, err := m.repoBase(); err == nil {
@@ -808,10 +858,11 @@ func (m *Manager) ReconcilePool() {
 //
 // - namesWithDirs: names that have existing worktree directories (in use)
 // - namesWithSessions: names that have tmux sessions
+// - namesWithHooks: names that have agent beads with hook_bead set (reserved for restart)
 //
 // Names with sessions but no directories are orphans and their sessions are killed.
-// Only namesWithDirs are marked as in-use for allocation.
-func (m *Manager) ReconcilePoolWith(namesWithDirs, namesWithSessions []string) {
+// Names with dirs OR hooks are marked as in-use for allocation.
+func (m *Manager) ReconcilePoolWith(namesWithDirs, namesWithSessions, namesWithHooks []string) {
 	dirSet := make(map[string]bool)
 	for _, name := range namesWithDirs {
 		dirSet[name] = true
@@ -828,7 +879,18 @@ func (m *Manager) ReconcilePoolWith(namesWithDirs, namesWithSessions []string) {
 		}
 	}
 
-	m.namePool.Reconcile(namesWithDirs)
+	// Merge namesWithDirs and namesWithHooks for allocation.
+	// Names with hooks are reserved even if directory is gone - they have unfinished work
+	// that should be restarted or properly cleaned up (nuked).
+	allInUse := make([]string, 0, len(namesWithDirs)+len(namesWithHooks))
+	allInUse = append(allInUse, namesWithDirs...)
+	for _, name := range namesWithHooks {
+		if !dirSet[name] { // Don't double-add names that have both dir and hook
+			allInUse = append(allInUse, name)
+		}
+	}
+
+	m.namePool.Reconcile(allInUse)
 	// Note: No Save() needed - InUse is transient state, only OverflowNext is persisted
 }
 

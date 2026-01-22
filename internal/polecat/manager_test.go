@@ -541,8 +541,8 @@ func TestReconcilePoolWith(t *testing.T) {
 			}
 			m := NewManager(r, nil, nil)
 
-			// Call ReconcilePoolWith
-			m.ReconcilePoolWith(tt.namesWithDirs, tt.namesWithSessions)
+			// Call ReconcilePoolWith (pass empty namesWithHooks for backward compat)
+			m.ReconcilePoolWith(tt.namesWithDirs, tt.namesWithSessions, []string{})
 
 			// Verify in-use names
 			gotInUse := m.namePool.ActiveNames()
@@ -606,7 +606,7 @@ func TestReconcilePoolWith_Allocation(t *testing.T) {
 
 	// Mark first few pool names as in-use via directories
 	// (furiosa, nux, slit are first 3 in mad-max theme)
-	m.ReconcilePoolWith([]string{"furiosa", "nux", "slit"}, []string{})
+	m.ReconcilePoolWith([]string{"furiosa", "nux", "slit"}, []string{}, []string{})
 
 	// First allocation should skip in-use names
 	name, err := m.namePool.Allocate()
@@ -642,7 +642,7 @@ func TestReconcilePoolWith_OrphanDoesNotBlockAllocation(t *testing.T) {
 	m := NewManager(r, nil, nil)
 
 	// furiosa has orphan session (no dir) - should NOT block allocation
-	m.ReconcilePoolWith([]string{}, []string{"furiosa"})
+	m.ReconcilePoolWith([]string{}, []string{"furiosa"}, []string{})
 
 	// furiosa should be available (orphan session killed, name freed)
 	name, err := m.namePool.Allocate()
