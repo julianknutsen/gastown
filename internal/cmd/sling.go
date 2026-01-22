@@ -394,6 +394,10 @@ func runSling(cmd *cobra.Command, args []string) error {
 		issueVar := fmt.Sprintf("issue=%s", beadID)
 		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--var", issueVar, "--json"}
 		wispCmd := exec.Command("bd", wispArgs...)
+		// Note: For polecat agents, mol-polecat-work is auto-attached after slinging
+		// (see line ~466). This provides standard work guidance. Formula slinging here
+		// creates its own molecule (the formula's wisp), so mol-polecat-work complements
+		// rather than replaces formula molecules.
 		wispCmd.Dir = formulaWorkDir
 		wispCmd.Env = append(os.Environ(), "GT_ROOT="+townRoot)
 		wispCmd.Stderr = os.Stderr
