@@ -239,6 +239,60 @@ func (f *FakeBeadsOps) isBlockerOpenInAnyRig(blockerID string) bool {
 	return false
 }
 
+// ListByLabel returns all OPEN beads with the given label across all rigs.
+// Unlike ListReadyByLabel, this includes beads that are blocked by dependencies.
+func (f *FakeBeadsOps) ListByLabel(label string) (map[string][]BeadInfo, error) {
+	result := make(map[string][]BeadInfo)
+
+	// Collect all unique ops from routes
+	seen := make(map[BeadsOps]string) // ops -> rigName
+	for _, route := range f.routes {
+		if _, ok := seen[route.ops]; !ok {
+			seen[route.ops] = route.rigName
+		}
+	}
+
+	// Query each rig's ops
+	for ops, rigName := range seen {
+		// Cast to FakeBeadsOps to access internal beads map
+		fakeOps, ok := ops.(*FakeBeadsOps)
+		if !ok {
+			continue
+		}
+
+		var beads []BeadInfo
+		for _, bead := range fakeOps.beads {
+			// Must be open
+			if bead.status != "open" {
+				continue
+			}
+			// Must have the label
+			hasLabel := false
+			for _, l := range bead.labels {
+				if l == label {
+					hasLabel = true
+					break
+				}
+			}
+			if !hasLabel {
+				continue
+			}
+			// Include ALL open beads with the label, even if blocked
+			beads = append(beads, BeadInfo{
+				ID:     bead.id,
+				Status: bead.status,
+				Labels: bead.labels,
+			})
+		}
+
+		if len(beads) > 0 {
+			result[rigName] = beads
+		}
+	}
+
+	return result, nil
+}
+
 // extractPrefix extracts the prefix from a bead ID (e.g., "gt-abc" -> "gt-").
 func extractPrefix(beadID string) string {
 	if beadID == "" {

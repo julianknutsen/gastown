@@ -33,4 +33,10 @@ type BeadsOps interface {
 	// This is the correct method for queue dispatch - blocked beads are excluded.
 	// The result is a map of rig name to slice of beads.
 	ListReadyByLabel(label string) (map[string][]BeadInfo, error)
+
+	// ListByLabel returns all OPEN beads with the given label across all rigs.
+	// Unlike ListReadyByLabel, this includes beads that are blocked by dependencies.
+	// Use this to show the full queue state including blocked items.
+	// The result is a map of rig name to slice of beads.
+	ListByLabel(label string) (map[string][]BeadInfo, error)
 }

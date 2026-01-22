@@ -180,3 +180,40 @@ func (r *RealBeadsOps) listReadyBeads(dir, label string) ([]*Issue, error) {
 
 	return issues, nil
 }
+
+// ListByLabel returns all OPEN beads with the given label across all rigs.
+// Unlike ListReadyByLabel, this includes beads that are blocked by dependencies.
+func (r *RealBeadsOps) ListByLabel(label string) (map[string][]BeadInfo, error) {
+	result := make(map[string][]BeadInfo)
+
+	// Get all rigs from rigs.json
+	rigs, err := r.getAllRigs()
+	if err != nil {
+		return nil, err
+	}
+
+	// Query each rig for open beads with the label
+	for rigName, rigPath := range rigs {
+		issues, err := r.listBeads(rigPath, "open", label)
+		if err != nil {
+			// Skip rigs that fail - they might not have the label or beads DB
+			continue
+		}
+
+		var beads []BeadInfo
+		for _, issue := range issues {
+			beads = append(beads, BeadInfo{
+				ID:     issue.ID,
+				Title:  issue.Title,
+				Status: issue.Status,
+				Labels: issue.Labels,
+			})
+		}
+
+		if len(beads) > 0 {
+			result[rigName] = beads
+		}
+	}
+
+	return result, nil
+}

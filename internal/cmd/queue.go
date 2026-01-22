@@ -136,11 +136,24 @@ func runQueueStatus(cmd *cobra.Command, args []string) error {
 	ops := beads.NewRealBeadsOps(townRoot)
 	q := queue.New(ops)
 
-	// Load queue
+	// Load queue (ready beads only)
 	items, err := q.Load()
 	if err != nil {
 		return fmt.Errorf("loading queue: %w", err)
 	}
+
+	// Load ALL queued beads (including blocked) to calculate blocked count
+	allQueued, err := ops.ListByLabel(queue.QueueLabel)
+	if err != nil {
+		return fmt.Errorf("loading all queued beads: %w", err)
+	}
+
+	// Count totals
+	totalQueued := 0
+	for _, rigBeads := range allQueued {
+		totalQueued += len(rigBeads)
+	}
+	blockedCount := totalQueued - len(items)
 
 	// Count running polecats
 	running := countRunningPolecats(townRoot)
@@ -152,6 +165,9 @@ func runQueueStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("Queue Status:")
 	fmt.Println()
 	fmt.Printf("  Pending:  %d beads\n", len(items))
+	if blockedCount > 0 {
+		fmt.Printf("  Blocked:  %d beads %s\n", blockedCount, style.Dim.Render("(waiting on dependencies)"))
+	}
 	fmt.Printf("  Running:  %d polecats\n", running)
 	if capacity > 0 {
 		fmt.Printf("  Capacity: %d/%d\n", running, capacity)
@@ -184,25 +200,63 @@ func runQueueList(cmd *cobra.Command, args []string) error {
 	ops := beads.NewRealBeadsOps(townRoot)
 	q := queue.New(ops)
 
-	items, err := q.Load()
+	// Load ready items (for dispatch)
+	readyItems, err := q.Load()
 	if err != nil {
 		return fmt.Errorf("loading queue: %w", err)
 	}
 
-	if len(items) == 0 {
+	// Load ALL queued items (including blocked)
+	allQueued, err := ops.ListByLabel(queue.QueueLabel)
+	if err != nil {
+		return fmt.Errorf("loading all queued beads: %w", err)
+	}
+
+	// Build a set of ready bead IDs for quick lookup
+	readySet := make(map[string]bool)
+	for _, item := range readyItems {
+		readySet[item.BeadID] = true
+	}
+
+	// Separate blocked items from all queued
+	var blockedItems []queue.QueueItem
+	for rigName, rigBeads := range allQueued {
+		for _, bead := range rigBeads {
+			if !readySet[bead.ID] {
+				blockedItems = append(blockedItems, queue.QueueItem{
+					BeadID:  bead.ID,
+					RigName: rigName,
+					Title:   bead.Title,
+				})
+			}
+		}
+	}
+
+	if len(readyItems) == 0 && len(blockedItems) == 0 {
 		fmt.Println("Queue is empty")
 		return nil
 	}
 
-	// Group by rig
-	byRig := make(map[string][]queue.QueueItem)
-	for _, item := range items {
-		byRig[item.RigName] = append(byRig[item.RigName], item)
+	// Group ready items by rig
+	readyByRig := make(map[string][]queue.QueueItem)
+	for _, item := range readyItems {
+		readyByRig[item.RigName] = append(readyByRig[item.RigName], item)
+	}
+
+	// Group blocked items by rig
+	blockedByRig := make(map[string][]queue.QueueItem)
+	for _, item := range blockedItems {
+		blockedByRig[item.RigName] = append(blockedByRig[item.RigName], item)
 	}
 
 	// Collect wisp IDs for batch lookup of bonded titles
 	var wispIDs []string
-	for _, item := range items {
+	for _, item := range readyItems {
+		if strings.HasPrefix(item.BeadID, "gt-wisp-") {
+			wispIDs = append(wispIDs, item.BeadID)
+		}
+	}
+	for _, item := range blockedItems {
 		if strings.HasPrefix(item.BeadID, "gt-wisp-") {
 			wispIDs = append(wispIDs, item.BeadID)
 		}
@@ -211,19 +265,45 @@ func runQueueList(cmd *cobra.Command, args []string) error {
 	// Batch lookup bonded titles
 	bondedTitles := getBondedBeadTitles(townRoot, wispIDs)
 
-	fmt.Printf("Queued beads: %d\n\n", len(items))
-	for rigName, rigItems := range byRig {
-		fmt.Printf("%s (%d):\n", style.Bold.Render(rigName), len(rigItems))
-		for _, item := range rigItems {
-			// For wisps, show the bonded bead's title instead
-			title := item.Title
-			if bondedTitle, ok := bondedTitles[item.BeadID]; ok && bondedTitle != "" {
-				title = bondedTitle
+	// Display ready items
+	if len(readyItems) > 0 {
+		fmt.Printf("Ready for dispatch: %d\n\n", len(readyItems))
+		for rigName, rigItems := range readyByRig {
+			fmt.Printf("%s (%d):\n", style.Bold.Render(rigName), len(rigItems))
+			for _, item := range rigItems {
+				// For wisps, show the bonded bead's title instead
+				title := item.Title
+				if bondedTitle, ok := bondedTitles[item.BeadID]; ok && bondedTitle != "" {
+					title = bondedTitle
+				}
+				if title != "" {
+					fmt.Printf("  %s  %s\n", item.BeadID, style.Dim.Render(title))
+				} else {
+					fmt.Printf("  %s\n", item.BeadID)
+				}
 			}
-			if title != "" {
-				fmt.Printf("  %s  %s\n", item.BeadID, style.Dim.Render(title))
-			} else {
-				fmt.Printf("  %s\n", item.BeadID)
+		}
+	}
+
+	// Display blocked items
+	if len(blockedItems) > 0 {
+		if len(readyItems) > 0 {
+			fmt.Println()
+		}
+		fmt.Printf("%s %d\n\n", style.Dim.Render("Blocked (waiting on dependencies):"), len(blockedItems))
+		for rigName, rigItems := range blockedByRig {
+			fmt.Printf("%s (%d):\n", style.Dim.Render(rigName), len(rigItems))
+			for _, item := range rigItems {
+				// For wisps, show the bonded bead's title instead
+				title := item.Title
+				if bondedTitle, ok := bondedTitles[item.BeadID]; ok && bondedTitle != "" {
+					title = bondedTitle
+				}
+				if title != "" {
+					fmt.Printf("  %s  %s\n", style.Dim.Render(item.BeadID), style.Dim.Render(title))
+				} else {
+					fmt.Printf("  %s\n", style.Dim.Render(item.BeadID))
+				}
 			}
 		}
 	}
