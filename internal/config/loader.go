@@ -1668,3 +1668,26 @@ func (c *EscalationConfig) GetMaxReescalations() int {
 	}
 	return c.MaxReescalations
 }
+
+// GetQueueMaxPolecats returns the maximum number of polecats for queue dispatch.
+// Returns 0 (unlimited) if not configured.
+func GetQueueMaxPolecats(townRoot string) int {
+	settings, err := LoadOrCreateTownSettings(TownSettingsPath(townRoot))
+	if err != nil {
+		return 0
+	}
+	return settings.QueueMaxPolecats
+}
+
+// GetPolecatSpawnBatchSize returns the polecat spawn batch size for parallel dispatch.
+// Returns 5 if not configured or set to 0.
+func GetPolecatSpawnBatchSize(townRoot string) int {
+	settings, err := LoadOrCreateTownSettings(TownSettingsPath(townRoot))
+	if err != nil {
+		return 5
+	}
+	if settings.PolecatSpawnBatchSize <= 0 {
+		return 5
+	}
+	return settings.PolecatSpawnBatchSize
+}
