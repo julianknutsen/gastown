@@ -611,51 +611,25 @@ func runBatchSlingFormulaOnParallel(formulaName string, beadIDs []string, rigNam
 					continue
 				}
 
-				// Route bd mutations to the correct beads context
-				formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, "")
-
-				// Create wisp with feature and issue variables
-				featureVar := fmt.Sprintf("feature=%s", info.Title)
-				issueVar := fmt.Sprintf("issue=%s", beadID)
-				wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--var", issueVar, "--json"}
-				wispCmd := exec.Command("bd", wispArgs...)
-				wispCmd.Dir = formulaWorkDir
-				wispCmd.Env = append(os.Environ(), "GT_ROOT="+townRoot)
-				wispOut, err := wispCmd.Output()
+				// Apply formula to bead using InstantiateFormulaOnBead
+				// This returns BeadToHook (base bead) and WispRootID (attached molecule)
+				formulaResult, err := InstantiateFormulaOnBead(formulaName, beadID, info.Title, "", townRoot, true)
 				if err != nil {
-					result.errMsg = fmt.Sprintf("wisp creation failed: %v", err)
+					result.errMsg = fmt.Sprintf("formula failed: %v", err)
 					results <- result
 					continue
 				}
 
-				wispRootID, err := parseWispIDFromJSON(wispOut)
-				if err != nil {
-					result.errMsg = fmt.Sprintf("wisp parse failed: %v", err)
-					results <- result
-					continue
-				}
-
-				// Bond wisp to original bead
-				bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
-				bondCmd := exec.Command("bd", bondArgs...)
-				bondCmd.Dir = formulaWorkDir
-				if err := bondCmd.Run(); err != nil {
-					result.errMsg = fmt.Sprintf("bond failed: %v", err)
-					results <- result
-					continue
-				}
-
-				// Record attached molecule
-				_ = storeAttachedMoleculeInBead(wispRootID, wispRootID)
-
-				result.compoundID = wispRootID
+				beadToHook := formulaResult.BeadToHook
+				attachedMoleculeID := formulaResult.WispRootID
+				result.compoundID = attachedMoleculeID
 
 				// Spawn polecat with pre-allocated name
 				spawnOpts := SlingSpawnOptions{
 					Force:    slingForce,
 					Account:  slingAccount,
 					Create:   slingCreate,
-					HookBead: wispRootID,
+					HookBead: beadToHook,
 					Agent:    slingAgent,
 				}
 				spawnInfo, err := SpawnPolecatForSlingWithName(rigName, polecatName, spawnOpts)
@@ -669,30 +643,33 @@ func runBatchSlingFormulaOnParallel(formulaName string, beadIDs []string, rigNam
 				targetAgent := spawnInfo.AgentID()
 				hookWorkDir := spawnInfo.ClonePath
 
-				// Hook the compound bead
-				hookCmd := exec.Command("bd", "--no-daemon", "update", wispRootID, "--status=hooked", "--assignee="+targetAgent)
-				hookCmd.Dir = beads.ResolveHookDir(townRoot, wispRootID, hookWorkDir)
+				// Hook the BASE bead (not compound - lifecycle fix)
+				hookCmd := exec.Command("bd", "--no-daemon", "update", beadToHook, "--status=hooked", "--assignee="+targetAgent)
+				hookCmd.Dir = beads.ResolveHookDir(townRoot, beadToHook, hookWorkDir)
 				if err := hookCmd.Run(); err != nil {
 					result.errMsg = "hook failed"
 					results <- result
 					continue
 				}
 
+				// Store attached molecule in the hooked bead
+				_ = storeAttachedMoleculeInBead(beadToHook, attachedMoleculeID)
+
 				// Log sling event
 				actor := detectActor()
-				_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(wispRootID, targetAgent))
+				_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadToHook, targetAgent))
 
 				// Update agent bead state
-				updateAgentHookBead(targetAgent, wispRootID, hookWorkDir, townBeadsDir)
+				updateAgentHookBead(targetAgent, beadToHook, hookWorkDir, townBeadsDir)
 
 				// Store args if provided
 				if slingArgs != "" {
-					_ = storeArgsInBead(wispRootID, slingArgs)
+					_ = storeArgsInBead(beadToHook, slingArgs)
 				}
 
 				// Nudge the polecat
 				if spawnInfo.Pane != "" {
-					_ = injectStartPrompt(spawnInfo.Pane, wispRootID, slingSubject, slingArgs)
+					_ = injectStartPrompt(spawnInfo.Pane, beadToHook, slingSubject, slingArgs)
 				}
 
 				result.success = true
@@ -740,8 +717,8 @@ func runBatchSlingFormulaOnParallel(formulaName string, beadIDs []string, rigNam
 func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, townRoot string) error {
 	fmt.Printf("%s Creating wisp compounds for %d beads...\n", style.Bold.Render("🔧"), len(beadIDs))
 
-	// Step 1: Create wisps and bonds for all beads (sequentially for now)
-	var compoundIDs []string
+	// Step 1: Create wisps and bonds for all beads, storing attached_molecule in base beads
+	var baseBeadIDs []string
 	for _, beadID := range beadIDs {
 		// Get bead info for wisp variables
 		info, err := getBeadInfo(beadID)
@@ -750,60 +727,37 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 			continue
 		}
 
-		// Route bd mutations to the correct beads context
-		formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, "")
-
-		// Create wisp with feature and issue variables
-		featureVar := fmt.Sprintf("feature=%s", info.Title)
-		issueVar := fmt.Sprintf("issue=%s", beadID)
-		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--var", issueVar, "--json"}
-		wispCmd := exec.Command("bd", wispArgs...)
-		wispCmd.Dir = formulaWorkDir
-		wispCmd.Env = append(os.Environ(), "GT_ROOT="+townRoot)
-		wispOut, err := wispCmd.Output()
+		// Apply formula to bead using InstantiateFormulaOnBead
+		// This returns BeadToHook (base bead) and WispRootID (attached molecule)
+		formulaResult, err := InstantiateFormulaOnBead(formulaName, beadID, info.Title, "", townRoot, true)
 		if err != nil {
-			fmt.Printf("  %s %s: wisp creation failed: %v\n", style.Dim.Render("✗"), beadID, err)
+			fmt.Printf("  %s %s: formula failed: %v\n", style.Dim.Render("✗"), beadID, err)
 			continue
 		}
 
-		wispRootID, err := parseWispIDFromJSON(wispOut)
-		if err != nil {
-			fmt.Printf("  %s %s: wisp parse failed: %v\n", style.Dim.Render("✗"), beadID, err)
-			continue
-		}
+		// Store attached molecule in the BASE bead (lifecycle fix)
+		_ = storeAttachedMoleculeInBead(formulaResult.BeadToHook, formulaResult.WispRootID)
 
-		// Bond wisp to original bead
-		bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
-		bondCmd := exec.Command("bd", bondArgs...)
-		bondCmd.Dir = formulaWorkDir
-		if err := bondCmd.Run(); err != nil {
-			fmt.Printf("  %s %s: bond failed: %v\n", style.Dim.Render("✗"), beadID, err)
-			continue
-		}
-
-		// Record attached molecule
-		_ = storeAttachedMoleculeInBead(wispRootID, wispRootID)
-
-		compoundIDs = append(compoundIDs, wispRootID)
-		fmt.Printf("  %s %s → %s\n", style.Bold.Render("✓"), beadID, wispRootID)
+		baseBeadIDs = append(baseBeadIDs, formulaResult.BeadToHook)
+		fmt.Printf("  %s %s (attached: %s)\n", style.Bold.Render("✓"), beadID, formulaResult.WispRootID)
 	}
 
-	if len(compoundIDs) == 0 {
-		return fmt.Errorf("no compound beads created")
+	if len(baseBeadIDs) == 0 {
+		return fmt.Errorf("no beads prepared")
 	}
 
-	fmt.Printf("%s Queueing %d compound beads...\n", style.Bold.Render("📋"), len(compoundIDs))
+	fmt.Printf("%s Queueing %d base beads...\n", style.Bold.Render("📋"), len(baseBeadIDs))
 
-	// Step 2: Queue all compound beads
+	// Step 2: Queue all BASE beads (not compounds - lifecycle fix)
 	ops := beads.NewRealBeadsOps(townRoot)
 	q := queue.New(ops)
 
-	for _, compoundID := range compoundIDs {
-		if err := q.Add(compoundID); err != nil {
-			fmt.Printf("  %s %s: queue add failed: %v\n", style.Dim.Render("✗"), compoundID, err)
+	for _, baseBeadID := range baseBeadIDs {
+		if err := q.Add(baseBeadID); err != nil {
+			fmt.Printf("  %s %s: queue add failed: %v\n", style.Dim.Render("✗"), baseBeadID, err)
 			continue
 		}
-		fmt.Printf("  %s Queued: %s\n", style.Bold.Render("✓"), compoundID)
+		fmt.Printf("  %s Queued: %s\n", style.Bold.Render("✓"), baseBeadID)
 	}
 
 	// Step 3: Pre-allocate polecat names
@@ -874,7 +828,7 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 	// Wake witness and refinery once at the end
 	wakeRigAgents(rigName)
 
-	fmt.Printf("\n%s Batch formula queue dispatch complete: %d/%d succeeded\n", style.Bold.Render("📊"), successCount, len(compoundIDs))
+	fmt.Printf("\n%s Batch formula queue dispatch complete: %d/%d succeeded\n", style.Bold.Render("📊"), successCount, len(baseBeadIDs))
 
 	return nil
 }
