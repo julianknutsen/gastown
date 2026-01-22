@@ -461,24 +461,35 @@ func isPolecatTarget(target string) bool {
 
 // FormulaOnBeadResult contains the result of instantiating a formula on a bead.
 type FormulaOnBeadResult struct {
-	WispRootID string // The wisp root ID (compound root after bonding)
-	BeadToHook string // The bead ID to hook (BASE bead, not wisp - lifecycle fix)
+	WispRootID string // The wisp root ID (guidance molecule)
+	BeadToHook string // The bead ID to hook (BASE bead, not wisp)
 }
 
-// InstantiateFormulaOnBead creates a wisp from a formula, bonds it to a bead.
+// InstantiateFormulaOnBead creates a wisp from a formula to guide work on a bead.
 // This is the formula-on-bead pattern used by issue #288 for auto-applying mol-polecat-work.
+//
+// The wisp provides GUIDANCE for working on the base bead, not a prerequisite.
+// We intentionally do NOT use `bd mol bond` because bonding creates a blocking
+// dependency that prevents the base bead from appearing in `bd ready`.
+//
+// Instead, the caller stores the wisp ID as `attached_molecule` in the base bead's
+// description. This allows:
+//   - Base bead appears in `bd ready` (respecting other real dependencies)
+//   - gt prime reads wisp steps from attached_molecule
+//   - gt done closes attached_molecule (wisp) before closing base bead
 //
 // Parameters:
 //   - formulaName: the formula to instantiate (e.g., "mol-polecat-work")
-//   - beadID: the base bead to bond the wisp to
+//   - beadID: the base bead to attach the wisp to
 //   - title: the bead title (used for --var feature=<title>)
 //   - hookWorkDir: working directory for bd commands (polecat's worktree)
 //   - townRoot: the town root directory
 //   - skipCook: if true, skip cooking (for batch mode optimization where cook happens once)
 //
-// Returns the wisp root ID which should be hooked.
+// Returns BeadToHook (base bead) and WispRootID (guidance molecule).
+// Caller should store WispRootID as attached_molecule in the base bead.
 func InstantiateFormulaOnBead(formulaName, beadID, title, hookWorkDir, townRoot string, skipCook bool) (*FormulaOnBeadResult, error) {
-	// Route bd mutations (wisp/bond) to the correct beads context for the target bead.
+	// Route bd mutations to the correct beads context for the target bead.
 	formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 
 	// Step 1: Cook the formula (ensures proto exists)
@@ -510,27 +521,14 @@ func InstantiateFormulaOnBead(formulaName, beadID, title, hookWorkDir, townRoot 
 		return nil, fmt.Errorf("parsing wisp output: %w", err)
 	}
 
-	// Step 3: Bond wisp to original bead (creates compound)
-	bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
-	bondCmd := exec.Command("bd", bondArgs...)
-	bondCmd.Dir = formulaWorkDir
-	bondCmd.Stderr = os.Stderr
-	bondOut, err := bondCmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("bonding formula to bead: %w", err)
-	}
-
-	// Parse bond output - the wisp root becomes the compound root
-	var bondResult struct {
-		RootID string `json:"root_id"`
-	}
-	if err := json.Unmarshal(bondOut, &bondResult); err == nil && bondResult.RootID != "" {
-		wispRootID = bondResult.RootID
-	}
+	// NOTE: We do NOT bond the wisp to the bead here.
+	// Bonding creates a blocking dependency that prevents the base bead from
+	// appearing in `bd ready`. Instead, the caller stores the wisp ID as
+	// `attached_molecule` in the base bead's description field.
 
 	return &FormulaOnBeadResult{
 		WispRootID: wispRootID,
-		BeadToHook: beadID, // Hook the BASE bead (lifecycle fix: wisp is attached_molecule)
+		BeadToHook: beadID,
 	}, nil
 }
 
