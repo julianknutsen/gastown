@@ -567,17 +567,50 @@ func runSling(cmd *cobra.Command, args []string) error {
 // runSlingQueue handles queue mode for single bead slinging.
 // Adds the bead to the queue and dispatches using the dispatcher.
 func runSlingQueue(beadID, rigName, townRoot string, dryRun bool) error {
+	// Issue #288: Apply mol-polecat-work formula before queueing
+	// This ensures the base bead has attached_molecule set when dispatched
+	formulaName := "mol-polecat-work"
+	beadToQueue := beadID
+
+	if !slingHookRawBead {
+		// Get bead info for formula variables
+		info, err := getBeadInfo(beadID)
+		if err != nil {
+			return fmt.Errorf("getting bead info: %w", err)
+		}
+
+		if dryRun {
+			fmt.Printf("Would apply %s formula to %s\n", formulaName, beadID)
+		} else {
+			fmt.Printf("Applying %s formula to %s...\n", formulaName, beadID)
+
+			// Apply formula - hooks base bead with attached_molecule pointing to wisp
+			result, err := InstantiateFormulaOnBead(formulaName, beadID, info.Title, "", townRoot, false)
+			if err != nil {
+				return fmt.Errorf("applying formula: %w", err)
+			}
+
+			// Store attached molecule in the BASE bead (lifecycle fix)
+			if err := storeAttachedMoleculeInBead(result.BeadToHook, result.WispRootID); err != nil {
+				fmt.Printf("%s Could not store attached_molecule: %v\n", style.Dim.Render("Warning:"), err)
+			}
+
+			fmt.Printf("%s Formula applied (wisp: %s)\n", style.Bold.Render("✓"), result.WispRootID)
+			beadToQueue = result.BeadToHook // Queue the base bead
+		}
+	}
+
 	ops := beads.NewRealBeadsOps(townRoot)
 	q := queue.New(ops)
 
 	// Add bead to queue (rigName is determined from bead prefix)
-	if err := q.Add(beadID); err != nil {
+	if err := q.Add(beadToQueue); err != nil {
 		return fmt.Errorf("adding to queue: %w", err)
 	}
-	fmt.Printf("Added %s to queue for rig %s\n", beadID, rigName)
+	fmt.Printf("Added %s to queue for rig %s\n", beadToQueue, rigName)
 
 	// Pre-allocate polecat name
-	items := []queue.QueueItem{{BeadID: beadID, RigName: rigName}}
+	items := []queue.QueueItem{{BeadID: beadToQueue, RigName: rigName}}
 	preAllocatedNames, err := preAllocatePolecatNames(townRoot, items)
 	if err != nil {
 		return fmt.Errorf("pre-allocating names: %w", err)
@@ -585,16 +618,16 @@ func runSlingQueue(beadID, rigName, townRoot string, dryRun bool) error {
 
 	// Create spawner that uses pre-allocated names
 	spawner := &queue.RealSpawner{
-		SpawnInFunc: func(rigName, beadID string) error {
-			polecatName, ok := preAllocatedNames[beadID]
+		SpawnInFunc: func(rigName, bid string) error {
+			polecatName, ok := preAllocatedNames[bid]
 			if !ok {
-				return fmt.Errorf("no pre-allocated name for bead %s", beadID)
+				return fmt.Errorf("no pre-allocated name for bead %s", bid)
 			}
 
 			spawnOpts := SlingSpawnOptions{
 				Force:    slingForce,
 				Account:  slingAccount,
-				HookBead: beadID,
+				HookBead: bid,
 				Agent:    slingAgent,
 				Create:   true,
 			}
@@ -602,7 +635,7 @@ func runSlingQueue(beadID, rigName, townRoot string, dryRun bool) error {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s Spawned %s for %s\n", style.Bold.Render("✓"), info.AgentID(), beadID)
+			fmt.Printf("%s Spawned %s for %s\n", style.Bold.Render("✓"), info.AgentID(), bid)
 			wakeRigAgents(rigName)
 			return nil
 		},

@@ -310,6 +310,7 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 
 	if slingDryRun {
 		fmt.Printf("%s Batch queueing %d beads (--queue mode):\n", style.Bold.Render("🎯"), len(beadIDs))
+		fmt.Printf("  Would apply mol-polecat-work formula to each bead\n")
 		fmt.Printf("  Spawn batch size: %d (concurrent spawns)\n", slingSpawnBatchSize)
 
 		// In queue mode, max polecats limits how many run at once
@@ -342,12 +343,61 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 
 	fmt.Printf("%s Batch queueing %d beads...\n", style.Bold.Render("🎯"), len(beadIDs))
 
+	// Issue #288: Apply mol-polecat-work formula to each bead before queueing
+	// This ensures base beads have attached_molecule set when dispatched
+	formulaName := "mol-polecat-work"
+	formulaCooked := false
+
+	fmt.Printf("  Applying %s formula to beads...\n", formulaName)
+
+	var beadsToQueue []string
+	for _, beadID := range beadIDs {
+		// Get bead info for formula variables
+		info, err := getBeadInfo(beadID)
+		if err != nil {
+			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), beadID, err)
+			continue
+		}
+
+		// Cook formula once (lazy)
+		if !formulaCooked {
+			if err := CookFormula(formulaName, townRoot); err != nil {
+				fmt.Printf("  %s Could not cook formula: %v (will hook raw beads)\n", style.Dim.Render("Warning:"), err)
+			} else {
+				formulaCooked = true
+			}
+		}
+
+		if formulaCooked {
+			// Apply formula - hooks base bead with attached_molecule pointing to wisp
+			result, err := InstantiateFormulaOnBead(formulaName, beadID, info.Title, "", townRoot, true)
+			if err != nil {
+				fmt.Printf("  %s %s: formula failed: %v\n", style.Dim.Render("✗"), beadID, err)
+				continue
+			}
+
+			// Store attached molecule in the BASE bead (lifecycle fix)
+			_ = storeAttachedMoleculeInBead(result.BeadToHook, result.WispRootID)
+
+			beadsToQueue = append(beadsToQueue, result.BeadToHook)
+			fmt.Printf("  %s %s (attached: %s)\n", style.Bold.Render("✓"), beadID, result.WispRootID)
+		} else {
+			// Fallback: queue raw bead if formula failed
+			beadsToQueue = append(beadsToQueue, beadID)
+			fmt.Printf("  %s %s (raw)\n", style.Bold.Render("✓"), beadID)
+		}
+	}
+
+	if len(beadsToQueue) == 0 {
+		return fmt.Errorf("no beads prepared for queueing")
+	}
+
 	// Create queue with town-wide ops
 	ops := beads.NewRealBeadsOps(townRoot)
 	q := queue.New(ops)
 
 	// Add all beads to queue
-	for _, beadID := range beadIDs {
+	for _, beadID := range beadsToQueue {
 		if err := q.Add(beadID); err != nil {
 			return fmt.Errorf("adding bead %s to queue: %w", beadID, err)
 		}
