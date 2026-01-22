@@ -460,16 +460,20 @@ func runSling(cmd *cobra.Command, args []string) error {
 		// - Base bead left orphaned after gt done
 	}
 
-	// Hook the bead using bd update.
+	// Hook the bead using bd update (unless already done atomically during spawn).
 	// See: https://github.com/steveyegge/gastown/issues/148
-	hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
-	hookCmd.Dir = beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
-	hookCmd.Stderr = os.Stderr
-	if err := hookCmd.Run(); err != nil {
-		return fmt.Errorf("hooking bead: %w", err)
+	// See: https://github.com/steveyegge/gastown/issues/865 (hook-before-spawn for race fix)
+	if !hookSetAtomically {
+		hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
+		hookCmd.Dir = beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
+		hookCmd.Stderr = os.Stderr
+		if err := hookCmd.Run(); err != nil {
+			return fmt.Errorf("hooking bead: %w", err)
+		}
+		fmt.Printf("%s Work attached to hook (status=hooked)\n", style.Bold.Render("✓"))
+	} else {
+		fmt.Printf("%s Work already hooked (set atomically at spawn)\n", style.Bold.Render("✓"))
 	}
-
-	fmt.Printf("%s Work attached to hook (status=hooked)\n", style.Bold.Render("✓"))
 
 	// Log sling event to activity feed
 	actor := detectActor()

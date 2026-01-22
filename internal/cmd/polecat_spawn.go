@@ -3,9 +3,12 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
@@ -113,6 +116,22 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 	polecatObj, err := polecatMgr.Get(polecatName)
 	if err != nil {
 		return nil, fmt.Errorf("getting polecat after creation: %w", err)
+	}
+
+	// CRITICAL: Hook the work bead BEFORE starting the session.
+	// This fixes a race condition where gt prime queries for status=hooked
+	// before the bead is hooked, causing the polecat to miss its work.
+	// See: https://github.com/steveyegge/gastown/issues/865
+	if opts.HookBead != "" {
+		agentID := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
+		hookWorkDir := beads.ResolveHookDir(townRoot, opts.HookBead, polecatObj.ClonePath)
+		hookCmd := exec.Command("bd", "--no-daemon", "update", opts.HookBead, "--status=hooked", "--assignee="+agentID) //nolint:gosec
+		hookCmd.Dir = hookWorkDir
+		hookCmd.Stderr = os.Stderr
+		if err := hookCmd.Run(); err != nil {
+			return nil, fmt.Errorf("hooking bead before session start: %w", err)
+		}
+		fmt.Printf("%s Work pre-hooked (status=hooked, assignee=%s)\n", style.Bold.Render("✓"), agentID)
 	}
 
 	// Resolve account for runtime config
