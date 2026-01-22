@@ -437,3 +437,444 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 
 	return nil
 }
+
+// runBatchSlingFormulaOn handles slinging a formula onto multiple beads.
+// Each bead gets its own wisp instance bonded to it, then a fresh polecat.
+// The formula is pre-cooked once and reused across all beads.
+func runBatchSlingFormulaOn(formulaName string, beadIDs []string, rigName string, townBeadsDir string) error {
+	// Validate all beads exist before cooking formula
+	for _, beadID := range beadIDs {
+		if err := verifyBeadExists(beadID); err != nil {
+			return fmt.Errorf("bead '%s' not found", beadID)
+		}
+	}
+
+	// Validate formula exists
+	if err := verifyFormulaExists(formulaName); err != nil {
+		return err
+	}
+
+	if slingDryRun {
+		if slingQueue {
+			// Queue mode dry-run
+			fmt.Printf("%s Batch slinging formula %s onto %d beads to rig '%s' (--queue mode):\n",
+				style.Bold.Render("🎯"), formulaName, len(beadIDs), rigName)
+			fmt.Printf("  Spawn batch size: %d (concurrent spawns)\n", slingSpawnBatchSize)
+
+			// In queue mode, max polecats limits how many run at once
+			spawnCount := len(beadIDs)
+			queueCount := 0
+			if slingQueueMaxPolecats > 0 {
+				if slingQueueMaxPolecats < len(beadIDs) {
+					spawnCount = slingQueueMaxPolecats
+					queueCount = len(beadIDs) - slingQueueMaxPolecats
+				}
+				fmt.Printf("  Max polecats: %d\n", slingQueueMaxPolecats)
+			} else {
+				fmt.Printf("  Max polecats: unlimited\n")
+			}
+
+			if spawnCount > 0 {
+				fmt.Printf("  Would spawn immediately (%d):\n", spawnCount)
+				for i := 0; i < spawnCount && i < len(beadIDs); i++ {
+					fmt.Printf("    - %s: create wisp, bond, spawn polecat\n", beadIDs[i])
+				}
+			}
+			if queueCount > 0 {
+				fmt.Printf("  Would remain queued until slots free (%d):\n", queueCount)
+				for i := spawnCount; i < len(beadIDs); i++ {
+					fmt.Printf("    - %s: create wisp, bond, queue\n", beadIDs[i])
+				}
+			}
+		} else {
+			// Non-queue mode dry-run
+			fmt.Printf("%s Batch slinging formula %s onto %d beads to rig '%s':\n",
+				style.Bold.Render("🎯"), formulaName, len(beadIDs), rigName)
+			fmt.Printf("  Spawn batch size: %d (concurrent spawns)\n", slingSpawnBatchSize)
+			numBatches := (len(beadIDs) + slingSpawnBatchSize - 1) / slingSpawnBatchSize
+			fmt.Printf("  Will run in %d batch(es)\n", numBatches)
+			fmt.Printf("  Beads:\n")
+			for _, beadID := range beadIDs {
+				fmt.Printf("    - %s: create wisp, bond, spawn polecat\n", beadID)
+			}
+		}
+		if !slingNoConvoy {
+			fmt.Printf("Would create batch convoy tracking %d beads\n", len(beadIDs))
+		}
+		return nil
+	}
+
+	fmt.Printf("%s Batch slinging formula %s onto %d beads to rig '%s'...\n",
+		style.Bold.Render("🎯"), formulaName, len(beadIDs), rigName)
+
+	// Create batch convoy upfront (unless --no-convoy)
+	var convoyID string
+	if !slingNoConvoy {
+		title := fmt.Sprintf("Batch: %s on %d beads", formulaName, len(beadIDs))
+		var err error
+		convoyID, err = createBatchConvoy(beadIDs, title)
+		if err != nil {
+			fmt.Printf("%s Could not create batch convoy: %v\n", style.Dim.Render("Warning:"), err)
+		} else {
+			fmt.Printf("%s Created batch convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
+		}
+	}
+
+	// Get town root from beads dir
+	townRoot := filepath.Dir(townBeadsDir)
+
+	// Step 1: Pre-cook the formula once (shared across all beads)
+	fmt.Printf("  Pre-cooking formula %s...\n", formulaName)
+	cookCmd := exec.Command("bd", "--no-daemon", "cook", formulaName)
+	cookCmd.Stderr = os.Stderr
+	if err := cookCmd.Run(); err != nil {
+		return fmt.Errorf("cooking formula %s: %w", formulaName, err)
+	}
+	fmt.Printf("%s Formula pre-cooked\n", style.Bold.Render("✓"))
+
+	// --queue mode: create wisps+bonds, queue compound beads, then dispatch
+	if slingQueue {
+		return runBatchSlingFormulaOnQueue(formulaName, beadIDs, rigName, townRoot)
+	}
+
+	// Dispatch all beads (parallel handles both parallel and sequential via parallelism setting)
+	err := runBatchSlingFormulaOnParallel(formulaName, beadIDs, rigName, townRoot, townBeadsDir)
+
+	// Print convoy ID at end for easy tracking
+	if convoyID != "" {
+		fmt.Printf("\n%s Track progress: bd show %s\n", style.Bold.Render("🚚"), convoyID)
+	}
+
+	return err
+}
+
+// runBatchSlingFormulaOnParallel handles formula-on-bead slinging in parallel.
+// Uses a worker pool with batchParallelism() workers.
+func runBatchSlingFormulaOnParallel(formulaName string, beadIDs []string, rigName, townRoot, townBeadsDir string) error {
+	parallelism := batchParallelism()
+	fmt.Printf("%s Parallel batch formula slinging %d beads (parallelism=%d)...\n",
+		style.Bold.Render("🚀"), len(beadIDs), parallelism)
+
+	// Pre-allocate polecat names to avoid race condition when spawning in parallel.
+	// We use the original bead IDs as keys since we need one name per bead.
+	queueItems := make([]queue.QueueItem, len(beadIDs))
+	for i, beadID := range beadIDs {
+		queueItems[i] = queue.QueueItem{BeadID: beadID, RigName: rigName}
+	}
+	preAllocatedNames, err := preAllocatePolecatNames(townRoot, queueItems)
+	if err != nil {
+		return fmt.Errorf("pre-allocating names: %w", err)
+	}
+
+	type slingResult struct {
+		index      int
+		beadID     string
+		compoundID string
+		polecat    string
+		success    bool
+		errMsg     string
+	}
+
+	// Channels for work items and results
+	jobs := make(chan int, len(beadIDs))
+	results := make(chan slingResult, len(beadIDs))
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	for w := 0; w < parallelism; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				beadID := beadIDs[idx]
+				result := slingResult{index: idx, beadID: beadID}
+
+				// Get bead info for wisp variables
+				info, err := getBeadInfo(beadID)
+				if err != nil {
+					result.errMsg = err.Error()
+					results <- result
+					continue
+				}
+
+				if info.Status == "pinned" && !slingForce {
+					result.errMsg = "already pinned"
+					results <- result
+					continue
+				}
+
+				// Get pre-allocated name
+				polecatName, ok := preAllocatedNames[beadID]
+				if !ok {
+					result.errMsg = "no pre-allocated name"
+					results <- result
+					continue
+				}
+
+				// Route bd mutations to the correct beads context
+				formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, "")
+
+				// Create wisp with feature and issue variables
+				featureVar := fmt.Sprintf("feature=%s", info.Title)
+				issueVar := fmt.Sprintf("issue=%s", beadID)
+				wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--var", issueVar, "--json"}
+				wispCmd := exec.Command("bd", wispArgs...)
+				wispCmd.Dir = formulaWorkDir
+				wispCmd.Env = append(os.Environ(), "GT_ROOT="+townRoot)
+				wispOut, err := wispCmd.Output()
+				if err != nil {
+					result.errMsg = fmt.Sprintf("wisp creation failed: %v", err)
+					results <- result
+					continue
+				}
+
+				wispRootID, err := parseWispIDFromJSON(wispOut)
+				if err != nil {
+					result.errMsg = fmt.Sprintf("wisp parse failed: %v", err)
+					results <- result
+					continue
+				}
+
+				// Bond wisp to original bead
+				bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
+				bondCmd := exec.Command("bd", bondArgs...)
+				bondCmd.Dir = formulaWorkDir
+				if err := bondCmd.Run(); err != nil {
+					result.errMsg = fmt.Sprintf("bond failed: %v", err)
+					results <- result
+					continue
+				}
+
+				// Record attached molecule
+				_ = storeAttachedMoleculeInBead(wispRootID, wispRootID)
+
+				result.compoundID = wispRootID
+
+				// Spawn polecat with pre-allocated name
+				spawnOpts := SlingSpawnOptions{
+					Force:    slingForce,
+					Account:  slingAccount,
+					Create:   slingCreate,
+					HookBead: wispRootID,
+					Agent:    slingAgent,
+				}
+				spawnInfo, err := SpawnPolecatForSlingWithName(rigName, polecatName, spawnOpts)
+				if err != nil {
+					result.errMsg = fmt.Sprintf("spawn failed: %v", err)
+					results <- result
+					continue
+				}
+
+				result.polecat = spawnInfo.PolecatName
+				targetAgent := spawnInfo.AgentID()
+				hookWorkDir := spawnInfo.ClonePath
+
+				// Hook the compound bead
+				hookCmd := exec.Command("bd", "--no-daemon", "update", wispRootID, "--status=hooked", "--assignee="+targetAgent)
+				hookCmd.Dir = beads.ResolveHookDir(townRoot, wispRootID, hookWorkDir)
+				if err := hookCmd.Run(); err != nil {
+					result.errMsg = "hook failed"
+					results <- result
+					continue
+				}
+
+				// Log sling event
+				actor := detectActor()
+				_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(wispRootID, targetAgent))
+
+				// Update agent bead state
+				updateAgentHookBead(targetAgent, wispRootID, hookWorkDir, townBeadsDir)
+
+				// Store args if provided
+				if slingArgs != "" {
+					_ = storeArgsInBead(wispRootID, slingArgs)
+				}
+
+				// Nudge the polecat
+				if spawnInfo.Pane != "" {
+					_ = injectStartPrompt(spawnInfo.Pane, wispRootID, slingSubject, slingArgs)
+				}
+
+				result.success = true
+				results <- result
+			}
+		}()
+	}
+
+	// Send jobs to workers
+	for i := range beadIDs {
+		jobs <- i
+	}
+	close(jobs)
+
+	// Wait for all workers to finish
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	allResults := make([]slingResult, len(beadIDs))
+	successCount := 0
+	for r := range results {
+		allResults[r.index] = r
+		if r.success {
+			successCount++
+			fmt.Printf("  %s [%d] %s → %s (compound: %s)\n",
+				style.Bold.Render("✓"), r.index+1, r.beadID, r.polecat, r.compoundID)
+		} else {
+			fmt.Printf("  %s [%d] %s: %s\n", style.Dim.Render("✗"), r.index+1, r.beadID, r.errMsg)
+		}
+	}
+
+	// Wake witness and refinery once at the end
+	wakeRigAgents(rigName)
+
+	fmt.Printf("\n%s Batch formula sling complete: %d/%d succeeded\n", style.Bold.Render("📊"), successCount, len(beadIDs))
+
+	return nil
+}
+
+// runBatchSlingFormulaOnQueue handles formula-on-bead slinging using the queue workflow.
+// Creates wisps+bonds for all beads, queues the compound beads, then dispatches.
+func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, townRoot string) error {
+	fmt.Printf("%s Creating wisp compounds for %d beads...\n", style.Bold.Render("🔧"), len(beadIDs))
+
+	// Step 1: Create wisps and bonds for all beads (sequentially for now)
+	var compoundIDs []string
+	for _, beadID := range beadIDs {
+		// Get bead info for wisp variables
+		info, err := getBeadInfo(beadID)
+		if err != nil {
+			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), beadID, err)
+			continue
+		}
+
+		// Route bd mutations to the correct beads context
+		formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, "")
+
+		// Create wisp with feature and issue variables
+		featureVar := fmt.Sprintf("feature=%s", info.Title)
+		issueVar := fmt.Sprintf("issue=%s", beadID)
+		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--var", issueVar, "--json"}
+		wispCmd := exec.Command("bd", wispArgs...)
+		wispCmd.Dir = formulaWorkDir
+		wispCmd.Env = append(os.Environ(), "GT_ROOT="+townRoot)
+		wispOut, err := wispCmd.Output()
+		if err != nil {
+			fmt.Printf("  %s %s: wisp creation failed: %v\n", style.Dim.Render("✗"), beadID, err)
+			continue
+		}
+
+		wispRootID, err := parseWispIDFromJSON(wispOut)
+		if err != nil {
+			fmt.Printf("  %s %s: wisp parse failed: %v\n", style.Dim.Render("✗"), beadID, err)
+			continue
+		}
+
+		// Bond wisp to original bead
+		bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
+		bondCmd := exec.Command("bd", bondArgs...)
+		bondCmd.Dir = formulaWorkDir
+		if err := bondCmd.Run(); err != nil {
+			fmt.Printf("  %s %s: bond failed: %v\n", style.Dim.Render("✗"), beadID, err)
+			continue
+		}
+
+		// Record attached molecule
+		_ = storeAttachedMoleculeInBead(wispRootID, wispRootID)
+
+		compoundIDs = append(compoundIDs, wispRootID)
+		fmt.Printf("  %s %s → %s\n", style.Bold.Render("✓"), beadID, wispRootID)
+	}
+
+	if len(compoundIDs) == 0 {
+		return fmt.Errorf("no compound beads created")
+	}
+
+	fmt.Printf("%s Queueing %d compound beads...\n", style.Bold.Render("📋"), len(compoundIDs))
+
+	// Step 2: Queue all compound beads
+	ops := beads.NewRealBeadsOps(townRoot)
+	q := queue.New(ops)
+
+	for _, compoundID := range compoundIDs {
+		if err := q.Add(compoundID); err != nil {
+			fmt.Printf("  %s %s: queue add failed: %v\n", style.Dim.Render("✗"), compoundID, err)
+			continue
+		}
+		fmt.Printf("  %s Queued: %s\n", style.Bold.Render("✓"), compoundID)
+	}
+
+	// Step 3: Pre-allocate polecat names
+	items, err := q.Load()
+	if err != nil {
+		return fmt.Errorf("loading queue: %w", err)
+	}
+
+	preAllocatedNames, err := preAllocatePolecatNames(townRoot, items)
+	if err != nil {
+		return fmt.Errorf("pre-allocating names: %w", err)
+	}
+
+	// Step 4: Create spawner that uses pre-allocated names
+	var mu sync.Mutex
+	var successCount int
+	spawner := &queue.RealSpawner{
+		SpawnInFunc: func(spawnRigName, bid string) error {
+			polecatName, ok := preAllocatedNames[bid]
+			if !ok {
+				return fmt.Errorf("no pre-allocated name for bead %s", bid)
+			}
+
+			spawnOpts := SlingSpawnOptions{
+				Force:    slingForce,
+				Account:  slingAccount,
+				HookBead: bid,
+				Agent:    slingAgent,
+				Create:   true,
+			}
+			info, err := SpawnPolecatForSlingWithName(spawnRigName, polecatName, spawnOpts)
+			if err != nil {
+				return err
+			}
+
+			mu.Lock()
+			successCount++
+			fmt.Printf("  %s Dispatched: %s → %s\n", style.Bold.Render("✓"), bid, info.PolecatName)
+			mu.Unlock()
+
+			wakeRigAgents(spawnRigName)
+			return nil
+		},
+	}
+
+	// Step 5: Calculate dispatch limit based on capacity
+	limit := 0 // 0 means unlimited
+	if slingQueueMaxPolecats > 0 {
+		running := countRunningPolecats(townRoot)
+		slots := slingQueueMaxPolecats - running
+		if slots <= 0 {
+			fmt.Printf("At capacity: %d polecats running (max=%d)\n", running, slingQueueMaxPolecats)
+			return nil
+		}
+		limit = slots
+		fmt.Printf("Capacity: %d/%d polecats running, %d slots available\n", running, slingQueueMaxPolecats, slots)
+	}
+
+	dispatcher := queue.NewDispatcher(q, spawner).
+		WithParallelism(slingSpawnBatchSize).
+		WithLimit(limit)
+
+	fmt.Printf("%s Dispatching %d queued beads...\n", style.Bold.Render("🚀"), q.Len())
+	if _, err := dispatcher.Dispatch(); err != nil {
+		fmt.Printf("%s Some dispatches failed: %v\n", style.Dim.Render("Warning:"), err)
+	}
+
+	// Wake witness and refinery once at the end
+	wakeRigAgents(rigName)
+
+	fmt.Printf("\n%s Batch formula queue dispatch complete: %d/%d succeeded\n", style.Bold.Render("📊"), successCount, len(compoundIDs))
+
+	return nil
+}

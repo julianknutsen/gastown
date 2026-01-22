@@ -144,6 +144,21 @@ func runSling(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--var cannot be used with --on (formula-on-bead mode doesn't support variables)")
 	}
 
+	// Batch formula-on-bead mode detection:
+	// Pattern: gt sling <formula> --on gt-abc,gt-def,gt-ghi <rig>
+	// Pattern: gt sling <formula> --on @beads.txt <rig>
+	// When --on contains multiple beads (comma-separated or @file) and target is a rig
+	if slingOnTarget != "" && len(args) >= 2 {
+		beadIDs := parseBatchOnTarget(slingOnTarget)
+		if len(beadIDs) > 1 {
+			lastArg := args[len(args)-1]
+			if rigName, isRig := IsRigName(lastArg); isRig {
+				return runBatchSlingFormulaOn(args[0], beadIDs, rigName, townBeadsDir)
+			}
+			return fmt.Errorf("batch --on mode requires a rig target (got %q)", lastArg)
+		}
+	}
+
 	// Batch mode detection: multiple beads with rig target
 	// Pattern: gt sling gt-abc gt-def gt-ghi gastown
 	// When len(args) > 2 and last arg is a rig, sling each bead to its own polecat
