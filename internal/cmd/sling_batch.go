@@ -448,6 +448,28 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 				return err
 			}
 
+			targetAgent := info.AgentID()
+			hookWorkDir := info.ClonePath
+
+			// Hook the bead
+			hookCmd := exec.Command("bd", "--no-daemon", "update", bid, "--status=hooked", "--assignee="+targetAgent)
+			hookCmd.Dir = beads.ResolveHookDir(townRoot, bid, hookWorkDir)
+			if err := hookCmd.Run(); err != nil {
+				return fmt.Errorf("hooking bead: %w", err)
+			}
+
+			// Log sling event
+			actor := detectActor()
+			_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(bid, targetAgent))
+
+			// Update agent bead state
+			updateAgentHookBead(targetAgent, bid, hookWorkDir, townBeadsDir)
+
+			// Nudge the polecat
+			if info.Pane != "" {
+				_ = injectStartPrompt(info.Pane, bid, slingSubject, slingArgs)
+			}
+
 			mu.Lock()
 			successCount++
 			fmt.Printf("  %s Dispatched: %s → %s\n", style.Bold.Render("✓"), bid, info.PolecatName)
@@ -822,6 +844,7 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 	}
 
 	// Step 4: Create spawner that uses pre-allocated names
+	townBeadsDir := filepath.Join(townRoot, ".beads")
 	var mu sync.Mutex
 	var successCount int
 	spawner := &queue.RealSpawner{
@@ -841,6 +864,28 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 			info, err := SpawnPolecatForSlingWithName(spawnRigName, polecatName, spawnOpts)
 			if err != nil {
 				return err
+			}
+
+			targetAgent := info.AgentID()
+			hookWorkDir := info.ClonePath
+
+			// Hook the bead
+			hookCmd := exec.Command("bd", "--no-daemon", "update", bid, "--status=hooked", "--assignee="+targetAgent)
+			hookCmd.Dir = beads.ResolveHookDir(townRoot, bid, hookWorkDir)
+			if err := hookCmd.Run(); err != nil {
+				return fmt.Errorf("hooking bead: %w", err)
+			}
+
+			// Log sling event
+			actor := detectActor()
+			_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(bid, targetAgent))
+
+			// Update agent bead state
+			updateAgentHookBead(targetAgent, bid, hookWorkDir, townBeadsDir)
+
+			// Nudge the polecat
+			if info.Pane != "" {
+				_ = injectStartPrompt(info.Pane, bid, slingSubject, slingArgs)
 			}
 
 			mu.Lock()
