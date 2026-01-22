@@ -609,6 +609,37 @@ func (m *Manager) AllocateName() (string, error) {
 	return name, nil
 }
 
+// AllocateNames allocates multiple names from the name pool at once.
+// Reconciles only once at the start, preventing race conditions during batch allocation.
+func (m *Manager) AllocateNames(count int) ([]string, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+
+	// Reconcile only once at the start - prevents race conditions
+	m.ReconcilePool()
+
+	names := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		name, err := m.namePool.Allocate()
+		if err != nil {
+			return nil, fmt.Errorf("allocating name %d of %d: %w", i+1, count, err)
+		}
+		names = append(names, name)
+	}
+
+	if err := m.namePool.Save(); err != nil {
+		return nil, fmt.Errorf("saving pool state: %w", err)
+	}
+
+	return names, nil
+}
+
+// ActivePolecatCount returns the number of active polecats.
+func (m *Manager) ActivePolecatCount() int {
+	return m.namePool.ActiveCount()
+}
+
 // ReleaseName releases a name back to the pool.
 // This is called when a polecat is removed.
 func (m *Manager) ReleaseName(name string) {
