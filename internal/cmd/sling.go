@@ -9,8 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/mail"
+	"github.com/steveyegge/gastown/internal/queue"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -91,11 +93,14 @@ var (
 	slingHookRawBead bool     // --hook-raw-bead: hook raw bead without default formula (expert mode)
 
 	// Flags migrated for polecat spawning (used by sling for work assignment)
-	slingCreate   bool   // --create: create polecat if it doesn't exist
-	slingForce    bool   // --force: force spawn even if polecat has unread mail
-	slingAccount  string // --account: Claude Code account handle to use
-	slingAgent    string // --agent: override runtime agent for this sling/spawn
-	slingNoConvoy bool   // --no-convoy: skip auto-convoy creation
+	slingCreate           bool   // --create: create polecat if it doesn't exist
+	slingForce            bool   // --force: force spawn even if polecat has unread mail
+	slingAccount          string // --account: Claude Code account handle to use
+	slingAgent            string // --agent: override runtime agent for this sling/spawn
+	slingNoConvoy         bool   // --no-convoy: skip auto-convoy creation
+	slingSpawnBatchSize   int    // --spawn-batch-size: batch parallelism (default 5)
+	slingQueueMaxPolecats int    // --queue-max-polecats: max total polecats running (0 = unlimited)
+	slingQueue            bool   // --queue: add to queue and dispatch (opt-in queue workflow)
 )
 
 func init() {
@@ -113,6 +118,9 @@ func init() {
 	slingCmd.Flags().StringVar(&slingAgent, "agent", "", "Override agent/runtime for this sling (e.g., claude, gemini, codex, or custom alias)")
 	slingCmd.Flags().BoolVar(&slingNoConvoy, "no-convoy", false, "Skip auto-convoy creation for single-issue sling")
 	slingCmd.Flags().BoolVar(&slingHookRawBead, "hook-raw-bead", false, "Hook raw bead without default formula (expert mode)")
+	slingCmd.Flags().IntVar(&slingSpawnBatchSize, "spawn-batch-size", 5, "Number of polecats to spawn concurrently (use 1 for sequential)")
+	slingCmd.Flags().IntVar(&slingQueueMaxPolecats, "queue-max-polecats", 0, "Max total polecats running (0 = unlimited, use with --queue)")
+	slingCmd.Flags().BoolVar(&slingQueue, "queue", false, "Add to queue and dispatch (opt-in queue workflow)")
 
 	rootCmd.AddCommand(slingCmd)
 }
@@ -227,6 +235,10 @@ func runSling(cmd *cobra.Command, args []string) error {
 			}
 		} else if rigName, isRig := IsRigName(target); isRig {
 			// Check if target is a rig name (auto-spawn polecat)
+			if slingQueue {
+				// Queue mode: add to queue and dispatch
+				return runSlingQueue(beadID, rigName, townRoot, slingDryRun)
+			}
 			if slingDryRun {
 				// Dry run - just indicate what would happen
 				fmt.Printf("Would spawn fresh polecat in rig '%s'\n", rigName)
@@ -535,4 +547,94 @@ func runSling(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// runSlingQueue handles queue mode for single bead slinging.
+// Adds the bead to the queue and dispatches using the dispatcher.
+func runSlingQueue(beadID, rigName, townRoot string, dryRun bool) error {
+	ops := beads.NewRealBeadsOps(townRoot)
+	q := queue.New(ops)
+
+	// Add bead to queue (rigName is determined from bead prefix)
+	if err := q.Add(beadID); err != nil {
+		return fmt.Errorf("adding to queue: %w", err)
+	}
+	fmt.Printf("Added %s to queue for rig %s\n", beadID, rigName)
+
+	// Pre-allocate polecat name
+	items := []queue.QueueItem{{BeadID: beadID, RigName: rigName}}
+	preAllocatedNames, err := preAllocatePolecatNames(townRoot, items)
+	if err != nil {
+		return fmt.Errorf("pre-allocating names: %w", err)
+	}
+
+	// Create spawner that uses pre-allocated names
+	spawner := &queue.RealSpawner{
+		SpawnInFunc: func(rigName, beadID string) error {
+			polecatName, ok := preAllocatedNames[beadID]
+			if !ok {
+				return fmt.Errorf("no pre-allocated name for bead %s", beadID)
+			}
+
+			spawnOpts := SlingSpawnOptions{
+				Force:    slingForce,
+				Account:  slingAccount,
+				HookBead: beadID,
+				Agent:    slingAgent,
+				Create:   true,
+			}
+			info, err := SpawnPolecatForSlingWithName(rigName, polecatName, spawnOpts)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s Spawned %s for %s\n", style.Bold.Render("✓"), info.AgentID(), beadID)
+			wakeRigAgents(rigName)
+			return nil
+		},
+	}
+
+	// Determine parallelism: flag > config > default (5)
+	parallelism := slingSpawnBatchSize
+	if parallelism <= 0 {
+		parallelism = config.GetPolecatSpawnBatchSize(townRoot)
+	}
+
+	// Create dispatcher with options
+	dispatcher := queue.NewDispatcher(q, spawner).
+		WithDryRun(dryRun).
+		WithParallelism(parallelism)
+
+	// Apply capacity limit if set
+	capacity := slingQueueMaxPolecats
+	if capacity == 0 {
+		capacity = config.GetQueueMaxPolecats(townRoot)
+	}
+	if capacity > 0 {
+		running := countRunningPolecats(townRoot)
+		available := capacity - running
+		if available <= 0 {
+			fmt.Printf("Capacity reached: %d/%d polecats running\n", running, capacity)
+			return nil
+		}
+		fmt.Printf("Capacity: %d/%d polecats running, %d slots available\n", running, capacity, available)
+		dispatcher = dispatcher.WithLimit(available)
+	}
+
+	// Dispatch
+	result, err := dispatcher.Dispatch()
+
+	// Report results
+	if dryRun {
+		fmt.Printf("\nDry run - would dispatch %d bead(s)\n", len(result.Dispatched))
+	} else {
+		fmt.Printf("\nDispatched: %d\n", len(result.Dispatched))
+		if len(result.Errors) > 0 {
+			fmt.Printf("Errors: %d\n", len(result.Errors))
+			for _, e := range result.Errors {
+				fmt.Printf("  %s %v\n", style.Warning.Render("!"), e)
+			}
+		}
+	}
+
+	return err
 }
