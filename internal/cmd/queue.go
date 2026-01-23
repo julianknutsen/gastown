@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/queue"
@@ -346,6 +347,9 @@ func runQueueRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("pre-allocating names: %w", err)
 	}
 
+	// Get town beads dir for agent state updates
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+
 	// Create spawner that uses pre-allocated names
 	spawner := &queue.RealSpawner{
 		SpawnInFunc: func(rigName, beadID string) error {
@@ -366,6 +370,29 @@ func runQueueRun(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
+
+			targetAgent := info.AgentID()
+			hookWorkDir := info.ClonePath
+
+			// Hook the bead
+			hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
+			hookCmd.Dir = beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
+			if err := hookCmd.Run(); err != nil {
+				return fmt.Errorf("hooking bead: %w", err)
+			}
+
+			// Log sling event
+			actor := detectActor()
+			_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadID, targetAgent))
+
+			// Update agent bead state
+			updateAgentHookBead(targetAgent, beadID, hookWorkDir, townBeadsDir)
+
+			// Nudge the polecat
+			if info.Pane != "" {
+				_ = injectStartPrompt(info.Pane, beadID, "", "")
+			}
+
 			fmt.Printf("%s Spawned %s for %s\n", style.Bold.Render("✓"), info.AgentID(), beadID)
 
 			// Wake witness and refinery
