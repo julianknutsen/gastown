@@ -109,17 +109,23 @@ func (q *Queue) Remove(beadID string) error {
 
 // Clear removes all beads from the queue.
 // Returns the number of items cleared.
+// Unlike Load() which only returns ready beads, Clear() removes ALL queued beads
+// including those that are blocked by dependencies.
 func (q *Queue) Clear() (int, error) {
-	if _, err := q.Load(); err != nil {
+	// Use ListByLabel to get ALL beads with queue label, not just ready ones
+	rigBeads, err := q.ops.ListByLabel(QueueLabel)
+	if err != nil {
 		return 0, err
 	}
 
 	cleared := 0
-	for _, item := range q.items {
-		if err := q.Remove(item.BeadID); err != nil {
-			continue // Best effort
+	for _, beadList := range rigBeads {
+		for _, bead := range beadList {
+			if err := q.Remove(bead.ID); err != nil {
+				continue // Best effort
+			}
+			cleared++
 		}
-		cleared++
 	}
 
 	q.items = []QueueItem{}

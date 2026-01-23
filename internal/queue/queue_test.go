@@ -312,6 +312,51 @@ func TestQueue_Clear_MultipleRigs(t *testing.T) {
 	}
 }
 
+func TestQueue_Clear_IncludesBlockedBeads(t *testing.T) {
+	ops := beads.NewFakeBeadsOpsForRig("gastown")
+	ops.AddRouteWithRig("gt-", "gastown", ops)
+
+	// Add two beads: one ready, one blocked
+	ops.AddBead("gt-ready", "open", []string{QueueLabel})
+	ops.AddBead("gt-blocked", "open", []string{QueueLabel})
+	ops.AddBead("gt-blocker", "open", []string{}) // blocker bead (not queued)
+
+	// Make gt-blocked depend on gt-blocker (so it's blocked)
+	ops.AddDependency("gt-blocked", "gt-blocker")
+
+	q := New(ops)
+
+	// Load should only return ready beads
+	items, err := q.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("Load should return 1 ready bead, got %d", len(items))
+	}
+
+	// But Clear should remove ALL queued beads, including blocked ones
+	cleared, err := q.Clear()
+	if err != nil {
+		t.Fatalf("Clear failed: %v", err)
+	}
+
+	if cleared != 2 {
+		t.Errorf("Expected 2 beads cleared (ready + blocked), got %d", cleared)
+	}
+
+	// Verify both labels were removed
+	readyLabels := ops.GetLabels("gt-ready")
+	if len(readyLabels) != 0 {
+		t.Errorf("Expected gt-ready to have no labels, got %v", readyLabels)
+	}
+
+	blockedLabels := ops.GetLabels("gt-blocked")
+	if len(blockedLabels) != 0 {
+		t.Errorf("Expected gt-blocked to have no labels, got %v", blockedLabels)
+	}
+}
+
 func TestQueue_Add_CrossRig(t *testing.T) {
 	gasOps := beads.NewFakeBeadsOpsForRig("gastown")
 	greenOps := beads.NewFakeBeadsOpsForRig("greenplace")
