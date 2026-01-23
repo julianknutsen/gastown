@@ -153,12 +153,14 @@ func runBatchSlingParallel(beadIDs []string, rigName, townRoot, townBeadsDir str
 	results := make(chan slingResult, len(beadIDs))
 
 	// Issue #288: Auto-apply mol-polecat-work for batch sling
+	// Cook formula once before starting workers
 	formulaName := "mol-polecat-work"
-	formulaCooked := false
+	if err := CookFormula(formulaName, townRoot); err != nil {
+		fmt.Printf("%s Warning: could not cook %s: %v\n", style.Dim.Render("○"), formulaName, err)
+	}
 
 	// Start worker pool
 	var wg sync.WaitGroup
-	var cookMu sync.Mutex // Protects formulaCooked flag
 	for w := 0; w < parallelism; w++ {
 		wg.Add(1)
 		go func() {
@@ -189,25 +191,6 @@ func runBatchSlingParallel(beadIDs []string, rigName, townRoot, townBeadsDir str
 					continue
 				}
 
-				// Spawn polecat with pre-allocated name
-				spawnOpts := SlingSpawnOptions{
-					Force:    slingForce,
-					Account:  slingAccount,
-					Create:   slingCreate,
-					HookBead: beadID,
-					Agent:    slingAgent,
-				}
-				spawnInfo, err := SpawnPolecatForSlingWithName(rigName, polecatName, spawnOpts)
-				if err != nil {
-					result.errMsg = fmt.Sprintf("spawn failed: %v", err)
-					results <- result
-					continue
-				}
-
-				result.polecat = spawnInfo.PolecatName
-				targetAgent := spawnInfo.AgentID()
-				hookWorkDir := spawnInfo.ClonePath
-
 				// Auto-convoy: check if issue is already tracked
 				if !slingNoConvoy {
 					existingConvoy := isTrackedByConvoy(beadID)
@@ -216,47 +199,35 @@ func runBatchSlingParallel(beadIDs []string, rigName, townRoot, townBeadsDir str
 					}
 				}
 
-				// Issue #288: Apply mol-polecat-work via formula-on-bead pattern
-				// Cook once (lazy with mutex), then instantiate for each bead
-				cookMu.Lock()
-				if !formulaCooked {
-					workDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
-					if err := CookFormula(formulaName, workDir); err == nil {
-						formulaCooked = true
-					}
-				}
-				cookMu.Unlock()
-
+				// Apply formula to get beadToHook and wispID
 				beadToHook := beadID
-				if formulaCooked {
-					formulaResult, err := InstantiateFormulaOnBead(formulaName, beadID, info.Title, hookWorkDir, townRoot, true)
-					if err == nil {
-						beadToHook = formulaResult.BeadToHook
-						_ = storeAttachedMoleculeInBead(beadToHook, formulaResult.WispRootID)
-					}
+				formulaResult, fErr := InstantiateFormulaOnBead(formulaName, beadID, info.Title, "", townRoot, true)
+				if fErr == nil {
+					beadToHook = formulaResult.BeadToHook
+					// Store attached_molecule in base bead
+					_ = storeAttachedMoleculeInBead(beadToHook, formulaResult.WispRootID)
 				}
 
-				// Complete the hook using shared helper (excludes rig wake - done once at end)
-				if err := CompleteSpawnHook(SpawnHookParams{
-					TownRoot:    townRoot,
-					BeadID:      beadToHook,
-					TargetAgent: targetAgent,
-					HookWorkDir: hookWorkDir,
-					Pane:        spawnInfo.Pane,
-					Subject:     slingSubject,
-					Args:        slingArgs,
-					// RigName omitted - wake once at end of batch
-				}); err != nil {
-					result.errMsg = "hook failed"
+				// Use unified spawn helper (WakeRig=false, done once at end of batch)
+				spawnResult, err := PrepareAndSpawnPolecatWithName(PrepareAndSpawnParams{
+					TownRoot: townRoot,
+					RigName:  rigName,
+					BeadID:   beadToHook,
+					Force:    slingForce,
+					Account:  slingAccount,
+					Create:   slingCreate,
+					Agent:    slingAgent,
+					Subject:  slingSubject,
+					Args:     slingArgs,
+					WakeRig:  false, // Wake once at end of batch
+				}, polecatName)
+				if err != nil {
+					result.errMsg = fmt.Sprintf("spawn failed: %v", err)
 					results <- result
 					continue
 				}
 
-				// Store args if provided (in original bead, not beadToHook)
-				if slingArgs != "" {
-					_ = storeArgsInBead(beadID, slingArgs)
-				}
-
+				result.polecat = spawnResult.PolecatName
 				result.success = true
 				results <- result
 			}
@@ -419,7 +390,7 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 		return fmt.Errorf("pre-allocating names: %w", err)
 	}
 
-	// Create spawner that uses pre-allocated names
+	// Create spawner that uses pre-allocated names and unified spawn workflow
 	var mu sync.Mutex
 	var successCount int
 	spawner := &queue.RealSpawner{
@@ -429,35 +400,26 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 				return fmt.Errorf("no pre-allocated name for bead %s", bid)
 			}
 
-			spawnOpts := SlingSpawnOptions{
+			// Use unified spawn helper (bead already prepared, WakeRig=false for batch)
+			result, err := PrepareAndSpawnPolecatWithName(PrepareAndSpawnParams{
+				TownRoot: townRoot,
+				RigName:  spawnRigName,
+				BeadID:   bid, // Already prepared with formula
 				Force:    slingForce,
 				Account:  slingAccount,
-				HookBead: bid,
-				Agent:    slingAgent,
 				Create:   true,
-			}
-			info, err := SpawnPolecatForSlingWithName(spawnRigName, polecatName, spawnOpts)
+				Agent:    slingAgent,
+				Subject:  slingSubject,
+				Args:     slingArgs,
+				WakeRig:  false, // Wake once at end of batch
+			}, polecatName)
 			if err != nil {
-				return err
-			}
-
-			// Complete the hook using shared helper
-			if err := CompleteSpawnHook(SpawnHookParams{
-				TownRoot:    townRoot,
-				BeadID:      bid,
-				TargetAgent: info.AgentID(),
-				HookWorkDir: info.ClonePath,
-				Pane:        info.Pane,
-				Subject:     slingSubject,
-				Args:        slingArgs,
-				RigName:     spawnRigName,
-			}); err != nil {
 				return err
 			}
 
 			mu.Lock()
 			successCount++
-			fmt.Printf("  %s Dispatched: %s → %s\n", style.Bold.Render("✓"), bid, info.PolecatName)
+			fmt.Printf("  %s Dispatched: %s → %s\n", style.Bold.Render("✓"), bid, result.PolecatName)
 			mu.Unlock()
 
 			return nil
@@ -677,50 +639,31 @@ func runBatchSlingFormulaOnParallel(formulaName string, beadIDs []string, rigNam
 				}
 
 				beadToHook := formulaResult.BeadToHook
-				attachedMoleculeID := formulaResult.WispRootID
-				result.compoundID = attachedMoleculeID
+				result.compoundID = formulaResult.WispRootID
 
-				// Spawn polecat with pre-allocated name
-				spawnOpts := SlingSpawnOptions{
+				// Store attached molecule in base bead
+				_ = storeAttachedMoleculeInBead(beadToHook, formulaResult.WispRootID)
+
+				// Use unified spawn helper (WakeRig=false, done once at end of batch)
+				spawnResult, err := PrepareAndSpawnPolecatWithName(PrepareAndSpawnParams{
+					TownRoot: townRoot,
+					RigName:  rigName,
+					BeadID:   beadToHook,
 					Force:    slingForce,
 					Account:  slingAccount,
 					Create:   slingCreate,
-					HookBead: beadToHook,
 					Agent:    slingAgent,
-				}
-				spawnInfo, err := SpawnPolecatForSlingWithName(rigName, polecatName, spawnOpts)
+					Subject:  slingSubject,
+					Args:     slingArgs,
+					WakeRig:  false, // Wake once at end of batch
+				}, polecatName)
 				if err != nil {
 					result.errMsg = fmt.Sprintf("spawn failed: %v", err)
 					results <- result
 					continue
 				}
 
-				result.polecat = spawnInfo.PolecatName
-
-				// Store attached molecule in the hooked bead (before CompleteSpawnHook)
-				_ = storeAttachedMoleculeInBead(beadToHook, attachedMoleculeID)
-
-				// Complete the hook using shared helper (excludes rig wake - done once at end)
-				if err := CompleteSpawnHook(SpawnHookParams{
-					TownRoot:    townRoot,
-					BeadID:      beadToHook,
-					TargetAgent: spawnInfo.AgentID(),
-					HookWorkDir: spawnInfo.ClonePath,
-					Pane:        spawnInfo.Pane,
-					Subject:     slingSubject,
-					Args:        slingArgs,
-					// RigName omitted - wake once at end of batch
-				}); err != nil {
-					result.errMsg = "hook failed"
-					results <- result
-					continue
-				}
-
-				// Store args if provided
-				if slingArgs != "" {
-					_ = storeArgsInBead(beadToHook, slingArgs)
-				}
-
+				result.polecat = spawnResult.PolecatName
 				result.success = true
 				results <- result
 			}
@@ -820,7 +763,7 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 		return fmt.Errorf("pre-allocating names: %w", err)
 	}
 
-	// Step 4: Create spawner that uses pre-allocated names
+	// Step 4: Create spawner that uses pre-allocated names and unified spawn workflow
 	var mu sync.Mutex
 	var successCount int
 	spawner := &queue.RealSpawner{
@@ -830,35 +773,26 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 				return fmt.Errorf("no pre-allocated name for bead %s", bid)
 			}
 
-			spawnOpts := SlingSpawnOptions{
+			// Use unified spawn helper (bead already prepared, WakeRig=false for batch)
+			result, err := PrepareAndSpawnPolecatWithName(PrepareAndSpawnParams{
+				TownRoot: townRoot,
+				RigName:  spawnRigName,
+				BeadID:   bid, // Already prepared with formula
 				Force:    slingForce,
 				Account:  slingAccount,
-				HookBead: bid,
-				Agent:    slingAgent,
 				Create:   true,
-			}
-			info, err := SpawnPolecatForSlingWithName(spawnRigName, polecatName, spawnOpts)
+				Agent:    slingAgent,
+				Subject:  slingSubject,
+				Args:     slingArgs,
+				WakeRig:  false, // Wake once at end of batch
+			}, polecatName)
 			if err != nil {
-				return err
-			}
-
-			// Complete the hook using shared helper
-			if err := CompleteSpawnHook(SpawnHookParams{
-				TownRoot:    townRoot,
-				BeadID:      bid,
-				TargetAgent: info.AgentID(),
-				HookWorkDir: info.ClonePath,
-				Pane:        info.Pane,
-				Subject:     slingSubject,
-				Args:        slingArgs,
-				RigName:     spawnRigName,
-			}); err != nil {
 				return err
 			}
 
 			mu.Lock()
 			successCount++
-			fmt.Printf("  %s Dispatched: %s → %s\n", style.Bold.Render("✓"), bid, info.PolecatName)
+			fmt.Printf("  %s Dispatched: %s → %s\n", style.Bold.Render("✓"), bid, result.PolecatName)
 			mu.Unlock()
 
 			return nil

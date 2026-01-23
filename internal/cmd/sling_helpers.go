@@ -10,61 +10,306 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
+	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
-// SpawnHookParams contains parameters for completing a spawn hook operation.
-// This consolidates the post-spawn work that all sling paths need to do.
-type SpawnHookParams struct {
-	TownRoot    string // Town root directory
-	BeadID      string // Bead to hook
-	TargetAgent string // Agent being assigned (assignee)
-	HookWorkDir string // Working directory for bd commands
-	Pane        string // Tmux pane for nudge (optional)
-	Subject     string // Subject for nudge prompt (optional)
-	Args        string // Args for nudge prompt (optional)
-	RigName     string // Rig name for waking agents (optional)
+// PrepareAndSpawnParams contains all parameters for the unified spawn workflow.
+// This consolidates pre-spawn, spawn, and post-spawn work into a single call.
+type PrepareAndSpawnParams struct {
+	// Required
+	TownRoot string // Town root directory
+	RigName  string // Target rig for polecat spawn
+	BeadID   string // Original bead (or wisp ID for formula sling)
+
+	// Formula options
+	FormulaName string   // Formula to apply ("" = mol-polecat-work, "none" = raw bead)
+	FormulaVars []string // Additional formula variables (--var key=value)
+	SkipFormula bool     // If true, skip formula application entirely (for formula sling)
+
+	// Spawn options
+	Force   bool   // Force spawn even if polecat has uncommitted work
+	Account string // Claude Code account handle
+	Create  bool   // Create polecat if it doesn't exist
+	Agent   string // Agent override (e.g., "gemini", "codex")
+
+	// Bead metadata (stored before spawn)
+	Subject string // Subject for nudge prompt
+	Args    string // Args for nudge prompt and bead storage
+
+	// Convoy options
+	NoConvoy  bool   // Skip auto-convoy creation
+	BeadTitle string // Title for auto-convoy (required if !NoConvoy and !SkipFormula)
+
+	// Post-spawn options
+	WakeRig bool // Wake witness/refinery after spawn (default true for single, false for batch)
 }
 
-// CompleteSpawnHook performs the standard post-spawn work for all sling paths:
-// 1. Hook the bead (set status=hooked, assignee)
-// 2. Log sling event to feed
-// 3. Update agent bead state (hook_bead slot)
-// 4. Nudge the polecat to start working
-// 5. Wake rig agents (witness, refinery)
+// PrepareAndSpawnResult contains the result of the unified spawn workflow.
+type PrepareAndSpawnResult struct {
+	BeadToHook   string // The bead that was hooked (base bead or wisp)
+	WispID       string // The attached wisp ID (if formula applied)
+	AgentID      string // The spawned polecat's agent ID (rig/polecats/name)
+	PolecatName  string // Just the polecat name
+	Pane         string // Tmux pane ID
+	ClonePath    string // Path to polecat's git worktree
+}
+
+// PrepareAndSpawnPolecat is the unified spawn workflow for slinging beads to rigs.
+// It handles all pre-spawn, spawn, and post-spawn work in the correct order:
 //
-// This consolidates duplicated code from sling.go, sling_batch.go, sling_formula.go,
-// and queue.go into a single helper.
-func CompleteSpawnHook(p SpawnHookParams) error {
-	// Hook the bead
-	hookCmd := exec.Command("bd", "--no-daemon", "update", p.BeadID, "--status=hooked", "--assignee="+p.TargetAgent)
-	hookCmd.Dir = beads.ResolveHookDir(p.TownRoot, p.BeadID, p.HookWorkDir)
-	if err := hookCmd.Run(); err != nil {
-		return fmt.Errorf("hooking bead: %w", err)
+// PRE-SPAWN (bead manipulation):
+//  1. Apply formula (if needed) → get beadToHook, wispID
+//  2. Store attached_molecule in beadToHook
+//  3. Store dispatcher and args in bead
+//  4. Create auto-convoy (unless NoConvoy or batch)
+//  5. Pre-allocate polecat name → know agentID before spawn
+//  6. Hook bead (bd update --status=hooked --assignee=agentID)
+//
+// SPAWN:
+//  7. Spawn polecat with pre-allocated name and HookBead set
+//     (agent bead hook_bead slot is set atomically during AddWithOptions)
+//
+// POST-SPAWN:
+//  8. Log sling event to feed
+//  9. Nudge polecat to start working
+//  10. Wake rig agents (witness, refinery) if requested
+func PrepareAndSpawnPolecat(p PrepareAndSpawnParams) (*PrepareAndSpawnResult, error) {
+	result := &PrepareAndSpawnResult{}
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// PRE-SPAWN PHASE (bead manipulation)
+	// ═══════════════════════════════════════════════════════════════════════════
+
+	// Step 1: Apply formula (if needed)
+	beadToHook := p.BeadID
+	var wispID string
+	beadTitle := p.BeadTitle
+
+	if !p.SkipFormula {
+		formulaName := p.FormulaName
+		if formulaName == "" {
+			formulaName = "mol-polecat-work"
+		}
+		if formulaName != "none" {
+			// Get bead info for formula variables
+			info, err := getBeadInfo(p.BeadID)
+			if err != nil {
+				return nil, fmt.Errorf("getting bead info: %w", err)
+			}
+			if beadTitle == "" {
+				beadTitle = info.Title
+			}
+
+			// Cook formula
+			if err := CookFormula(formulaName, p.TownRoot); err != nil {
+				// Non-fatal - proceed with raw bead
+				fmt.Printf("%s Warning: could not cook %s: %v\n", style.Dim.Render("○"), formulaName, err)
+			} else {
+				// Apply formula
+				formulaResult, err := InstantiateFormulaOnBead(formulaName, p.BeadID, info.Title, "", p.TownRoot, true)
+				if err != nil {
+					// Non-fatal - proceed with raw bead
+					fmt.Printf("%s Warning: could not apply %s: %v\n", style.Dim.Render("○"), formulaName, err)
+				} else {
+					beadToHook = formulaResult.BeadToHook
+					wispID = formulaResult.WispRootID
+				}
+			}
+		}
+	}
+	result.BeadToHook = beadToHook
+	result.WispID = wispID
+
+	// Step 2: Store attached_molecule in beadToHook (if wisp was created)
+	if wispID != "" {
+		if err := storeAttachedMoleculeInBead(beadToHook, wispID); err != nil {
+			fmt.Printf("%s Warning: could not store attached_molecule: %v\n", style.Dim.Render("○"), err)
+		}
 	}
 
-	// Log sling event
+	// Step 3: Store dispatcher and args in bead (before spawn)
 	actor := detectActor()
-	_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(p.BeadID, p.TargetAgent))
-
-	// Update agent bead state
-	townBeadsDir := filepath.Join(p.TownRoot, ".beads")
-	updateAgentHookBead(p.TargetAgent, p.BeadID, p.HookWorkDir, townBeadsDir)
-
-	// Nudge the polecat
-	if p.Pane != "" {
-		_ = injectStartPrompt(p.Pane, p.BeadID, p.Subject, p.Args)
+	_ = storeDispatcherInBead(beadToHook, actor)
+	if p.Args != "" {
+		_ = storeArgsInBead(beadToHook, p.Args)
 	}
 
-	// Wake rig agents
-	if p.RigName != "" {
+	// Step 4: Create auto-convoy (unless NoConvoy)
+	if !p.NoConvoy && beadTitle != "" {
+		existingConvoy := isTrackedByConvoy(p.BeadID)
+		if existingConvoy == "" {
+			convoyID, err := createAutoConvoy(p.BeadID, beadTitle)
+			if err != nil {
+				fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
+			} else {
+				fmt.Printf("%s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
+			}
+		} else {
+			fmt.Printf("%s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
+		}
+	}
+
+	// Step 5: Pre-allocate polecat name
+	polecatName, err := allocatePolecatName(p.TownRoot, p.RigName)
+	if err != nil {
+		return nil, fmt.Errorf("allocating polecat name: %w", err)
+	}
+	agentID := fmt.Sprintf("%s/polecats/%s", p.RigName, polecatName)
+	result.AgentID = agentID
+	result.PolecatName = polecatName
+
+	// Step 6: Hook bead BEFORE spawn
+	hookWorkDir := beads.ResolveHookDir(p.TownRoot, beadToHook, "")
+	hookCmd := exec.Command("bd", "--no-daemon", "update", beadToHook, "--status=hooked", "--assignee="+agentID)
+	hookCmd.Dir = hookWorkDir
+	if err := hookCmd.Run(); err != nil {
+		return nil, fmt.Errorf("hooking bead before spawn: %w", err)
+	}
+	fmt.Printf("%s Bead hooked to %s\n", style.Bold.Render("✓"), agentID)
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// SPAWN PHASE
+	// ═══════════════════════════════════════════════════════════════════════════
+
+	// Step 7: Spawn polecat with pre-allocated name
+	spawnOpts := SlingSpawnOptions{
+		Force:    p.Force,
+		Account:  p.Account,
+		Create:   p.Create,
+		Agent:    p.Agent,
+		HookBead: beadToHook, // Also set in polecat state for consistency
+	}
+	spawnInfo, err := SpawnPolecatForSlingWithName(p.RigName, polecatName, spawnOpts)
+	if err != nil {
+		return nil, fmt.Errorf("spawning polecat: %w", err)
+	}
+	result.Pane = spawnInfo.Pane
+	result.ClonePath = spawnInfo.ClonePath
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// POST-SPAWN PHASE
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Note: hook_bead was already set atomically during agent bead creation in AddWithOptions.
+	// No need to call updateAgentHookBead here.
+
+	// Step 8: Log sling event
+	_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadToHook, agentID))
+
+	// Step 9: Nudge polecat
+	if spawnInfo.Pane != "" {
+		_ = injectStartPrompt(spawnInfo.Pane, beadToHook, p.Subject, p.Args)
+	}
+
+	// Step 10: Wake rig agents (if requested)
+	if p.WakeRig {
 		wakeRigAgents(p.RigName)
 	}
 
-	return nil
+	return result, nil
+}
+
+// PrepareAndSpawnPolecatWithName is a variant for batch operations where
+// polecat names are pre-allocated upfront to avoid race conditions.
+// The workflow is the same as PrepareAndSpawnPolecat but skips name allocation
+// and convoy creation (batch creates convoy externally).
+func PrepareAndSpawnPolecatWithName(p PrepareAndSpawnParams, polecatName string) (*PrepareAndSpawnResult, error) {
+	result := &PrepareAndSpawnResult{}
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// PRE-SPAWN PHASE (formula + attached_molecule already handled by batch caller)
+	// ═══════════════════════════════════════════════════════════════════════════
+
+	beadToHook := p.BeadID // In batch mode, this is already the correct beadToHook
+	agentID := fmt.Sprintf("%s/polecats/%s", p.RigName, polecatName)
+	result.BeadToHook = beadToHook
+	result.AgentID = agentID
+	result.PolecatName = polecatName
+
+	// Store dispatcher and args in bead (before spawn)
+	actor := detectActor()
+	_ = storeDispatcherInBead(beadToHook, actor)
+	if p.Args != "" {
+		_ = storeArgsInBead(beadToHook, p.Args)
+	}
+
+	// Note: Convoy creation handled by batch caller (creates batch convoy, not per-bead)
+
+	// Hook bead BEFORE spawn
+	hookWorkDir := beads.ResolveHookDir(p.TownRoot, beadToHook, "")
+	hookCmd := exec.Command("bd", "--no-daemon", "update", beadToHook, "--status=hooked", "--assignee="+agentID)
+	hookCmd.Dir = hookWorkDir
+	if err := hookCmd.Run(); err != nil {
+		return nil, fmt.Errorf("hooking bead before spawn: %w", err)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// SPAWN PHASE
+	// ═══════════════════════════════════════════════════════════════════════════
+
+	spawnOpts := SlingSpawnOptions{
+		Force:    p.Force,
+		Account:  p.Account,
+		Create:   p.Create,
+		Agent:    p.Agent,
+		HookBead: beadToHook,
+	}
+	spawnInfo, err := SpawnPolecatForSlingWithName(p.RigName, polecatName, spawnOpts)
+	if err != nil {
+		return nil, fmt.Errorf("spawning polecat: %w", err)
+	}
+	result.Pane = spawnInfo.Pane
+	result.ClonePath = spawnInfo.ClonePath
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// POST-SPAWN PHASE
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Note: hook_bead was already set atomically during agent bead creation in AddWithOptions.
+	// No need to call updateAgentHookBead here.
+
+	// Log sling event
+	_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadToHook, agentID))
+
+	// Nudge polecat
+	if spawnInfo.Pane != "" {
+		_ = injectStartPrompt(spawnInfo.Pane, beadToHook, p.Subject, p.Args)
+	}
+
+	// Wake rig agents (if requested - usually false for batch, done once at end)
+	if p.WakeRig {
+		wakeRigAgents(p.RigName)
+	}
+
+	return result, nil
+}
+
+// allocatePolecatName allocates a single polecat name from the rig's name pool.
+func allocatePolecatName(townRoot, rigName string) (string, error) {
+	rigsConfigPath := filepath.Join(townRoot, "mayor", "rigs.json")
+	rigsConfig, err := config.LoadRigsConfig(rigsConfigPath)
+	if err != nil {
+		rigsConfig = &config.RigsConfig{Rigs: make(map[string]config.RigEntry)}
+	}
+
+	g := git.NewGit(townRoot)
+	rigMgr := rig.NewManager(townRoot, rigsConfig, g)
+	r, err := rigMgr.GetRig(rigName)
+	if err != nil {
+		return "", fmt.Errorf("rig '%s' not found: %w", rigName, err)
+	}
+
+	polecatGit := git.NewGit(r.Path)
+	t := tmux.NewTmux()
+	polecatMgr := polecat.NewManager(r, polecatGit, t)
+
+	return polecatMgr.AllocateName()
 }
 
 // beadInfo holds status and assignee for a bead.

@@ -260,26 +260,36 @@ func runSling(cmd *cobra.Command, args []string) error {
 				targetAgent = fmt.Sprintf("%s/polecats/<new>", rigName)
 				targetPane = "<new-pane>"
 			} else {
-				// Spawn a fresh polecat in the rig
+				// Use unified spawn workflow
 				fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
-				spawnOpts := SlingSpawnOptions{
-					Force:    slingForce,
-					Account:  slingAccount,
-					Create:   slingCreate,
-					HookBead: beadID, // Set atomically at spawn time
-					Agent:    slingAgent,
-				}
-				spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
-				if spawnErr != nil {
-					return fmt.Errorf("spawning polecat: %w", spawnErr)
-				}
-				targetAgent = spawnInfo.AgentID()
-				targetPane = spawnInfo.Pane
-				hookWorkDir = spawnInfo.ClonePath // Run bd commands from polecat's worktree
-				hookSetAtomically = true          // Hook was set during spawn (GH #gt-mzyk5)
 
-				// Wake witness and refinery to monitor the new polecat
-				wakeRigAgents(rigName)
+				// Determine formula: explicit --formula, or auto mol-polecat-work, or "none" for raw
+				formula := formulaName
+				if formula == "" && !slingHookRawBead {
+					formula = "" // Empty string = default mol-polecat-work
+				} else if slingHookRawBead {
+					formula = "none"
+				}
+
+				result, err := PrepareAndSpawnPolecat(PrepareAndSpawnParams{
+					TownRoot:    townRoot,
+					RigName:     rigName,
+					BeadID:      beadID,
+					FormulaName: formula,
+					Force:       slingForce,
+					Account:     slingAccount,
+					Create:      slingCreate,
+					Agent:       slingAgent,
+					Subject:     slingSubject,
+					Args:        slingArgs,
+					WakeRig:     true,
+				})
+				if err != nil {
+					return fmt.Errorf("spawning polecat: %w", err)
+				}
+
+				fmt.Printf("%s Work slung to %s\n", style.Bold.Render("✓"), result.AgentID)
+				return nil
 			}
 		} else {
 			// Slinging to an existing agent
@@ -294,24 +304,34 @@ func runSling(cmd *cobra.Command, args []string) error {
 					if len(parts) >= 3 && parts[1] == "polecats" {
 						rigName := parts[0]
 						fmt.Printf("Target polecat has no active session, spawning fresh polecat in rig '%s'...\n", rigName)
-						spawnOpts := SlingSpawnOptions{
-							Force:    slingForce,
-							Account:  slingAccount,
-							Create:   slingCreate,
-							HookBead: beadID,
-							Agent:    slingAgent,
+
+						// Determine formula: explicit --formula, or auto mol-polecat-work, or "none" for raw
+						formula := formulaName
+						if formula == "" && !slingHookRawBead {
+							formula = "" // Empty string = default mol-polecat-work
+						} else if slingHookRawBead {
+							formula = "none"
 						}
-						spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
+
+						result, spawnErr := PrepareAndSpawnPolecat(PrepareAndSpawnParams{
+							TownRoot:    townRoot,
+							RigName:     rigName,
+							BeadID:      beadID,
+							FormulaName: formula,
+							Force:       slingForce,
+							Account:     slingAccount,
+							Create:      slingCreate,
+							Agent:       slingAgent,
+							Subject:     slingSubject,
+							Args:        slingArgs,
+							WakeRig:     true,
+						})
 						if spawnErr != nil {
 							return fmt.Errorf("spawning polecat to replace dead polecat: %w", spawnErr)
 						}
-						targetAgent = spawnInfo.AgentID()
-						targetPane = spawnInfo.Pane
-						hookWorkDir = spawnInfo.ClonePath
-						hookSetAtomically = true // Hook was set during spawn (GH #gt-mzyk5)
 
-						// Wake witness and refinery to monitor the new polecat
-						wakeRigAgents(rigName)
+						fmt.Printf("%s Work slung to %s\n", style.Bold.Render("✓"), result.AgentID)
+						return nil
 					} else {
 						return fmt.Errorf("resolving target: %w", err)
 					}
@@ -567,18 +587,38 @@ func runSling(cmd *cobra.Command, args []string) error {
 // runSlingQueue handles queue mode for single bead slinging.
 // Adds the bead to the queue and dispatches using the dispatcher.
 func runSlingQueue(beadID, rigName, townRoot string, dryRun bool) error {
+	// Get bead info early (needed for convoy title and formula variables)
+	info, err := getBeadInfo(beadID)
+	if err != nil {
+		return fmt.Errorf("getting bead info: %w", err)
+	}
+
+	// Auto-convoy: check if issue is already tracked by a convoy
+	// If not, create one for dashboard visibility (unless --no-convoy is set)
+	if !slingNoConvoy {
+		existingConvoy := isTrackedByConvoy(beadID)
+		if existingConvoy == "" {
+			if dryRun {
+				fmt.Printf("Would create convoy 'Work: %s'\n", info.Title)
+			} else {
+				convoyID, err := createAutoConvoy(beadID, info.Title)
+				if err != nil {
+					fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
+				} else {
+					fmt.Printf("%s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
+				}
+			}
+		} else {
+			fmt.Printf("%s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
+		}
+	}
+
 	// Issue #288: Apply mol-polecat-work formula before queueing
 	// This ensures the base bead has attached_molecule set when dispatched
 	formulaName := "mol-polecat-work"
 	beadToQueue := beadID
 
 	if !slingHookRawBead {
-		// Get bead info for formula variables
-		info, err := getBeadInfo(beadID)
-		if err != nil {
-			return fmt.Errorf("getting bead info: %w", err)
-		}
-
 		if dryRun {
 			fmt.Printf("Would apply %s formula to %s\n", formulaName, beadID)
 		} else {
@@ -616,7 +656,7 @@ func runSlingQueue(beadID, rigName, townRoot string, dryRun bool) error {
 		return fmt.Errorf("pre-allocating names: %w", err)
 	}
 
-	// Create spawner that uses pre-allocated names
+	// Create spawner that uses pre-allocated names and unified spawn workflow
 	spawner := &queue.RealSpawner{
 		SpawnInFunc: func(rigName, bid string) error {
 			polecatName, ok := preAllocatedNames[bid]
@@ -624,19 +664,23 @@ func runSlingQueue(beadID, rigName, townRoot string, dryRun bool) error {
 				return fmt.Errorf("no pre-allocated name for bead %s", bid)
 			}
 
-			spawnOpts := SlingSpawnOptions{
+			// Use unified spawn helper (bead already prepared with formula)
+			result, err := PrepareAndSpawnPolecatWithName(PrepareAndSpawnParams{
+				TownRoot: townRoot,
+				RigName:  rigName,
+				BeadID:   bid, // Already prepared (formula applied before queueing)
 				Force:    slingForce,
 				Account:  slingAccount,
-				HookBead: bid,
-				Agent:    slingAgent,
 				Create:   true,
-			}
-			info, err := SpawnPolecatForSlingWithName(rigName, polecatName, spawnOpts)
+				Agent:    slingAgent,
+				Subject:  slingSubject,
+				Args:     slingArgs,
+				WakeRig:  true,
+			}, polecatName)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s Spawned %s for %s\n", style.Bold.Render("✓"), info.AgentID(), bid)
-			wakeRigAgents(rigName)
+			fmt.Printf("%s Spawned %s for %s\n", style.Bold.Render("✓"), result.AgentID, bid)
 			return nil
 		},
 	}

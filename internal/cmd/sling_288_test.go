@@ -117,9 +117,8 @@ exit 0
 	if !strings.Contains(logContent, "mol wisp mol-polecat-work") {
 		t.Errorf("mol wisp command not found in log:\n%s", logContent)
 	}
-	if !strings.Contains(logContent, "mol bond") {
-		t.Errorf("mol bond command not found in log:\n%s", logContent)
-	}
+	// Note: We no longer use "mol bond" - attached_molecule is stored directly
+	// via storeAttachedMoleculeInBead() without creating a blocking dependency.
 }
 
 // TestInstantiateFormulaOnBeadSkipCook verifies the skipCook optimization.
@@ -185,13 +184,12 @@ exit 0
 		t.Errorf("cook should be skipped when skipCook=true, but was called:\n%s", logContent)
 	}
 
-	// Verify wisp and bond were still called
+	// Verify wisp was still called (bond is no longer used)
 	if !strings.Contains(logContent, "mol wisp") {
 		t.Errorf("mol wisp should still be called")
 	}
-	if !strings.Contains(logContent, "mol bond") {
-		t.Errorf("mol bond should still be called")
-	}
+	// Note: We no longer use "mol bond" - attached_molecule is stored directly
+	// via storeAttachedMoleculeInBead() without creating a blocking dependency.
 }
 
 // TestCookFormula verifies the CookFormula helper.

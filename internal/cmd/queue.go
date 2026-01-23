@@ -346,7 +346,9 @@ func runQueueRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("pre-allocating names: %w", err)
 	}
 
-	// Create spawner that uses pre-allocated names
+	// Create spawner that uses pre-allocated names and unified spawn workflow
+	// Note: Queue beads are already prepared (formula applied, attached_molecule stored)
+	// when they were added to the queue, so we just spawn and do post-spawn work.
 	spawner := &queue.RealSpawner{
 		SpawnInFunc: func(rigName, beadID string) error {
 			// Look up pre-allocated name for this bead
@@ -355,31 +357,22 @@ func runQueueRun(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("no pre-allocated name for bead %s", beadID)
 			}
 
-			spawnOpts := SlingSpawnOptions{
+			// Use unified spawn helper (beads already prepared, WakeRig=true per bead)
+			result, err := PrepareAndSpawnPolecatWithName(PrepareAndSpawnParams{
+				TownRoot: townRoot,
+				RigName:  rigName,
+				BeadID:   beadID, // Already prepared (formula applied at queue time)
 				Force:    queueRunForce,
 				Account:  queueRunAccount,
-				HookBead: beadID,
-				Agent:    queueRunAgent,
 				Create:   true,
-			}
-			info, err := SpawnPolecatForSlingWithName(rigName, polecatName, spawnOpts)
+				Agent:    queueRunAgent,
+				WakeRig:  true, // Wake per dispatch (queue may dispatch to different rigs)
+			}, polecatName)
 			if err != nil {
 				return err
 			}
 
-			// Complete the hook using shared helper
-			if err := CompleteSpawnHook(SpawnHookParams{
-				TownRoot:    townRoot,
-				BeadID:      beadID,
-				TargetAgent: info.AgentID(),
-				HookWorkDir: info.ClonePath,
-				Pane:        info.Pane,
-				RigName:     rigName,
-			}); err != nil {
-				return err
-			}
-
-			fmt.Printf("%s Spawned %s for %s\n", style.Bold.Render("✓"), info.AgentID(), beadID)
+			fmt.Printf("%s Spawned %s for %s\n", style.Bold.Render("✓"), result.AgentID, beadID)
 			return nil
 		},
 	}

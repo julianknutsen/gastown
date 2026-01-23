@@ -370,7 +370,6 @@ exit /b 0
 	}
 	gotCook := false
 	gotWisp := false
-	gotBond := false
 
 	for _, line := range logLines {
 		parts := strings.SplitN(line, "|", 2)
@@ -392,16 +391,14 @@ exit /b 0
 			if dir != wantDir {
 				t.Fatalf("bd mol wisp ran in %q, want %q (args: %q)", dir, wantDir, args)
 			}
-		case strings.Contains(args, " mol bond "):
-			gotBond = true
-			if dir != wantDir {
-				t.Fatalf("bd mol bond ran in %q, want %q (args: %q)", dir, wantDir, args)
-			}
+		// Note: We no longer use "mol bond" - attached_molecule is stored directly
+		// via storeAttachedMoleculeInBead() without creating a blocking dependency.
 		}
 	}
 
-	if !gotCook || !gotWisp || !gotBond {
-		t.Fatalf("missing expected bd commands: cook=%v wisp=%v bond=%v (log: %q)", gotCook, gotWisp, gotBond, string(logBytes))
+	// We require cook and wisp, but not bond (no longer used)
+	if !gotCook || !gotWisp {
+		t.Fatalf("missing expected bd commands: cook=%v wisp=%v (log: %q)", gotCook, gotWisp, string(logBytes))
 	}
 }
 
@@ -991,31 +988,22 @@ exit /b 0
 		t.Fatalf("read bd log: %v", err)
 	}
 
-	// After bonding (mol bond), there should be an update call that includes
+	// After creating the wisp, there should be an update call that includes
 	// --description with attached_molecule field. This is what gt hook looks for.
+	// Note: We no longer use "mol bond" - instead we store attached_molecule directly
+	// in the base bead via storeAttachedMoleculeInBead().
 	logLines := strings.Split(string(logBytes), "\n")
 
-	// Find all update commands after the bond
-	sawBond := false
+	// Find update command with attached_molecule
 	foundAttachedMolecule := false
 	for _, line := range logLines {
-		if strings.Contains(line, "mol bond") {
-			sawBond = true
-			continue
-		}
-		if sawBond && strings.Contains(line, "update") {
-			// Check if this update sets attached_molecule in description
-			if strings.Contains(line, "attached_molecule") {
-				foundAttachedMolecule = true
-				break
-			}
+		if strings.Contains(line, "update") && strings.Contains(line, "attached_molecule") {
+			foundAttachedMolecule = true
+			break
 		}
 	}
 
-	if !sawBond {
-		t.Fatalf("mol bond command not found in log:\n%s", string(logBytes))
-	}
-
+	// Also check the attached log file (fallback for env-based logging)
 	if !foundAttachedMolecule {
 		if descBytes, err := os.ReadFile(attachedLogPath); err == nil {
 			if strings.Contains(string(descBytes), "attached_molecule") {
@@ -1029,7 +1017,7 @@ exit /b 0
 		if descBytes, err := os.ReadFile(attachedLogPath); err == nil {
 			attachedLog = string(descBytes)
 		}
-		t.Errorf("after mol bond, expected update with attached_molecule in description\n"+
+		t.Errorf("expected update with attached_molecule in description\n"+
 			"This is required for gt hook to recognize the molecule attachment.\n"+
 			"Log output:\n%s\nAttached log:\n%s", string(logBytes), attachedLog)
 	}
