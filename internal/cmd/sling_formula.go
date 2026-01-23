@@ -128,13 +128,48 @@ func runSlingFormula(args []string) error {
 				targetAgent = fmt.Sprintf("%s/polecats/<new>", rigName)
 				targetPane = "<new-pane>"
 			} else {
-				// Spawn a fresh polecat in the rig
-				fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
+				// For formula-to-rig, we create the wisp BEFORE spawning so we can
+				// set HookBead atomically at spawn time. This avoids timing issues
+				// where the polecat starts before its hook is set.
+				fmt.Printf("Target is rig '%s', creating wisp and spawning polecat...\n", rigName)
+
+				// Step 1: Cook the formula
+				fmt.Printf("  Cooking formula...\n")
+				cookArgs := []string{"--no-daemon", "cook", formulaName}
+				cookCmd := exec.Command("bd", cookArgs...)
+				cookCmd.Stderr = os.Stderr
+				if err := cookCmd.Run(); err != nil {
+					return fmt.Errorf("cooking formula: %w", err)
+				}
+
+				// Step 2: Create wisp instance
+				fmt.Printf("  Creating wisp...\n")
+				wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName}
+				for _, v := range slingVars {
+					wispArgs = append(wispArgs, "--var", v)
+				}
+				wispArgs = append(wispArgs, "--json")
+
+				wispCmd := exec.Command("bd", wispArgs...)
+				wispCmd.Stderr = os.Stderr
+				wispOut, wispErr := wispCmd.Output()
+				if wispErr != nil {
+					return fmt.Errorf("creating wisp: %w", wispErr)
+				}
+
+				wispRootID, parseErr := parseWispIDFromJSON(wispOut)
+				if parseErr != nil {
+					return fmt.Errorf("parsing wisp output: %w", parseErr)
+				}
+				fmt.Printf("%s Wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
+
+				// Step 3: Spawn polecat with HookBead set atomically
 				spawnOpts := SlingSpawnOptions{
-					Force:   slingForce,
-					Account: slingAccount,
-					Create:  slingCreate,
-					Agent:   slingAgent,
+					Force:    slingForce,
+					Account:  slingAccount,
+					Create:   slingCreate,
+					Agent:    slingAgent,
+					HookBead: wispRootID, // Set atomically at spawn time
 				}
 				spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
 				if spawnErr != nil {
@@ -143,8 +178,42 @@ func runSlingFormula(args []string) error {
 				targetAgent = spawnInfo.AgentID()
 				targetPane = spawnInfo.Pane
 
-				// Wake witness and refinery to monitor the new polecat
-				wakeRigAgents(rigName)
+				// Step 4: Complete the hook (bd update, log event, agent state, nudge, wake)
+				var prompt string
+				if slingArgs != "" {
+					prompt = fmt.Sprintf("Formula %s slung. Args: %s. Run `gt hook` to see your hook, then execute using these args.", formulaName, slingArgs)
+				} else {
+					prompt = fmt.Sprintf("Formula %s slung. Run `gt hook` to see your hook, then execute the steps.", formulaName)
+				}
+				if err := CompleteSpawnHook(SpawnHookParams{
+					TownRoot:    townRoot,
+					BeadID:      wispRootID,
+					TargetAgent: targetAgent,
+					HookWorkDir: spawnInfo.ClonePath,
+					Pane:        targetPane,
+					Subject:     prompt,
+					RigName:     rigName,
+				}); err != nil {
+					return fmt.Errorf("completing spawn hook: %w", err)
+				}
+
+				// Store dispatcher in bead
+				actor := detectActor()
+				if err := storeDispatcherInBead(wispRootID, actor); err != nil {
+					fmt.Printf("%s Could not store dispatcher in bead: %v\n", style.Dim.Render("Warning:"), err)
+				}
+
+				// Store args in wisp bead if provided
+				if slingArgs != "" {
+					if err := storeArgsInBead(wispRootID, slingArgs); err != nil {
+						fmt.Printf("%s Could not store args in bead: %v\n", style.Dim.Render("Warning:"), err)
+					} else {
+						fmt.Printf("%s Args stored in bead (durable)\n", style.Bold.Render("✓"))
+					}
+				}
+
+				fmt.Printf("%s Formula slung to %s\n", style.Bold.Render("✓"), targetAgent)
+				return nil
 			}
 		} else {
 			// Slinging to an existing agent

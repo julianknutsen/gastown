@@ -5,14 +5,67 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
+
+// SpawnHookParams contains parameters for completing a spawn hook operation.
+// This consolidates the post-spawn work that all sling paths need to do.
+type SpawnHookParams struct {
+	TownRoot    string // Town root directory
+	BeadID      string // Bead to hook
+	TargetAgent string // Agent being assigned (assignee)
+	HookWorkDir string // Working directory for bd commands
+	Pane        string // Tmux pane for nudge (optional)
+	Subject     string // Subject for nudge prompt (optional)
+	Args        string // Args for nudge prompt (optional)
+	RigName     string // Rig name for waking agents (optional)
+}
+
+// CompleteSpawnHook performs the standard post-spawn work for all sling paths:
+// 1. Hook the bead (set status=hooked, assignee)
+// 2. Log sling event to feed
+// 3. Update agent bead state (hook_bead slot)
+// 4. Nudge the polecat to start working
+// 5. Wake rig agents (witness, refinery)
+//
+// This consolidates duplicated code from sling.go, sling_batch.go, sling_formula.go,
+// and queue.go into a single helper.
+func CompleteSpawnHook(p SpawnHookParams) error {
+	// Hook the bead
+	hookCmd := exec.Command("bd", "--no-daemon", "update", p.BeadID, "--status=hooked", "--assignee="+p.TargetAgent)
+	hookCmd.Dir = beads.ResolveHookDir(p.TownRoot, p.BeadID, p.HookWorkDir)
+	if err := hookCmd.Run(); err != nil {
+		return fmt.Errorf("hooking bead: %w", err)
+	}
+
+	// Log sling event
+	actor := detectActor()
+	_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(p.BeadID, p.TargetAgent))
+
+	// Update agent bead state
+	townBeadsDir := filepath.Join(p.TownRoot, ".beads")
+	updateAgentHookBead(p.TargetAgent, p.BeadID, p.HookWorkDir, townBeadsDir)
+
+	// Nudge the polecat
+	if p.Pane != "" {
+		_ = injectStartPrompt(p.Pane, p.BeadID, p.Subject, p.Args)
+	}
+
+	// Wake rig agents
+	if p.RigName != "" {
+		wakeRigAgents(p.RigName)
+	}
+
+	return nil
+}
 
 // beadInfo holds status and assignee for a bead.
 type beadInfo struct {

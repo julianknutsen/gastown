@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/queue"
 	"github.com/steveyegge/gastown/internal/style"
 )
@@ -237,31 +236,25 @@ func runBatchSlingParallel(beadIDs []string, rigName, townRoot, townBeadsDir str
 					}
 				}
 
-				// Hook the bead (or wisp compound if formula was applied)
-				hookCmd := exec.Command("bd", "--no-daemon", "update", beadToHook, "--status=hooked", "--assignee="+targetAgent)
-				hookCmd.Dir = beads.ResolveHookDir(townRoot, beadToHook, hookWorkDir)
-				hookCmd.Stderr = os.Stderr
-				if err := hookCmd.Run(); err != nil {
+				// Complete the hook using shared helper (excludes rig wake - done once at end)
+				if err := CompleteSpawnHook(SpawnHookParams{
+					TownRoot:    townRoot,
+					BeadID:      beadToHook,
+					TargetAgent: targetAgent,
+					HookWorkDir: hookWorkDir,
+					Pane:        spawnInfo.Pane,
+					Subject:     slingSubject,
+					Args:        slingArgs,
+					// RigName omitted - wake once at end of batch
+				}); err != nil {
 					result.errMsg = "hook failed"
 					results <- result
 					continue
 				}
 
-				// Log sling event
-				actor := detectActor()
-				_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadToHook, targetAgent))
-
-				// Update agent bead state
-				updateAgentHookBead(targetAgent, beadToHook, hookWorkDir, townBeadsDir)
-
-				// Store args if provided
+				// Store args if provided (in original bead, not beadToHook)
 				if slingArgs != "" {
 					_ = storeArgsInBead(beadID, slingArgs)
-				}
-
-				// Nudge the polecat
-				if spawnInfo.Pane != "" {
-					_ = injectStartPrompt(spawnInfo.Pane, beadID, slingSubject, slingArgs)
 				}
 
 				result.success = true
@@ -448,26 +441,18 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 				return err
 			}
 
-			targetAgent := info.AgentID()
-			hookWorkDir := info.ClonePath
-
-			// Hook the bead
-			hookCmd := exec.Command("bd", "--no-daemon", "update", bid, "--status=hooked", "--assignee="+targetAgent)
-			hookCmd.Dir = beads.ResolveHookDir(townRoot, bid, hookWorkDir)
-			if err := hookCmd.Run(); err != nil {
-				return fmt.Errorf("hooking bead: %w", err)
-			}
-
-			// Log sling event
-			actor := detectActor()
-			_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(bid, targetAgent))
-
-			// Update agent bead state
-			updateAgentHookBead(targetAgent, bid, hookWorkDir, townBeadsDir)
-
-			// Nudge the polecat
-			if info.Pane != "" {
-				_ = injectStartPrompt(info.Pane, bid, slingSubject, slingArgs)
+			// Complete the hook using shared helper
+			if err := CompleteSpawnHook(SpawnHookParams{
+				TownRoot:    townRoot,
+				BeadID:      bid,
+				TargetAgent: info.AgentID(),
+				HookWorkDir: info.ClonePath,
+				Pane:        info.Pane,
+				Subject:     slingSubject,
+				Args:        slingArgs,
+				RigName:     spawnRigName,
+			}); err != nil {
+				return err
 			}
 
 			mu.Lock()
@@ -475,7 +460,6 @@ func runBatchSlingQueue(beadIDs []string, rigName string, townBeadsDir string) e
 			fmt.Printf("  %s Dispatched: %s → %s\n", style.Bold.Render("✓"), bid, info.PolecatName)
 			mu.Unlock()
 
-			wakeRigAgents(spawnRigName)
 			return nil
 		},
 	}
@@ -712,36 +696,29 @@ func runBatchSlingFormulaOnParallel(formulaName string, beadIDs []string, rigNam
 				}
 
 				result.polecat = spawnInfo.PolecatName
-				targetAgent := spawnInfo.AgentID()
-				hookWorkDir := spawnInfo.ClonePath
 
-				// Hook the BASE bead (not compound - lifecycle fix)
-				hookCmd := exec.Command("bd", "--no-daemon", "update", beadToHook, "--status=hooked", "--assignee="+targetAgent)
-				hookCmd.Dir = beads.ResolveHookDir(townRoot, beadToHook, hookWorkDir)
-				if err := hookCmd.Run(); err != nil {
+				// Store attached molecule in the hooked bead (before CompleteSpawnHook)
+				_ = storeAttachedMoleculeInBead(beadToHook, attachedMoleculeID)
+
+				// Complete the hook using shared helper (excludes rig wake - done once at end)
+				if err := CompleteSpawnHook(SpawnHookParams{
+					TownRoot:    townRoot,
+					BeadID:      beadToHook,
+					TargetAgent: spawnInfo.AgentID(),
+					HookWorkDir: spawnInfo.ClonePath,
+					Pane:        spawnInfo.Pane,
+					Subject:     slingSubject,
+					Args:        slingArgs,
+					// RigName omitted - wake once at end of batch
+				}); err != nil {
 					result.errMsg = "hook failed"
 					results <- result
 					continue
 				}
 
-				// Store attached molecule in the hooked bead
-				_ = storeAttachedMoleculeInBead(beadToHook, attachedMoleculeID)
-
-				// Log sling event
-				actor := detectActor()
-				_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadToHook, targetAgent))
-
-				// Update agent bead state
-				updateAgentHookBead(targetAgent, beadToHook, hookWorkDir, townBeadsDir)
-
 				// Store args if provided
 				if slingArgs != "" {
 					_ = storeArgsInBead(beadToHook, slingArgs)
-				}
-
-				// Nudge the polecat
-				if spawnInfo.Pane != "" {
-					_ = injectStartPrompt(spawnInfo.Pane, beadToHook, slingSubject, slingArgs)
 				}
 
 				result.success = true
@@ -844,7 +821,6 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 	}
 
 	// Step 4: Create spawner that uses pre-allocated names
-	townBeadsDir := filepath.Join(townRoot, ".beads")
 	var mu sync.Mutex
 	var successCount int
 	spawner := &queue.RealSpawner{
@@ -866,26 +842,18 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 				return err
 			}
 
-			targetAgent := info.AgentID()
-			hookWorkDir := info.ClonePath
-
-			// Hook the bead
-			hookCmd := exec.Command("bd", "--no-daemon", "update", bid, "--status=hooked", "--assignee="+targetAgent)
-			hookCmd.Dir = beads.ResolveHookDir(townRoot, bid, hookWorkDir)
-			if err := hookCmd.Run(); err != nil {
-				return fmt.Errorf("hooking bead: %w", err)
-			}
-
-			// Log sling event
-			actor := detectActor()
-			_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(bid, targetAgent))
-
-			// Update agent bead state
-			updateAgentHookBead(targetAgent, bid, hookWorkDir, townBeadsDir)
-
-			// Nudge the polecat
-			if info.Pane != "" {
-				_ = injectStartPrompt(info.Pane, bid, slingSubject, slingArgs)
+			// Complete the hook using shared helper
+			if err := CompleteSpawnHook(SpawnHookParams{
+				TownRoot:    townRoot,
+				BeadID:      bid,
+				TargetAgent: info.AgentID(),
+				HookWorkDir: info.ClonePath,
+				Pane:        info.Pane,
+				Subject:     slingSubject,
+				Args:        slingArgs,
+				RigName:     spawnRigName,
+			}); err != nil {
+				return err
 			}
 
 			mu.Lock()
@@ -893,7 +861,6 @@ func runBatchSlingFormulaOnQueue(formulaName string, beadIDs []string, rigName, 
 			fmt.Printf("  %s Dispatched: %s → %s\n", style.Bold.Render("✓"), bid, info.PolecatName)
 			mu.Unlock()
 
-			wakeRigAgents(spawnRigName)
 			return nil
 		},
 	}
