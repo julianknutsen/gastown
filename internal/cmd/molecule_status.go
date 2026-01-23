@@ -327,27 +327,32 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 	// This is the preferred method - agent beads have a hook_bead field
 	agentBeadID := buildAgentBeadID(target, roleCtx.Role, townRoot)
 	var hookBead *beads.Issue
+	var agentBead *beads.Issue
 
 	if agentBeadID != "" {
 		// Try to fetch the agent bead
-		agentBead, err := b.Show(agentBeadID)
-		if err == nil && agentBead != nil && agentBead.Type == "agent" {
-			status.AgentBeadID = agentBeadID
+		agentBead, err = b.Show(agentBeadID)
+		if err == nil && agentBead != nil {
+			// Accept agent beads with type "agent" or null (for backward compatibility
+			// with older agent beads that don't have the type field set)
+			if agentBead.Type == "agent" || agentBead.Type == "" {
+				status.AgentBeadID = agentBeadID
 
-			// Read hook_bead from the agent bead's database field (not description!)
-			// The hook_bead column is updated by `bd slot set` in UpdateAgentState.
-			// IMPORTANT: Don't use ParseAgentFieldsFromDescription - the description
-			// field may contain stale data, causing the wrong issue to be hooked.
-			if agentBead.HookBead != "" {
-				// Fetch the bead on the hook
-				hookBead, err = b.Show(agentBead.HookBead)
-				if err != nil {
-					// Hook bead referenced but not found - report error but continue
-					hookBead = nil
+				// Read hook_bead from the agent bead's database field (not description!)
+				// The hook_bead column is updated by `bd slot set` in UpdateAgentState.
+				// IMPORTANT: Don't use ParseAgentFieldsFromDescription - the description
+				// field may contain stale data, causing the wrong issue to be hooked.
+				if agentBead.HookBead != "" {
+					// Fetch the bead on the hook
+					hookBead, err = b.Show(agentBead.HookBead)
+					if err != nil {
+						// Hook bead referenced but not found - report error but continue
+						hookBead = nil
+					}
 				}
 			}
 		}
-		// If agent bead not found or not an agent type, fall through to legacy approach
+		// If agent bead not found, fall through to legacy approach
 	}
 
 	// If we found a hook bead via agent bead, use it
@@ -355,8 +360,10 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 		status.HasWork = true
 		status.PinnedBead = hookBead
 
-		// Check for attached molecule
-		attachment := beads.ParseAttachmentFields(hookBead)
+		// Check for attached molecule in the agent bead's description.
+		// Note: attachment info is stored in the agent bead (via gt mol attach),
+		// not in the hook bead which is the work item.
+		attachment := beads.ParseAttachmentFields(agentBead)
 		if attachment != nil {
 			status.AttachedMolecule = attachment.AttachedMolecule
 			status.AttachedAt = attachment.AttachedAt
@@ -411,8 +418,16 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 			// Take the first hooked bead
 			status.PinnedBead = hookedBeads[0]
 
-			// Check for attached molecule
-			attachment := beads.ParseAttachmentFields(hookedBeads[0])
+			// Check for attached molecule.
+			// First try the agent bead (where gt mol attach stores attachment info),
+			// then fall back to checking the hooked bead for backward compatibility.
+			var attachment *beads.AttachmentFields
+			if agentBead != nil {
+				attachment = beads.ParseAttachmentFields(agentBead)
+			}
+			if attachment == nil || attachment.AttachedMolecule == "" {
+				attachment = beads.ParseAttachmentFields(hookedBeads[0])
+			}
 			if attachment != nil {
 				status.AttachedMolecule = attachment.AttachedMolecule
 				status.AttachedAt = attachment.AttachedAt
