@@ -62,8 +62,14 @@ func (t *Tmux) wrapError(err error, stderr string, args []string) error {
 	stderr = strings.TrimSpace(stderr)
 
 	// Detect specific error types
+	// "no server running" - standard message when tmux server isn't running
+	// "error connecting to" - connection failure to tmux socket
+	// "no current target" - tmux 3.4 on Ubuntu 24.04 returns this when no server exists
+	// "no sessions" - tmux returns this for attach-session when no sessions exist
 	if strings.Contains(stderr, "no server running") ||
-		strings.Contains(stderr, "error connecting to") {
+		strings.Contains(stderr, "error connecting to") ||
+		strings.Contains(stderr, "no current target") ||
+		strings.Contains(stderr, "no sessions") {
 		return ErrNoServer
 	}
 	if strings.Contains(stderr, "duplicate session") {
