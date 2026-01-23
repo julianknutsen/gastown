@@ -34,7 +34,6 @@ Running 'gt queue' with no subcommand shows queue status.
 
 Subcommands:
   status  Show queue status (pending + running counts)
-  add     Add a bead to the queue
   list    List queued beads
   run     Dispatch queued beads to polecats
   clear   Remove all beads from the queue`,
