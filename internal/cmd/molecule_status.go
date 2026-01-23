@@ -509,11 +509,25 @@ func getMoleculeProgressInfo(b *beads.Beads, moleculeRootID string) (*MoleculePr
 		}
 	}
 
-	// Build set of closed issue IDs for dependency checking
+	// Build set of closed issue IDs and collect open step IDs for dependency checking
 	closedIDs := make(map[string]bool)
+	var openStepIDs []string
 	for _, child := range children {
 		if child.Status == "closed" {
 			closedIDs[child.ID] = true
+		} else if child.Status == "open" {
+			openStepIDs = append(openStepIDs, child.ID)
+		}
+	}
+
+	// Fetch full details for open steps to get dependency info.
+	// bd list doesn't return dependencies, but bd show does.
+	var openStepsMap map[string]*beads.Issue
+	if len(openStepIDs) > 0 {
+		openStepsMap, err = b.ShowMultiple(openStepIDs)
+		if err != nil {
+			// Non-fatal: continue without dependency info (all open steps will be "ready")
+			openStepsMap = make(map[string]*beads.Issue)
 		}
 	}
 
@@ -527,16 +541,24 @@ func getMoleculeProgressInfo(b *beads.Beads, moleculeRootID string) (*MoleculePr
 		case "in_progress":
 			progress.InProgress++
 		case "open":
-			// Check if all dependencies are closed
+			// Get full step info with dependencies
+			step := openStepsMap[child.ID]
+
+			// Check if all dependencies are closed using Dependencies field
+			// (from bd show), not DependsOn (which is empty from bd list)
 			allDepsClosed := true
-			for _, depID := range child.DependsOn {
-				if !closedIDs[depID] {
+			var deps []beads.IssueDep
+			if step != nil {
+				deps = step.Dependencies
+			}
+			for _, dep := range deps {
+				if !closedIDs[dep.ID] {
 					allDepsClosed = false
 					break
 				}
 			}
 
-			if len(child.DependsOn) == 0 || allDepsClosed {
+			if len(deps) == 0 || allDepsClosed {
 				progress.ReadySteps = append(progress.ReadySteps, child.ID)
 			} else {
 				progress.BlockedSteps = append(progress.BlockedSteps, child.ID)
@@ -774,10 +796,10 @@ func runMoleculeCurrent(cmd *cobra.Command, args []string) error {
 
 	info.StepsTotal = len(children)
 
-	// Build set of closed issue IDs for dependency checking
+	// Build set of closed issue IDs and collect open step IDs for dependency checking
 	closedIDs := make(map[string]bool)
 	var inProgressSteps []*beads.Issue
-	var readySteps []*beads.Issue
+	var openStepIDs []string
 
 	for _, child := range children {
 		switch child.Status {
@@ -786,22 +808,40 @@ func runMoleculeCurrent(cmd *cobra.Command, args []string) error {
 			closedIDs[child.ID] = true
 		case "in_progress":
 			inProgressSteps = append(inProgressSteps, child)
+		case "open":
+			openStepIDs = append(openStepIDs, child.ID)
+		}
+	}
+
+	// Fetch full details for open steps to get dependency info.
+	// bd list doesn't return dependencies, but bd show does.
+	var openStepsMap map[string]*beads.Issue
+	if len(openStepIDs) > 0 {
+		openStepsMap, _ = b.ShowMultiple(openStepIDs)
+		if openStepsMap == nil {
+			openStepsMap = make(map[string]*beads.Issue)
 		}
 	}
 
 	// Find ready steps (open with all deps closed)
-	for _, child := range children {
-		if child.Status == "open" {
-			allDepsClosed := true
-			for _, depID := range child.DependsOn {
-				if !closedIDs[depID] {
-					allDepsClosed = false
-					break
-				}
+	var readySteps []*beads.Issue
+	for _, stepID := range openStepIDs {
+		step := openStepsMap[stepID]
+		if step == nil {
+			continue
+		}
+
+		// Check dependencies using Dependencies field (from bd show),
+		// not DependsOn (which is empty from bd list)
+		allDepsClosed := true
+		for _, dep := range step.Dependencies {
+			if !closedIDs[dep.ID] {
+				allDepsClosed = false
+				break
 			}
-			if len(child.DependsOn) == 0 || allDepsClosed {
-				readySteps = append(readySteps, child)
-			}
+		}
+		if len(step.Dependencies) == 0 || allDepsClosed {
+			readySteps = append(readySteps, step)
 		}
 	}
 
