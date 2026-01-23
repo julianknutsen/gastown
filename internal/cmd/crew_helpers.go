@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -219,6 +220,17 @@ func attachToTmuxSession(sessionID string) error {
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
 		return fmt.Errorf("tmux not found: %w", err)
+	}
+
+	// Verify session exists before attempting to attach
+	// This provides a clearer error message than raw tmux errors like "no sessions"
+	t := tmux.NewTmux()
+	exists, err := t.HasSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("checking session: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("session %s not found (may have exited during startup)", sessionID)
 	}
 
 	// Check if we're already inside a tmux session
