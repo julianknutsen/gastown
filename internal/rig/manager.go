@@ -549,6 +549,27 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	}
 	fmt.Printf("   ✓ Initialized beads (prefix: %s)\n", opts.BeadsPrefix)
 
+	// GH#803: Register route BEFORE creating agent beads.
+	// bd's prefix validation reads from the database found during PersistentPreRun.
+	// Without the route, bd finds the town-level database and validates against 'hq' prefix.
+	// With the route registered, bd can route 'ci-*' IDs to the correct rig database.
+	if opts.BeadsPrefix != "" {
+		routePath := opts.Name
+		mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
+		if _, err := os.Stat(mayorRigBeads); err == nil {
+			// Source repo has .beads/ tracked - route to mayor/rig
+			routePath = opts.Name + "/mayor/rig"
+		}
+		route := beads.Route{
+			Prefix: opts.BeadsPrefix + "-",
+			Path:   routePath,
+		}
+		if err := beads.AppendRoute(m.townRoot, route); err != nil {
+			// Non-fatal: routing will still work, just not from town root
+			fmt.Fprintf(os.Stderr, "  Warning: Could not update routes.jsonl: %v\n", err)
+		}
+	}
+
 	// Create rig-level agent beads (witness, refinery) in rig beads.
 	// Town-level agents (mayor, deacon) are created by gt install in town beads.
 	if err := m.initAgentBeads(rigPath, opts.Name, opts.BeadsPrefix); err != nil {
