@@ -281,3 +281,20 @@ func requireSubcommand(cmd *cobra.Command, args []string) error {
 	return fmt.Errorf("unknown command %q for %q\n\nRun '%s --help' for available commands",
 		args[0], buildCommandPath(cmd), buildCommandPath(cmd))
 }
+
+// checkHelpFlag checks if --help or -h is in the args and shows help if so.
+// Returns true if help was shown, false otherwise.
+// This is needed for commands with DisableFlagParsing: true, which bypass
+// Cobra's automatic help flag handling.
+func checkHelpFlag(cmd *cobra.Command, args []string) (bool, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return true, cmd.Help()
+		}
+		// Stop checking after -- (everything after is passed to underlying command)
+		if arg == "--" {
+			break
+		}
+	}
+	return false, nil
+}
