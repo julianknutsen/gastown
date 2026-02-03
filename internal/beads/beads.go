@@ -637,6 +637,26 @@ func (b *Beads) CloseWithReason(reason string, ids ...string) error {
 	return err
 }
 
+// ForceCloseWithReason closes one or more issues with --force, bypassing
+// dependency checks. Used by gt done where the polecat is about to be nuked
+// and open molecule wisps should not block issue closure.
+func (b *Beads) ForceCloseWithReason(reason string, ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	args := append([]string{"close"}, ids...)
+	args = append(args, "--reason="+reason, "--force")
+
+	// Pass session ID for work attribution if available
+	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
+		args = append(args, "--session="+sessionID)
+	}
+
+	_, err := b.run(args...)
+	return err
+}
+
 // Release moves an in_progress issue back to open status.
 // This is used to recover stuck steps when a worker dies mid-task.
 // It clears the assignee so the step can be claimed by another worker.

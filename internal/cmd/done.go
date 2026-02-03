@@ -298,11 +298,12 @@ func runDone(cmd *cobra.Command, args []string) error {
 			if issueID != "" {
 				bd := beads.New(beads.ResolveBeadsDir(cwd))
 				closeReason := "Completed with no code changes (already fixed or pushed directly to main)"
-				// G15+A2: Retry bd close with backoff to handle dolt lock contention
-				// from concurrently running agents (witness/refinery spawned by G11).
+				// G15 fix: Force-close bypasses molecule dependency checks.
+				// The polecat is about to be nuked — open wisps should not block closure.
+				// Retry with backoff handles transient dolt lock contention (A2).
 				var closeErr error
 				for attempt := 1; attempt <= 3; attempt++ {
-					closeErr = bd.CloseWithReason(closeReason, issueID)
+					closeErr = bd.ForceCloseWithReason(closeReason, issueID)
 					if closeErr == nil {
 						fmt.Printf("%s Issue %s closed (no MR needed)\n", style.Bold.Render("✓"), issueID)
 						break
