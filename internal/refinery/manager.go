@@ -124,7 +124,7 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	// Claude Code does NOT traverse parent directories for settings.json.
 	// See: https://github.com/anthropics/claude-code/issues/12962
 	townRoot := filepath.Dir(m.rig.Path)
-	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
+	runtimeConfig := config.ResolveRoleAgentConfig("refinery", townRoot, m.rig.Path)
 	if err := runtime.EnsureSettingsForRole(refineryRigDir, "refinery", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
