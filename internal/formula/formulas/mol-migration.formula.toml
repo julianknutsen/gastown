@@ -1,0 +1,389 @@
+description = """
+Agent-managed migration from SQLite/JSONL beads to Dolt backend.
+
+## Purpose
+When a Gas Town needs to migrate from v0.5.0 (SQLite/JSONL) to v0.6.0 (Dolt),
+this molecule provides the structured workflow. Claude executes each step,
+making judgment calls on edge cases that a shell script cannot handle.
+
+## Key Principle: Inversion of Control
+The migration tool IS Claude. `gt doctor` and `bd doctor` provide observability;
+Claude provides intelligence. This formula provides structure; Claude provides
+the decision-making at each step.
+
+## Execution
+```bash
+bd mol wisp mol-migration  # Create wisp
+```
+
+## Edge Cases Handled
+- JSONL orphans (beads in file but not in DB)
+- Split-brain (partial migration from prior attempt)
+- Hook failures during migration
+- Rollback if validation fails
+
+## Failure Modes
+
+| Situation | Action |
+|-----------|--------|
+| Doctor reports blockers | Fix blockers before proceeding |
+| Backup fails | Stop. Do not migrate without backup. |
+| Single rig fails | Continue other rigs, report partial |
+| Validation mismatch | Rollback affected rig, report |
+| Dolt server won't start | Check port conflicts, disk space |"""
+formula = "mol-migration"
+version = 1
+
+[[steps]]
+id = "detect"
+title = "Assess migration readiness"
+description = """
+Run diagnostics to understand current state and determine if migration can proceed.
+
+**1. Run gt doctor migration check:**
+```bash
+gt doctor --migrate --json
+```
+
+Parse the JSON output:
+- `ready`: Overall YES/NO verdict
+- `rigs[]`: Per-rig backend status (sqlite vs dolt)
+- `blockers[]`: Specific issues preventing migration
+- `version.bd_supports_dolt`: Whether bd version is compatible
+
+**2. Run bd doctor in each rig that needs migration:**
+```bash
+# For each rig with needs_migration=true:
+cd <rig_path>
+bd doctor --json
+```
+
+Look for:
+- JSONL integrity (parseable, no corruption)
+- Existing bead counts (baseline for validation)
+- Any pre-existing issues to fix first
+
+**3. Check for split-brain state:**
+A prior migration attempt may have partially completed. Look for:
+- Rigs where metadata.json says "sqlite" but `.dolt-data/<rig>/` exists
+- Rigs where metadata.json says "dolt" but SQLite files still present
+- Mixed state across rigs (some migrated, some not)
+
+```bash
+# Check centralized Dolt data directory
+ls -la $GT_ROOT/.dolt-data/ 2>/dev/null || echo "No centralized Dolt data"
+
+# Check per-rig embedded Dolt directories
+for rig in $(gt rig list --names); do
+  ls -la $GT_ROOT/$rig/.beads/dolt/ 2>/dev/null
+done
+```
+
+**4. Record baseline counts:**
+Note the total bead count per rig BEFORE migration. You will compare after.
+
+**5. Decision point:**
+- If `ready=true` and no split-brain: proceed to backup
+- If blockers exist: fix them first (update bd, clean git state, etc.)
+- If split-brain detected: assess severity, consider manual cleanup before proceeding
+
+**Exit criteria:** Migration readiness assessed. Clear GO/NO-GO decision made."""
+
+[[steps]]
+id = "backup"
+title = "Snapshot current state"
+needs = ["detect"]
+description = """
+Create a safety net before any destructive operations.
+
+**CRITICAL: Do NOT proceed to migration without a successful backup.**
+
+**1. Ensure clean git state:**
+```bash
+git status
+```
+If dirty:
+```bash
+git stash push -m "pre-migration-backup"
+```
+
+**2. Export current beads state per rig:**
+```bash
+# For each rig that needs migration:
+cd <rig_path>
+bd export --format jsonl > /tmp/bd-backup-<rig>-$(date +%Y%m%d-%H%M%S).jsonl
+```
+
+If `bd export` is not available, copy the raw data:
+```bash
+# Copy SQLite database files
+cp -r <rig_path>/.beads/beads.db /tmp/bd-backup-<rig>-beads.db 2>/dev/null
+# Copy JSONL files
+cp -r <rig_path>/.beads/*.jsonl /tmp/bd-backup-<rig>.jsonl 2>/dev/null
+```
+
+**3. Create a git tag for rollback reference:**
+```bash
+git tag pre-migration-$(date +%Y%m%d-%H%M%S)
+```
+
+**4. Stop Dolt server if running:**
+```bash
+gt dolt status
+# If running:
+gt dolt stop
+```
+Migration must happen with the Dolt server stopped to avoid data races.
+
+**5. Verify backups exist:**
+```bash
+ls -la /tmp/bd-backup-*
+```
+
+**Exit criteria:** All rig data backed up. Git state clean. Dolt server stopped.
+Backups verified to exist and be non-empty."""
+
+[[steps]]
+id = "migrate-town"
+title = "Migrate town-level beads"
+needs = ["backup"]
+description = """
+Migrate the town-level (HQ) beads from SQLite to Dolt.
+
+Town-level beads live at `$GT_ROOT/.beads/` and contain town-wide state
+(convoys, agent beads, etc.).
+
+**1. Check if town-level beads need migration:**
+```bash
+gt doctor --migrate --json | jq '.rigs[] | select(.name == "town-root")'
+```
+
+If `needs_migration=false`, skip to exit criteria.
+
+**2. Run the migration:**
+```bash
+cd $GT_ROOT
+bd migrate dolt
+```
+
+**3. Verify the migration:**
+```bash
+# Check metadata.json now says dolt
+cat $GT_ROOT/.beads/metadata.json
+# backend should be "dolt"
+
+# Quick sanity check
+bd doctor --json
+```
+
+**4. Handle JSONL orphans:**
+JSONL orphans are beads that exist in `.jsonl` files but weren't in the SQLite
+database. After migration to Dolt, check:
+```bash
+# Compare counts: pre-migration baseline vs post-migration
+bd list --count
+```
+If counts don't match, investigate:
+- Check for `.jsonl` files that weren't imported
+- These may need manual import: `bd import <file.jsonl>`
+
+**5. If migration fails:**
+Do NOT proceed to rig migration. Assess the error:
+- Disk space? Check `df -h`
+- Permission? Check file ownership
+- Corruption? Try `bd doctor --fix` first
+- If unrecoverable: rollback using backup and report
+
+**Exit criteria:** Town-level beads migrated to Dolt. Bead counts match baseline."""
+
+[[steps]]
+id = "migrate-rigs"
+title = "Migrate rig-level beads"
+needs = ["migrate-town"]
+description = """
+Migrate each rig's beads from SQLite to Dolt.
+
+**1. Get list of rigs needing migration:**
+```bash
+gt doctor --migrate --json | jq -r '.rigs[] | select(.needs_migration==true) | .name'
+```
+
+**2. For each rig, migrate:**
+```bash
+cd <rig_path>
+bd migrate dolt
+```
+
+After each rig migration, verify:
+```bash
+# Check backend changed
+cat <rig_path>/.beads/metadata.json
+# backend should be "dolt"
+
+# Verify bead count matches baseline
+bd list --count
+```
+
+**3. Handle per-rig failures:**
+If a single rig fails to migrate:
+- Log the error with full context
+- Continue migrating other rigs (don't let one failure block all)
+- The failed rig can be retried after investigating the cause
+- Note the failure for the report step
+
+**4. Handle redirect-based rigs:**
+Some rigs use `.beads/redirect` files pointing to tracked beads.
+Check for this:
+```bash
+cat <rig_path>/.beads/redirect 2>/dev/null
+```
+If a redirect exists, migration must happen at the redirect target, not the rig
+directory. This is a known issue (see fix-dolt-migrate-redirect.md).
+
+**5. Consolidate to centralized Dolt data directory:**
+After all rigs are migrated to embedded Dolt, consolidate:
+```bash
+gt dolt migrate
+```
+This moves databases from per-rig `.beads/dolt/` to `.dolt-data/`.
+
+**Exit criteria:** All rigs migrated (or failures logged). Databases consolidated."""
+
+[[steps]]
+id = "validate"
+title = "Validate migration completeness"
+needs = ["migrate-rigs"]
+description = """
+Comprehensive validation that migration succeeded with no data loss.
+
+**1. Start the Dolt server:**
+```bash
+gt dolt start
+```
+Wait for it to be ready:
+```bash
+gt dolt status
+# Should show: running
+```
+
+**2. Run gt doctor (full check):**
+```bash
+gt doctor --migrate --json
+```
+Expected:
+- `ready=true` (all rigs migrated)
+- No rigs with `needs_migration=true`
+- No blockers
+
+**3. Run bd doctor in each rig:**
+```bash
+# For each rig:
+cd <rig_path>
+bd doctor --json
+```
+All checks should pass.
+
+**4. Compare bead counts against baseline:**
+For each rig, compare the count recorded in the detect step:
+```bash
+bd list --count
+# Must match or exceed the pre-migration count
+```
+
+If counts don't match:
+- Fewer beads: CRITICAL - potential data loss. Check JSONL orphans.
+- More beads: Usually fine (Dolt may have imported additional JSONL data)
+
+**5. Verify core operations work:**
+```bash
+# Test read
+bd show <any-bead-id>
+
+# Test write (create and immediately close a test bead)
+bd create --title "Migration validation test" --type task
+bd close <test-bead-id>
+```
+
+**6. If validation fails:**
+Determine severity:
+- Missing beads: Attempt recovery from backup, then re-validate
+- Doctor errors: Fix specific issues, re-run doctor
+- Server won't start: Check logs at `$GT_ROOT/.dolt-data/dolt.log`
+
+If unrecoverable:
+```bash
+# Rollback: restore from backup
+gt dolt stop
+# Restore backed-up SQLite databases
+cp /tmp/bd-backup-<rig>-beads.db <rig_path>/.beads/beads.db
+# Revert metadata.json to sqlite backend
+# Revert the pre-migration git tag
+git checkout pre-migration-*
+```
+
+**Exit criteria:** All doctors pass. Bead counts match. Read/write operations work."""
+
+[[steps]]
+id = "report"
+title = "Generate migration report"
+needs = ["validate"]
+description = """
+Summarize what was migrated, any issues encountered, and final state.
+
+**1. Collect migration results:**
+For each rig, gather:
+- Previous backend (sqlite)
+- New backend (dolt)
+- Bead count before/after
+- Any issues encountered during migration
+- Time taken (approximate)
+
+**2. Generate summary:**
+Create a structured report covering:
+
+```
+## Migration Report
+
+### Overview
+- Town: <town name>
+- Date: <timestamp>
+- Result: SUCCESS / PARTIAL / FAILED
+
+### Rigs Migrated
+| Rig | Before | After | Beads (pre) | Beads (post) | Status |
+|-----|--------|-------|-------------|--------------|--------|
+| town-root | sqlite | dolt | N | N | OK |
+| gastown | sqlite | dolt | N | N | OK |
+| beads | sqlite | dolt | N | N | OK |
+
+### Issues Encountered
+- <any issues, or "None">
+
+### Edge Cases Handled
+- JSONL orphans: <count or "none detected">
+- Split-brain cleanup: <details or "not needed">
+- Redirect rigs: <details or "none">
+
+### Post-Migration State
+- Dolt server: running on port 3307
+- All doctors: passing
+- Backup location: /tmp/bd-backup-*
+```
+
+**3. Store the report:**
+```bash
+bd create --title "Migration Report $(date +%Y-%m-%d)" --type task \
+  --notes "<report content>"
+bd close <report-bead-id>
+```
+
+**4. Notify:**
+```bash
+gt mail send mayor/ -s "Migration complete" \
+  -m "<brief summary: N rigs migrated, result status>"
+```
+
+**5. Clean up backups (optional):**
+Only after confirming everything works for a day or more. For now, keep them.
+
+**Exit criteria:** Report filed as bead. Mayor notified. Migration complete."""
