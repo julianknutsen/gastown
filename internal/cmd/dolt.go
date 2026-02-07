@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/daemon"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -382,7 +383,16 @@ func runDoltMigrate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	// Check if server is running - must stop first
+	// Check if daemon is running - must stop first to avoid race conditions.
+	// The daemon spawns many bd processes via gt status heartbeats. If these
+	// run concurrently with migration, race conditions occur between old
+	// SQLite and new Dolt backends.
+	daemonRunning, _, _ := daemon.IsRunning(townRoot)
+	if daemonRunning {
+		return fmt.Errorf("Gas Town daemon is running. Stop it first with: gt daemon stop\n\nThe daemon spawns bd processes that can race with migration.\nStop the daemon, run migration, then restart it.")
+	}
+
+	// Check if Dolt server is running - must stop first
 	running, _, _ := doltserver.IsRunning(townRoot)
 	if running {
 		return fmt.Errorf("Dolt server is running. Stop it first with: gt dolt stop")
