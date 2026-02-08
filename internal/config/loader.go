@@ -1054,6 +1054,62 @@ func lookupAgentConfigIfExists(name string, townSettings *TownSettings, rigSetti
 // townRoot is the path to the town directory (e.g., ~/gt).
 // rigPath is the path to the rig directory (e.g., ~/gt/gastown), or empty for town-level roles.
 func ResolveRoleAgentConfig(role, townRoot, rigPath string) *RuntimeConfig {
+	rc := resolveRoleAgentConfigCore(role, townRoot, rigPath)
+	return withRoleSettingsFlag(rc, role, rigPath)
+}
+
+// withRoleSettingsFlag appends --settings to the Args for Claude agents whose
+// settings directory differs from the session working directory. Claude Code
+// resolves project-level settings from its working directory only; the --settings
+// flag tells it where to find them when they live in a parent directory.
+func withRoleSettingsFlag(rc *RuntimeConfig, role, rigPath string) *RuntimeConfig {
+	if rc == nil || rigPath == "" {
+		return rc
+	}
+
+	provider := rc.Provider
+	if provider == "" {
+		provider = "claude"
+	}
+	if provider != "claude" {
+		return rc
+	}
+
+	settingsDir := roleSettingsDir(role, rigPath)
+	if settingsDir == "" {
+		return rc
+	}
+
+	hooksDir := ".claude"
+	settingsFile := "settings.json"
+	if rc.Hooks != nil {
+		if rc.Hooks.Dir != "" {
+			hooksDir = rc.Hooks.Dir
+		}
+		if rc.Hooks.SettingsFile != "" {
+			settingsFile = rc.Hooks.SettingsFile
+		}
+	}
+
+	rc.Args = append(rc.Args, "--settings", filepath.Join(settingsDir, hooksDir, settingsFile))
+	return rc
+}
+
+// roleSettingsDir returns the shared settings directory for roles whose session
+// working directory differs from their settings location. Returns empty for
+// roles where settings and session directory are the same (mayor, deacon).
+func roleSettingsDir(role, rigPath string) string {
+	switch role {
+	case "crew", "witness", "refinery":
+		return filepath.Join(rigPath, role)
+	case "polecat":
+		return filepath.Join(rigPath, "polecats")
+	default:
+		return ""
+	}
+}
+
+func resolveRoleAgentConfigCore(role, townRoot, rigPath string) *RuntimeConfig {
 	// Load rig settings (may be nil for town-level roles like mayor/deacon)
 	var rigSettings *RigSettings
 	if rigPath != "" {
