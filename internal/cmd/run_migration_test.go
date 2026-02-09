@@ -849,8 +849,8 @@ func TestExecuteMigrationStep_SkipsCompletedCommandsOnRetry(t *testing.T) {
 	// Use platform-appropriate file-creation commands
 	touchCmd := func(path string) string {
 		if runtime.GOOS == "windows" {
-			// Use copy nul which handles Windows paths better than type nul >
-			return fmt.Sprintf(`copy nul "%s"`, path)
+			// Use cmd /c type nul to handle Windows 8.3 short paths on CI runners
+			return fmt.Sprintf(`cmd /c type nul > "%s"`, path)
 		}
 		return fmt.Sprintf("touch %s", path)
 	}
