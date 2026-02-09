@@ -13,12 +13,6 @@ import (
 	"time"
 )
 
-const (
-	// DefaultCommandTimeout is the default timeout for command execution.
-	DefaultCommandTimeout = 30 * time.Second
-	// MaxCommandTimeout is the maximum allowed timeout.
-	MaxCommandTimeout = 60 * time.Second
-)
 
 // CommandRequest is the JSON request body for /api/run.
 type CommandRequest struct {
@@ -49,6 +43,9 @@ type APIHandler struct {
 	gtPath string
 	// workDir is the working directory for command execution.
 	workDir string
+	// Configurable timeouts (from TownSettings.WebTimeouts)
+	defaultRunTimeout time.Duration
+	maxRunTimeout     time.Duration
 	// Options cache
 	optionsCache     *OptionsResponse
 	optionsCacheTime time.Time
@@ -57,14 +54,16 @@ type APIHandler struct {
 
 const optionsCacheTTL = 30 * time.Second
 
-// NewAPIHandler creates a new API handler.
-func NewAPIHandler() *APIHandler {
+// NewAPIHandler creates a new API handler with the given run timeouts.
+func NewAPIHandler(defaultRunTimeout, maxRunTimeout time.Duration) *APIHandler {
 	// Use PATH lookup for gt binary. Do NOT use os.Executable() here - during
 	// tests it returns the test binary, causing fork bombs when executed.
 	workDir, _ := os.Getwd()
 	return &APIHandler{
-		gtPath:  "gt",
-		workDir: workDir,
+		gtPath:            "gt",
+		workDir:           workDir,
+		defaultRunTimeout: defaultRunTimeout,
+		maxRunTimeout:     maxRunTimeout,
 	}
 }
 
@@ -125,11 +124,11 @@ func (h *APIHandler) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine timeout
-	timeout := DefaultCommandTimeout
+	timeout := h.defaultRunTimeout
 	if req.Timeout > 0 {
 		timeout = time.Duration(req.Timeout) * time.Second
-		if timeout > MaxCommandTimeout {
-			timeout = MaxCommandTimeout
+		if timeout > h.maxRunTimeout {
+			timeout = h.maxRunTimeout
 		}
 	}
 

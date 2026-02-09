@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestValidateCommand(t *testing.T) {
@@ -241,7 +242,7 @@ func TestParseCommandArgs(t *testing.T) {
 }
 
 func TestAPIHandler_Commands(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/commands", nil)
 	w := httptest.NewRecorder()
@@ -287,7 +288,7 @@ func TestAPIHandler_Commands(t *testing.T) {
 }
 
 func TestAPIHandler_Run_BlockedCommand(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	body := `{"command": "delete everything"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/run", bytes.NewBufferString(body))
@@ -314,7 +315,7 @@ func TestAPIHandler_Run_BlockedCommand(t *testing.T) {
 }
 
 func TestAPIHandler_Run_InvalidJSON(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	body := `{invalid json}`
 	req := httptest.NewRequest(http.MethodPost, "/api/run", bytes.NewBufferString(body))
@@ -329,7 +330,7 @@ func TestAPIHandler_Run_InvalidJSON(t *testing.T) {
 }
 
 func TestAPIHandler_Run_EmptyCommand(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	body := `{"command": ""}`
 	req := httptest.NewRequest(http.MethodPost, "/api/run", bytes.NewBufferString(body))
@@ -344,7 +345,7 @@ func TestAPIHandler_Run_EmptyCommand(t *testing.T) {
 }
 
 func TestAPIHandler_NotFound(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/unknown", nil)
 	w := httptest.NewRecorder()
@@ -378,7 +379,7 @@ func TestGetCommandList(t *testing.T) {
 }
 
 func TestAPIHandler_Crew(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/crew", nil)
 	w := httptest.NewRecorder()
@@ -404,7 +405,7 @@ func TestAPIHandler_Crew(t *testing.T) {
 }
 
 func TestAPIHandler_Ready(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/ready", nil)
 	w := httptest.NewRecorder()
@@ -430,7 +431,7 @@ func TestAPIHandler_Ready(t *testing.T) {
 }
 
 func TestAPIHandler_IssueCreate_MissingTitle(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	body := `{"title": ""}`
 	req := httptest.NewRequest(http.MethodPost, "/api/issues/create", bytes.NewBufferString(body))
@@ -445,7 +446,7 @@ func TestAPIHandler_IssueCreate_MissingTitle(t *testing.T) {
 }
 
 func TestAPIHandler_IssueCreate_InvalidTitle(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	tests := []struct {
 		name  string
@@ -476,7 +477,7 @@ func TestAPIHandler_IssueCreate_InvalidTitle(t *testing.T) {
 }
 
 func TestAPIHandler_IssueCreate_InvalidDescription(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	payload := map[string]interface{}{
 		"title":       "Valid title",
@@ -495,7 +496,7 @@ func TestAPIHandler_IssueCreate_InvalidDescription(t *testing.T) {
 }
 
 func TestAPIHandler_IssueCreate_InvalidJSON(t *testing.T) {
-	handler := NewAPIHandler()
+	handler := NewAPIHandler(30*time.Second, 60*time.Second)
 
 	body := `{not valid json}`
 	req := httptest.NewRequest(http.MethodPost, "/api/issues/create", bytes.NewBufferString(body))

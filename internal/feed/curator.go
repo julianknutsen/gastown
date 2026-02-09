@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/events"
 )
 
@@ -45,30 +46,32 @@ type Curator struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
+
+	// Configurable deduplication/aggregation settings (from TownSettings.FeedCurator)
+	doneDedupeWindow     time.Duration
+	slingAggregateWindow time.Duration
+	minAggregateCount    int
 }
 
-// Deduplication/aggregation settings
-const (
-	// Dedupe window for repeated done events from same actor
-	doneDedupeWindow = 10 * time.Second
-
-	// Aggregation window for sling events
-	slingAggregateWindow = 30 * time.Second
-
-	// Mail aggregation window
-	mailAggregateWindow = 30 * time.Second
-
-	// Minimum events to trigger aggregation
-	minAggregateCount = 3
-)
-
 // NewCurator creates a new feed curator.
+// Loads FeedCurator config from TownSettings; falls back to defaults if missing.
 func NewCurator(townRoot string) *Curator {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	cfg := config.DefaultFeedCuratorConfig()
+	if townRoot != "" {
+		if ts, err := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot)); err == nil && ts.FeedCurator != nil {
+			cfg = ts.FeedCurator
+		}
+	}
+
 	return &Curator{
-		townRoot: townRoot,
-		ctx:      ctx,
-		cancel:   cancel,
+		townRoot:             townRoot,
+		ctx:                  ctx,
+		cancel:               cancel,
+		doneDedupeWindow:     config.ParseDurationOrDefault(cfg.DoneDedupeWindow, 10*time.Second),
+		slingAggregateWindow: config.ParseDurationOrDefault(cfg.SlingAggregateWindow, 30*time.Second),
+		minAggregateCount:    cfg.MinAggregateCount,
 	}
 }
 
@@ -161,7 +164,7 @@ func (c *Curator) shouldDedupe(event *events.Event) bool {
 	case events.TypeDone:
 		// Dedupe repeated done events from same actor within window
 		// Check if we've already written a done event for this actor to the feed
-		recentFeedEvents := c.readRecentFeedEvents(doneDedupeWindow)
+		recentFeedEvents := c.readRecentFeedEvents(c.doneDedupeWindow)
 		for _, e := range recentFeedEvents {
 			if e.Type == events.TypeDone && e.Actor == event.Actor {
 				return true // Skip duplicate (already in feed)
@@ -291,8 +294,8 @@ func (c *Curator) writeFeedEvent(event *events.Event) {
 
 	// Check for aggregation opportunity (ZFC: derive from events file)
 	if event.Type == events.TypeSling {
-		slingCount := c.countRecentSlings(event.Actor, slingAggregateWindow)
-		if slingCount >= minAggregateCount {
+		slingCount := c.countRecentSlings(event.Actor, c.slingAggregateWindow)
+		if slingCount >= c.minAggregateCount {
 			feedEvent.Count = slingCount
 			feedEvent.Summary = fmt.Sprintf("%s dispatching work to %d agents", event.Actor, slingCount)
 		}

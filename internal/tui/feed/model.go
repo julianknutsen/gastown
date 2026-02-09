@@ -20,6 +20,13 @@ const (
 	PanelFeed
 )
 
+// Layout constants for panel height distribution and event history.
+const (
+	treePanelPercent   = 30
+	convoyPanelPercent = 25
+	maxEventHistory    = 1000
+)
+
 // Event represents an activity event
 type Event struct {
 	Time     time.Time
@@ -288,9 +295,9 @@ func (m *Model) updateViewportSizes() {
 		availableHeight = 6
 	}
 
-	// Split: 30% tree, 25% convoy, 45% feed
-	treeHeight := availableHeight * 30 / 100
-	convoyHeight := availableHeight * 25 / 100
+	// Split: tree/convoy/feed by configured percentages
+	treeHeight := availableHeight * treePanelPercent / 100
+	convoyHeight := availableHeight * convoyPanelPercent / 100
 	feedHeight := availableHeight - treeHeight - convoyHeight
 
 	// Ensure minimum heights
@@ -388,9 +395,9 @@ func (m *Model) addEvent(e Event) {
 	// Add to event feed
 	m.events = append(m.events, e)
 
-	// Keep max 1000 events
-	if len(m.events) > 1000 {
-		m.events = m.events[len(m.events)-1000:]
+	// Keep max events within history limit
+	if len(m.events) > maxEventHistory {
+		m.events = m.events[len(m.events)-maxEventHistory:]
 	}
 
 	m.updateViewContent()
