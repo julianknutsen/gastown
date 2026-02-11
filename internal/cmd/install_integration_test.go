@@ -101,7 +101,9 @@ func TestInstallBeadsHasCorrectPrefix(t *testing.T) {
 	beadsDir := filepath.Join(hqPath, ".beads")
 	assertDirExists(t, beadsDir, ".beads/")
 
-	// Verify beads database was initialized (dolt directory exists)
+	// Verify beads database was initialized (both metadata.json and dolt/ exist with dolt backend)
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	assertFileExists(t, metadataPath, ".beads/metadata.json")
 	doltDir := filepath.Join(beadsDir, "dolt")
 	assertDirExists(t, doltDir, ".beads/dolt/")
 

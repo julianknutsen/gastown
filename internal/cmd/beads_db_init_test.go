@@ -242,10 +242,11 @@ func TestBeadsDbInitAfterClone(t *testing.T) {
 	t.Run("TrackedRepoWithPrefixMismatchErrors", func(t *testing.T) {
 		// Test that when --prefix is explicitly provided but doesn't match
 		// the prefix detected from config.yaml, gt rig add fails with an error.
-		// TODO: gt rig add --adopt doesn't detect prefix mismatch with dolt backend.
+		// Skip: gt rig add --adopt doesn't detect prefix mismatch with dolt backend.
 		// With dolt, metadata.json and dolt/ survive clone, but adopt ignores the
 		// existing prefix in the database. Fix in rig.go adopt logic.
-		t.Skip("gt rig add --adopt prefix mismatch detection not yet implemented for dolt backend")
+		// Tracked: https://github.com/steveyegge/gastown/issues/1306
+		t.Skip("gt rig add --adopt prefix mismatch detection not yet implemented for dolt backend (#1306)")
 
 		townRoot := filepath.Join(tmpDir, "town-mismatch")
 
@@ -408,18 +409,38 @@ func createTrackedBeadsRepoWithNoIssues(t *testing.T, path, prefix string) {
 }
 
 // removeDBFiles removes gitignored database files from a beads directory to simulate a clone.
-// Only removes files that are listed in .beads/.gitignore and would NOT be present after clone.
-// With the Dolt backend, metadata.json and dolt/ are tracked by git and survive clones.
+// Only removes files that match patterns in .beads/.gitignore. Files NOT in .gitignore
+// (metadata.json, dolt/, config.yaml, issues.jsonl, etc.) are tracked by git and survive clones.
+//
+// Anchored to .beads/.gitignore patterns as of 2026-02: *.db, *.db-*, daemon.*, bd.sock,
+// sync-state.json, redirect, db.sqlite, bd.db, export-state/, etc.
+// metadata.json and dolt/ are NOT gitignored — they are tracked and present after clone.
 func removeDBFiles(t *testing.T, beadsDir string) {
 	t.Helper()
-	// Remove any legacy SQLite database files (gitignored)
-	patterns := []string{"*.db", "*.db-wal", "*.db-shm", "*.db-journal"}
+
+	// Remove gitignored SQLite and legacy database files
+	patterns := []string{"*.db", "*.db-wal", "*.db-shm", "*.db-journal", "db.sqlite", "bd.db"}
 	for _, pattern := range patterns {
 		matches, _ := filepath.Glob(filepath.Join(beadsDir, pattern))
 		for _, m := range matches {
 			os.Remove(m)
 		}
 	}
-	// NOTE: metadata.json and dolt/ are tracked by git (not gitignored),
-	// so they ARE present after a real clone. Do not remove them.
+	// Remove gitignored runtime state files
+	for _, name := range []string{"sync-state.json", "redirect", ".local_version"} {
+		os.Remove(filepath.Join(beadsDir, name))
+	}
+	os.RemoveAll(filepath.Join(beadsDir, "export-state"))
+
+	// Verify our assumptions: metadata.json and dolt/ must NOT be removed.
+	// If .beads/.gitignore ever starts ignoring these, this assertion catches drift.
+	gitignorePath := filepath.Join(beadsDir, ".gitignore")
+	if content, err := os.ReadFile(gitignorePath); err == nil {
+		for _, tracked := range []string{"metadata.json", "dolt"} {
+			if strings.Contains(string(content), tracked) {
+				t.Fatalf("clone simulation assumption violated: %s found in .beads/.gitignore — "+
+					"removeDBFiles must be updated if tracked file set changes", tracked)
+			}
+		}
+	}
 }
