@@ -129,7 +129,7 @@ func TestRoutesJSONLCorruption(t *testing.T) {
 		os.MkdirAll(beadsDir, 0755)
 
 		// Initialize beads
-		cmd := exec.Command("bd", "init", "--prefix", "test", "--quiet")
+		cmd := exec.Command("bd", "init", "--prefix", "test", "--quiet", "--backend", "dolt")
 		cmd.Dir = tmpDir
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("bd init failed: %v\nOutput: %s", err, output)
