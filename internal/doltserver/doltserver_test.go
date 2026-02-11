@@ -263,6 +263,23 @@ func TestFindLocalDoltDB(t *testing.T) {
 			t.Errorf("got %q, want %q", result, expected)
 		}
 	})
+
+	t.Run("multiple databases returns first alphabetically with warning", func(t *testing.T) {
+		beadsDir := t.TempDir()
+		doltParent := filepath.Join(beadsDir, "dolt")
+		// Create two valid dolt databases
+		for _, name := range []string{"beads_gt", "beads_old"} {
+			if err := os.MkdirAll(filepath.Join(doltParent, name, ".dolt"), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		result := findLocalDoltDB(beadsDir)
+		// Should return the first alphabetically (beads_gt < beads_old)
+		expected := filepath.Join(doltParent, "beads_gt")
+		if result != expected {
+			t.Errorf("got %q, want %q", result, expected)
+		}
+	})
 }
 
 func TestEnsureMetadata_HQ(t *testing.T) {

@@ -639,22 +639,49 @@ type Migration struct {
 // bd names the subdirectory based on internal conventions (e.g., beads_hq,
 // beads_gt) that have changed across versions. Scanning avoids hardcoding
 // assumptions about the naming scheme.
+//
+// If multiple databases are found, returns an error-like empty string and logs
+// a warning — the caller should not silently pick one.
 func findLocalDoltDB(beadsDir string) string {
 	doltParent := filepath.Join(beadsDir, "dolt")
 	entries, err := os.ReadDir(doltParent)
 	if err != nil {
 		return ""
 	}
+	var candidates []string
 	for _, e := range entries {
-		if !e.IsDir() {
+		// Resolve symlinks: DirEntry.IsDir() returns false for symlinks-to-directories
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			resolved, err := filepath.EvalSymlinks(filepath.Join(doltParent, e.Name()))
+			if err != nil {
+				continue
+			}
+			fi, err := os.Stat(resolved)
+			if err != nil || !fi.IsDir() {
+				continue
+			}
+		} else if !e.IsDir() {
 			continue
 		}
 		candidate := filepath.Join(doltParent, e.Name())
 		if _, err := os.Stat(filepath.Join(candidate, ".dolt")); err == nil {
-			return candidate
+			candidates = append(candidates, candidate)
 		}
 	}
-	return ""
+	if len(candidates) == 0 {
+		if len(entries) > 0 {
+			fmt.Fprintf(os.Stderr, "Warning: %s exists but contains no valid dolt database\n", doltParent)
+		}
+		return ""
+	}
+	if len(candidates) > 1 {
+		fmt.Fprintf(os.Stderr, "Warning: multiple dolt databases found in %s: %v — using %s\n", doltParent, candidates, candidates[0])
+	}
+	return candidates[0]
 }
 
 // FindMigratableDatabases finds existing dolt databases that can be migrated.
