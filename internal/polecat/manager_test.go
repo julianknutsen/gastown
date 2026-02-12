@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 )
@@ -708,6 +709,12 @@ func TestAddWithOptions_NoPrimeMDCreatedLocally(t *testing.T) {
 		t.Fatalf("write rig redirect: %v", err)
 	}
 
+	// Initialize beads database so agent bead creation works
+	bd := beads.NewWithBeadsDir(mayorRig, mayorBeads)
+	if err := bd.Init("gt"); err != nil {
+		t.Fatalf("bd init: %v", err)
+	}
+
 	// Initialize git repo in mayor/rig WITHOUT any .beads/PRIME.md
 	cmd := exec.Command("git", "init")
 	cmd.Dir = mayorRig
@@ -805,6 +812,12 @@ func TestAddWithOptions_NoFilesAddedToRepo(t *testing.T) {
 	rigRedirect := filepath.Join(rigBeads, "redirect")
 	if err := os.WriteFile(rigRedirect, []byte("mayor/rig/.beads\n"), 0644); err != nil {
 		t.Fatalf("write rig redirect: %v", err)
+	}
+
+	// Initialize beads database so agent bead creation works
+	bd := beads.NewWithBeadsDir(mayorRig, mayorBeads)
+	if err := bd.Init("gt"); err != nil {
+		t.Fatalf("bd init: %v", err)
 	}
 
 	// Initialize a CLEAN git repo with known files only
@@ -936,6 +949,12 @@ func TestAddWithOptions_SettingsInstalledInWorktree(t *testing.T) {
 	rigRedirect := filepath.Join(rigBeads, "redirect")
 	if err := os.WriteFile(rigRedirect, []byte("mayor/rig/.beads\n"), 0644); err != nil {
 		t.Fatalf("write rig redirect: %v", err)
+	}
+
+	// Initialize beads database so agent bead creation works
+	bd := beads.NewWithBeadsDir(mayorRig, mayorBeads)
+	if err := bd.Init("gt"); err != nil {
+		t.Fatalf("bd init: %v", err)
 	}
 
 	// Initialize a git repo
