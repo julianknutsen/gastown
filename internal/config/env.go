@@ -114,6 +114,12 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 		env["GT_SESSION_ID_ENV"] = cfg.SessionIDEnv
 	}
 
+	// Clear NODE_OPTIONS to prevent debugger flags (e.g., --inspect from VSCode)
+	// from being inherited through tmux into Claude's Node.js runtime.
+	// Setting it here (the single source of truth for agent env) ensures all
+	// paths are protected: tmux SetEnvironment, EnvForExecCommand, PrependEnv.
+	env["NODE_OPTIONS"] = ""
+
 	return env
 }
 

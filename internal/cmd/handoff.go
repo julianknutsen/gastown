@@ -451,9 +451,11 @@ func buildRestartCommand(sessionName string) (string, error) {
 
 	// Build environment exports - role vars first, then Claude vars
 	var exports []string
+	var agentEnv map[string]string // agent config Env (rc.toml [agents.X.env])
 	if gtRole != "" {
 		simpleRole := config.ExtractSimpleRole(gtRole)
 		runtimeConfig := config.ResolveRoleAgentConfig(simpleRole, townRoot, "")
+		agentEnv = runtimeConfig.Env
 		exports = append(exports, "GT_ROLE="+gtRole)
 		exports = append(exports, "BD_ACTOR="+gtRole)
 		exports = append(exports, "GIT_AUTHOR_NAME="+gtRole)
@@ -481,7 +483,11 @@ func buildRestartCommand(sessionName string) (string, error) {
 
 	// Clear NODE_OPTIONS to prevent debugger flags (e.g., --inspect from VSCode)
 	// from being inherited through tmux into Claude's Node.js runtime.
-	exports = append(exports, "NODE_OPTIONS=")
+	// Only clear if the agent's runtime config doesn't explicitly set it
+	// (e.g., for memory tuning via --max-old-space-size in rc.toml [agents.X.env]).
+	if _, hasNodeOpts := agentEnv["NODE_OPTIONS"]; !hasNodeOpts {
+		exports = append(exports, "NODE_OPTIONS=")
+	}
 
 	if len(exports) > 0 {
 		return fmt.Sprintf("cd %s && export %s && exec %s", workDir, strings.Join(exports, " "), runtimeCmd), nil
