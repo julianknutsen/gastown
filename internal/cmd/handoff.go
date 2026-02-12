@@ -454,7 +454,20 @@ func buildRestartCommand(sessionName string) (string, error) {
 	var agentEnv map[string]string // agent config Env (rc.toml [agents.X.env])
 	if gtRole != "" {
 		simpleRole := config.ExtractSimpleRole(gtRole)
-		runtimeConfig := config.ResolveRoleAgentConfig(simpleRole, townRoot, "")
+		// When GT_AGENT is set, resolve config with the override so we pick up
+		// the active agent's env (e.g., NODE_OPTIONS from [agents.X.env]).
+		// Otherwise, fall back to role-based resolution.
+		var runtimeConfig *config.RuntimeConfig
+		if currentAgent != "" {
+			rc, _, err := config.ResolveAgentConfigWithOverride(townRoot, "", currentAgent)
+			if err == nil {
+				runtimeConfig = rc
+			} else {
+				runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, "")
+			}
+		} else {
+			runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, "")
+		}
 		agentEnv = runtimeConfig.Env
 		exports = append(exports, "GT_ROLE="+gtRole)
 		exports = append(exports, "BD_ACTOR="+gtRole)
