@@ -1268,7 +1268,7 @@ func fillRuntimeDefaults(rc *RuntimeConfig) *RuntimeConfig {
 			result.Hooks = &RuntimeHooksConfig{
 				Provider:     "claude",
 				Dir:          ".claude",
-				SettingsFile: "settings.json",
+				SettingsFile: defaultHooksFile("claude"),
 			}
 		case "opencode":
 			result.Hooks = &RuntimeHooksConfig{

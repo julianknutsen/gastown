@@ -166,7 +166,7 @@ func TestDiscoverHooksCrewLevel(t *testing.T) {
 		},
 	}
 	crewData, _ := hooks.MarshalSettings(&crewSettings)
-	if err := os.WriteFile(filepath.Join(crewClaudeDir, "settings.json"), crewData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(crewClaudeDir, "settings.local.json"), crewData, 0644); err != nil {
 		t.Fatalf("failed to write crew settings: %v", err)
 	}
 
@@ -189,7 +189,7 @@ func TestDiscoverHooksCrewLevel(t *testing.T) {
 		},
 	}
 	polecatsData, _ := hooks.MarshalSettings(&polecatsSettings)
-	if err := os.WriteFile(filepath.Join(polecatsClaudeDir, "settings.json"), polecatsData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(polecatsClaudeDir, "settings.local.json"), polecatsData, 0644); err != nil {
 		t.Fatalf("failed to write polecats settings: %v", err)
 	}
 

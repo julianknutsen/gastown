@@ -16,7 +16,6 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/runtime"
 )
 
 // Common errors
@@ -547,36 +546,17 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	if err := os.MkdirAll(witnessPath, 0755); err != nil {
 		return nil, fmt.Errorf("creating witness dir: %w", err)
 	}
-	// Create witness hooks for patrol triggering
-	runtimeConfig := config.ResolveRoleAgentConfig("witness", m.townRoot, rigPath)
-	if err := m.createPatrolHooks(witnessPath, runtimeConfig); err != nil {
-		fmt.Printf("  Warning: Could not create witness hooks: %v\n", err)
-	}
+	// NOTE: Witness hooks are installed by witness/manager.go:Start() via EnsureSettingsForRole.
+	// No need to create patrol hooks here — agents self-install at startup.
+
 	// Create polecats directory (empty)
 	polecatsPath := filepath.Join(rigPath, "polecats")
 	if err := os.MkdirAll(polecatsPath, 0755); err != nil {
 		return nil, fmt.Errorf("creating polecats dir: %w", err)
 	}
-	// Install runtime settings for all agent directories.
-	// Settings are placed in parent directories (not inside git repos) so Claude
-	// finds them via directory traversal without polluting source repos.
-	fmt.Printf("  Installing runtime settings...\n")
-	settingsRoles := []struct {
-		dir  string
-		role string
-	}{
-		{witnessPath, "witness"},
-		{filepath.Join(rigPath, "refinery"), "refinery"},
-		{crewPath, "crew"},
-		{polecatsPath, "polecat"},
-	}
-	for _, sr := range settingsRoles {
-		runtimeConfig := config.ResolveRoleAgentConfig(sr.role, m.townRoot, rigPath)
-		if err := runtime.EnsureSettingsForRole(sr.dir, sr.role, runtimeConfig); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: Could not create %s settings: %v\n", sr.role, err)
-		}
-	}
-	fmt.Printf("   ✓ Installed runtime settings\n")
+	// NOTE: Runtime settings are installed by each agent in their working directory at startup
+	// via EnsureSettingsForRole. Claude Code does NOT traverse parent directories for settings,
+	// so installing them here (at witness/, refinery/, crew/, polecats/) would create dead files.
 
 	// Create rig-level agent beads (witness, refinery) in rig beads.
 	// Town-level agents (mayor, deacon) are created by gt install in town beads.
@@ -1151,65 +1131,6 @@ func (m *Manager) ListRigNames() []string {
 		names = append(names, name)
 	}
 	return names
-}
-
-// createPatrolHooks creates .claude/settings.json with hooks for patrol roles.
-// These hooks trigger gt prime on session start and inject mail, enabling
-// autonomous patrol execution for Witness and Refinery roles.
-func (m *Manager) createPatrolHooks(workspacePath string, runtimeConfig *config.RuntimeConfig) error {
-	if runtimeConfig == nil || runtimeConfig.Hooks == nil || runtimeConfig.Hooks.Provider != "claude" {
-		return nil
-	}
-	if runtimeConfig.Hooks.Dir == "" || runtimeConfig.Hooks.SettingsFile == "" {
-		return nil
-	}
-
-	settingsDir := filepath.Join(workspacePath, runtimeConfig.Hooks.Dir)
-	if err := os.MkdirAll(settingsDir, 0755); err != nil {
-		return fmt.Errorf("creating settings dir: %w", err)
-	}
-
-	// Standard patrol hooks - same as deacon
-	hooksJSON := `{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "gt prime && gt mail check --inject"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "gt prime"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "gt mail check --inject"
-          }
-        ]
-      }
-    ]
-  }
-}
-`
-	settingsPath := filepath.Join(settingsDir, runtimeConfig.Hooks.SettingsFile)
-	return os.WriteFile(settingsPath, []byte(hooksJSON), 0600)
 }
 
 // seedPatrolMolecules creates patrol molecule prototypes in the rig's beads database.

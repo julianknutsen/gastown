@@ -1,7 +1,7 @@
 // Package hooks provides centralized Claude Code hook management for Gas Town.
 //
 // It manages a base hook configuration and per-role/per-rig overrides,
-// generating .claude/settings.json files for all agents in the workspace.
+// generating .claude/settings.local.json files for all agents in the workspace.
 package hooks
 
 import (
@@ -24,7 +24,7 @@ type Hook struct {
 	Command string `json:"command"`
 }
 
-// HooksConfig represents the hooks section of a Claude Code settings.json.
+// HooksConfig represents the hooks section of a Claude Code settings.local.json.
 type HooksConfig struct {
 	PreToolUse       []HookEntry `json:"PreToolUse,omitempty"`
 	PostToolUse      []HookEntry `json:"PostToolUse,omitempty"`
@@ -34,7 +34,7 @@ type HooksConfig struct {
 	UserPromptSubmit []HookEntry `json:"UserPromptSubmit,omitempty"`
 }
 
-// SettingsJSON represents the full Claude Code settings.json structure.
+// SettingsJSON represents the full Claude Code settings.local.json structure.
 // Unknown fields are preserved during sync via the Extra map.
 type SettingsJSON struct {
 	EditorMode     string          `json:"-"`
@@ -44,7 +44,7 @@ type SettingsJSON struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// UnmarshalSettings parses a settings.json file, preserving all fields.
+// UnmarshalSettings parses a settings.local.json file, preserving all fields.
 func UnmarshalSettings(data []byte) (*SettingsJSON, error) {
 	s := &SettingsJSON{
 		Extra: make(map[string]json.RawMessage),
@@ -101,7 +101,7 @@ func MarshalSettings(s *SettingsJSON) ([]byte, error) {
 	return json.MarshalIndent(s.Extra, "", "  ")
 }
 
-// LoadSettings reads and parses a settings.json file, preserving unknown fields.
+// LoadSettings reads and parses a settings.local.json file, preserving unknown fields.
 // Returns a zero-value SettingsJSON if the file doesn't exist.
 func LoadSettings(path string) (*SettingsJSON, error) {
 	data, err := os.ReadFile(path)
@@ -128,9 +128,9 @@ func HooksEqual(a, b *HooksConfig) bool {
 	return string(aj) == string(bj)
 }
 
-// Target represents a managed settings.json location.
+// Target represents a managed settings.local.json location.
 type Target struct {
-	Path string // Full path to .claude/settings.json
+	Path string // Full path to .claude/settings.local.json
 	Key  string // Override key: "gastown/crew", "mayor", etc.
 	Rig  string // Rig name or empty for town-level
 	Role string // crew, witness, refinery, polecats, mayor, deacon
@@ -188,19 +188,19 @@ func ComputeExpected(target string) (*HooksConfig, error) {
 	return result, nil
 }
 
-// DiscoverTargets finds all managed .claude/settings.json locations in the workspace.
+// DiscoverTargets finds all managed .claude/settings.local.json locations in the workspace.
 // Returns Target structs with path, override key, rig, and role information.
 func DiscoverTargets(townRoot string) ([]Target, error) {
 	var targets []Target
 
 	// Town-level targets
 	targets = append(targets, Target{
-		Path: filepath.Join(townRoot, "mayor", ".claude", "settings.json"),
+		Path: filepath.Join(townRoot, "mayor", ".claude", "settings.local.json"),
 		Key:  "mayor",
 		Role: "mayor",
 	})
 	targets = append(targets, Target{
-		Path: filepath.Join(townRoot, "deacon", ".claude", "settings.json"),
+		Path: filepath.Join(townRoot, "deacon", ".claude", "settings.local.json"),
 		Key:  "deacon",
 		Role: "deacon",
 	})
@@ -227,7 +227,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 
 		// Rig-level
 		targets = append(targets, Target{
-			Path: filepath.Join(rigPath, ".claude", "settings.json"),
+			Path: filepath.Join(rigPath, ".claude", "settings.local.json"),
 			Key:  rigName + "/rig",
 			Rig:  rigName,
 			Role: "rig",
@@ -237,7 +237,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 		crewDir := filepath.Join(rigPath, "crew")
 		if info, err := os.Stat(crewDir); err == nil && info.IsDir() {
 			targets = append(targets, Target{
-				Path: filepath.Join(crewDir, ".claude", "settings.json"),
+				Path: filepath.Join(crewDir, ".claude", "settings.local.json"),
 				Key:  rigName + "/crew",
 				Rig:  rigName,
 				Role: "crew",
@@ -248,7 +248,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 				for _, m := range members {
 					if m.IsDir() && !strings.HasPrefix(m.Name(), ".") {
 						targets = append(targets, Target{
-							Path: filepath.Join(crewDir, m.Name(), ".claude", "settings.json"),
+							Path: filepath.Join(crewDir, m.Name(), ".claude", "settings.local.json"),
 							Key:  rigName + "/crew",
 							Rig:  rigName,
 							Role: "crew",
@@ -262,7 +262,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 		polecatsDir := filepath.Join(rigPath, "polecats")
 		if info, err := os.Stat(polecatsDir); err == nil && info.IsDir() {
 			targets = append(targets, Target{
-				Path: filepath.Join(polecatsDir, ".claude", "settings.json"),
+				Path: filepath.Join(polecatsDir, ".claude", "settings.local.json"),
 				Key:  rigName + "/polecats",
 				Rig:  rigName,
 				Role: "polecats",
@@ -273,7 +273,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 				for _, p := range polecats {
 					if p.IsDir() && !strings.HasPrefix(p.Name(), ".") {
 						targets = append(targets, Target{
-							Path: filepath.Join(polecatsDir, p.Name(), ".claude", "settings.json"),
+							Path: filepath.Join(polecatsDir, p.Name(), ".claude", "settings.local.json"),
 							Key:  rigName + "/polecats",
 							Rig:  rigName,
 							Role: "polecats",
@@ -287,7 +287,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 		witnessDir := filepath.Join(rigPath, "witness")
 		if info, err := os.Stat(witnessDir); err == nil && info.IsDir() {
 			targets = append(targets, Target{
-				Path: filepath.Join(witnessDir, ".claude", "settings.json"),
+				Path: filepath.Join(witnessDir, ".claude", "settings.local.json"),
 				Key:  rigName + "/witness",
 				Rig:  rigName,
 				Role: "witness",
@@ -298,7 +298,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 		refineryDir := filepath.Join(rigPath, "refinery")
 		if info, err := os.Stat(refineryDir); err == nil && info.IsDir() {
 			targets = append(targets, Target{
-				Path: filepath.Join(refineryDir, ".claude", "settings.json"),
+				Path: filepath.Join(refineryDir, ".claude", "settings.local.json"),
 				Key:  rigName + "/refinery",
 				Rig:  rigName,
 				Role: "refinery",

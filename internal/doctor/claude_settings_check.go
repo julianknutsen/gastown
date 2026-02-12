@@ -617,6 +617,11 @@ func (c *ClaudeSettingsCheck) Fix(ctx *CheckContext) error {
 			continue
 		}
 
+		// Skip missing file entries — these are informational only (file doesn't exist yet)
+		if sf.missingFile {
+			continue
+		}
+
 		// Skip files with local modifications - require manual review
 		if sf.gitStatus == gitStatusTrackedModified {
 			skipped = append(skipped, fmt.Sprintf("%s: has local modifications, skipping", sf.path))

@@ -652,7 +652,7 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 	// Install runtime settings INSIDE the worktree so Claude Code can find hooks.
 	// Claude Code does NOT traverse parent directories for settings.json, only for CLAUDE.md.
 	// See: https://github.com/anthropics/claude-code/issues/12962
-	townRoot, _ := workspace.FindFromCwd()
+	townRoot := filepath.Dir(m.rig.Path)
 	runtimeConfig := config.ResolveRoleAgentConfig("polecat", townRoot, m.rig.Path)
 	if err := runtime.EnsureSettingsForRole(clonePath, "polecat", runtimeConfig); err != nil {
 		// Non-fatal - log warning but continue

@@ -410,23 +410,26 @@ func TestRigAddCreatesCorrectStructure(t *testing.T) {
 	}
 
 	// NOTE: Claude settings are no longer installed by gt rig add.
-	// Claude Code does NOT traverse parent directories for settings.json, only for CLAUDE.md.
+	// Claude Code does NOT traverse parent directories for settings, only for CLAUDE.md.
 	// Settings are installed by each agent in their working directory at startup time.
-	// Upstream installs settings.local.json at parent directories via EnsureSettingsForRole.
-	// Verify the old settings.json filename is NOT used (replaced by settings.local.json).
-	staleParentSettings := []struct {
+	// Verify NO settings exist at parent directories (neither settings.json nor settings.local.json).
+	parentSettingsThatShouldNotExist := []struct {
 		path string
 		desc string
 	}{
 		{filepath.Join(rigPath, "witness", ".claude", "settings.json"), "witness/.claude/settings.json"},
+		{filepath.Join(rigPath, "witness", ".claude", "settings.local.json"), "witness/.claude/settings.local.json"},
 		{filepath.Join(rigPath, "refinery", ".claude", "settings.json"), "refinery/.claude/settings.json"},
+		{filepath.Join(rigPath, "refinery", ".claude", "settings.local.json"), "refinery/.claude/settings.local.json"},
 		{filepath.Join(rigPath, "crew", ".claude", "settings.json"), "crew/.claude/settings.json"},
+		{filepath.Join(rigPath, "crew", ".claude", "settings.local.json"), "crew/.claude/settings.local.json"},
 		{filepath.Join(rigPath, "polecats", ".claude", "settings.json"), "polecats/.claude/settings.json"},
+		{filepath.Join(rigPath, "polecats", ".claude", "settings.local.json"), "polecats/.claude/settings.local.json"},
 	}
 
-	for _, s := range staleParentSettings {
+	for _, s := range parentSettingsThatShouldNotExist {
 		if _, err := os.Stat(s.path); err == nil {
-			t.Errorf("%s should NOT exist (use settings.local.json instead)", s.desc)
+			t.Errorf("%s should NOT exist (Claude Code doesn't traverse parent dirs for settings)", s.desc)
 		}
 	}
 
