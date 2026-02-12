@@ -324,6 +324,8 @@ func parseRoleString(s string) (Role, string, string) {
 		return RoleMayor, "", ""
 	case "deacon":
 		return RoleDeacon, "", ""
+	case "boot":
+		return RoleBoot, "", ""
 	}
 
 	// Compound roles: rig/role or rig/polecats/name or rig/crew/name
@@ -336,6 +338,9 @@ func parseRoleString(s string) (Role, string, string) {
 	rig := parts[0]
 
 	switch parts[1] {
+	case "boot":
+		// Handle compound "deacon/boot" format from GT_ROLE env var
+		return RoleBoot, "", ""
 	case "witness":
 		return RoleWitness, rig, ""
 	case "refinery":
