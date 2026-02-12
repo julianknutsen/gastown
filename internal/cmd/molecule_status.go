@@ -984,7 +984,8 @@ func outputMoleculeCurrent(info MoleculeCurrentInfo) error {
 // Accepts both "mayor" and "mayor/" formats for compatibility.
 func isTownLevelRole(agentID string) bool {
 	return agentID == "mayor" || agentID == "mayor/" ||
-		agentID == "deacon" || agentID == "deacon/"
+		agentID == "deacon" || agentID == "deacon/" ||
+		agentID == "boot" || agentID == "deacon/boot"
 }
 
 // extractMailSender extracts the sender from mail bead labels.

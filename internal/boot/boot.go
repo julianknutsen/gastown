@@ -183,7 +183,7 @@ func (b *Boot) spawnTmux(agentOverride string) error {
 	// Resolve runtime config and ensure settings exist for Boot's agent.
 	// This creates .claude/settings.local.json so the SessionStart hook fires,
 	// which runs gt prime to inject Boot's role context.
-	runtimeConfig := config.ResolveRoleAgentConfig("boot", b.townRoot, b.bootDir)
+	runtimeConfig := config.ResolveRoleAgentConfig("boot", b.townRoot, "")
 	if err := runtime.EnsureSettingsForRole(b.bootDir, "boot", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
