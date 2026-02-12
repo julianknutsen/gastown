@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
 )
@@ -79,6 +78,23 @@ func (c *PrimingCheck) Run(ctx *CheckContext) *CheckResult {
 		details = append(details, fmt.Sprintf("%s: %s", issue.location, issue.description))
 	}
 	c.issues = append(c.issues, mayorIssues...)
+
+	// Check 2.5: Detect stale mayor/CLAUDE.md and mayor/AGENTS.md
+	// Mayor no longer gets per-directory bootstrap files — only the town-root identity anchor.
+	mayorDir := filepath.Join(ctx.TownRoot, "mayor")
+	for _, filename := range []string{"CLAUDE.md", "AGENTS.md"} {
+		filePath := filepath.Join(mayorDir, filename)
+		if fileExists(filePath) {
+			issue := primingIssue{
+				location:    "mayor",
+				issueType:   "stale_intermediate_instructions_md",
+				description: fmt.Sprintf("Stale %s at intermediate directory (no longer needed)", filename),
+				fixable:     true,
+			}
+			c.issues = append(c.issues, issue)
+			details = append(details, fmt.Sprintf("%s: %s", issue.location, issue.description))
+		}
+	}
 
 	// Check 3: Deacon priming
 	deaconPath := filepath.Join(ctx.TownRoot, "deacon")
@@ -166,20 +182,6 @@ func (c *PrimingCheck) checkAgentPriming(townRoot, agentDir, _ string) []priming
 		}
 	}
 
-	// Check AGENTS.md is minimal (bootstrap pointer, not full context)
-	agentsMdPath := filepath.Join(agentPath, "AGENTS.md")
-	if fileExists(agentsMdPath) {
-		lines := c.countLines(agentsMdPath)
-		if lines > 20 {
-			issues = append(issues, primingIssue{
-				location:    agentDir,
-				issueType:   "large_agents_md",
-				description: fmt.Sprintf("AGENTS.md has %d lines (should be <20 for bootstrap pointer)", lines),
-				fixable:     false, // Full context should come from gt prime templates
-			})
-		}
-	}
-
 	return issues
 }
 
@@ -222,20 +224,6 @@ func (c *PrimingCheck) checkRigPriming(townRoot string) []primingIssue {
 			})
 		}
 
-		// Check AGENTS.md is minimal at rig level (bootstrap pointer, not full context)
-		agentsMdPath := filepath.Join(rigPath, "AGENTS.md")
-		if fileExists(agentsMdPath) {
-			lines := c.countLines(agentsMdPath)
-			if lines > 20 {
-				issues = append(issues, primingIssue{
-					location:    rigName,
-					issueType:   "large_agents_md",
-					description: fmt.Sprintf("AGENTS.md has %d lines (should be <20 for bootstrap pointer)", lines),
-					fixable:     false, // Requires manual review
-				})
-			}
-		}
-
 		// Check for unexpected CLAUDE.md inside mayor/rig (pollutes user's repo)
 		// Agent-level CLAUDE.md belongs at mayor/, not mayor/rig/
 		mayorRigClaudeMd := filepath.Join(rigPath, "mayor", "rig", "CLAUDE.md")
@@ -260,14 +248,22 @@ func (c *PrimingCheck) checkRigPriming(townRoot string) []primingIssue {
 			})
 		}
 
-		// Check for missing CLAUDE.md/AGENTS.md at agent level directories.
-		// These are bootstrap pointers that tell agents to run `gt prime` for full context.
-		// Per-rig mayor is just a source clone - town-level mayor gets files from gt install.
+		// Detect stale CLAUDE.md/AGENTS.md at intermediate directories.
+		// These are no longer created — only ~/gt/CLAUDE.md (town root) exists.
+		// Full context is injected by `gt prime` via SessionStart hook.
 		for _, role := range []string{"refinery", "witness", "crew", "polecats"} {
 			agentPath := filepath.Join(rigPath, role)
 			if dirExists(agentPath) {
-				if issue := c.checkAgentBootstrapFiles(agentPath, rigName, role); issue != nil {
-					issues = append(issues, *issue)
+				for _, filename := range []string{"CLAUDE.md", "AGENTS.md"} {
+					filePath := filepath.Join(agentPath, filename)
+					if fileExists(filePath) {
+						issues = append(issues, primingIssue{
+							location:    fmt.Sprintf("%s/%s", rigName, role),
+							issueType:   "stale_intermediate_instructions_md",
+							description: fmt.Sprintf("Stale %s at intermediate directory (no longer needed)", filename),
+							fixable:     true,
+						})
+					}
 				}
 			}
 		}
@@ -415,22 +411,6 @@ func (c *PrimingCheck) hasGtPrimeHook(settings map[string]any) bool {
 	return false
 }
 
-// checkAgentBootstrapFiles checks if CLAUDE.md and AGENTS.md exist at agent level.
-// Returns an issue if either file is missing.
-func (c *PrimingCheck) checkAgentBootstrapFiles(agentPath, rigName, role string) *primingIssue {
-	missingClaudeMd := !fileExists(filepath.Join(agentPath, "CLAUDE.md"))
-	missingAgentsMd := !fileExists(filepath.Join(agentPath, "AGENTS.md"))
-	if missingClaudeMd || missingAgentsMd {
-		return &primingIssue{
-			location:    fmt.Sprintf("%s/%s", rigName, role),
-			issueType:   "missing_agent_bootstrap",
-			description: "Missing bootstrap files (CLAUDE.md/AGENTS.md) at agent level",
-			fixable:     true,
-		}
-	}
-	return nil
-}
-
 // countLines counts the number of lines in a file.
 func (c *PrimingCheck) countLines(path string) int {
 	file, err := os.Open(path)
@@ -500,19 +480,15 @@ func (c *PrimingCheck) Fix(ctx *CheckContext) error {
 				errors = append(errors, fmt.Sprintf("%s: failed to remove CLAUDE.md: %v", issue.location, err))
 			}
 
-		case "missing_agent_bootstrap":
-			// Create CLAUDE.md and AGENTS.md bootstrap pointers at agent level
+		case "stale_intermediate_instructions_md":
+			// Remove stale CLAUDE.md/AGENTS.md from intermediate directories.
+			// These are no longer created — only ~/gt/CLAUDE.md (town root) exists.
 			agentPath := filepath.Join(ctx.TownRoot, issue.location)
-			role := filepath.Base(issue.location)
-			rigName := filepath.Base(filepath.Dir(issue.location))
-			bootstrap := agent.GenerateBootstrap(role, rigName)
-
-			// Create both files (idempotent - only writes if missing)
 			for _, filename := range []string{"CLAUDE.md", "AGENTS.md"} {
 				filePath := filepath.Join(agentPath, filename)
-				if !fileExists(filePath) {
-					if err := os.WriteFile(filePath, []byte(bootstrap), 0644); err != nil {
-						errors = append(errors, fmt.Sprintf("%s: failed to create %s: %v", issue.location, filename, err))
+				if fileExists(filePath) {
+					if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+						errors = append(errors, fmt.Sprintf("%s: failed to remove %s: %v", issue.location, filename, err))
 					}
 				}
 			}

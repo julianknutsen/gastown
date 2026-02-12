@@ -617,10 +617,9 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 		return nil, fmt.Errorf("creating worktree from %s: %w", startPoint, err)
 	}
 
-	// NOTE: We intentionally do NOT write to CLAUDE.md or AGENTS.md here.
-	// Gas Town context is injected ephemerally via SessionStart hook (gt prime).
-	// Writing to CLAUDE.md would overwrite project instructions and could leak
-	// Gas Town internals into the project repo if merged.
+	// NOTE: No per-directory CLAUDE.md or AGENTS.md is created here.
+	// Only ~/gt/CLAUDE.md (town-root identity anchor) exists on disk.
+	// Full context is injected ephemerally via SessionStart hook (gt prime).
 
 	// Set up shared beads: polecat uses rig's .beads via redirect file.
 	// This eliminates git sync overhead - all polecats share one database.
@@ -1078,9 +1077,9 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 		return nil, fmt.Errorf("moving repaired worktree to final path: %w", err)
 	}
 
-	// NOTE: We intentionally do NOT write to CLAUDE.md or AGENTS.md here.
-	// Bootstrap files are at the parent polecats/ level and found via upward traversal.
-	// Gas Town context is injected ephemerally via SessionStart hook (gt prime).
+	// NOTE: No per-directory CLAUDE.md or AGENTS.md is created here.
+	// Only ~/gt/CLAUDE.md (town-root identity anchor) exists on disk.
+	// Full context is injected ephemerally via SessionStart hook (gt prime).
 
 	// Set up shared beads
 	if err := m.setupSharedBeads(newClonePath); err != nil {

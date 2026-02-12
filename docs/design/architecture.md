@@ -101,9 +101,7 @@ Each agent bead references its role bead via the `role_bead` field.
 │   ├── town.json               Town configuration
 │   ├── rigs.json               Rig registry
 │   ├── daemon.json             Daemon patrol config
-│   ├── accounts.json           Claude Code account management
-│   ├── CLAUDE.md               Bootstrap pointer
-│   └── AGENTS.md               Bootstrap pointer (multi-provider)
+│   └── accounts.json           Claude Code account management
 ├── settings/                   Town-level settings
 │   ├── config.json             Town settings (agents, themes)
 │   └── escalation.json         Escalation routes and contacts
@@ -114,21 +112,17 @@ Each agent bead references its role bead via the `role_bead` field.
     ├── mayor/rig/              Canonical clone (beads live here, NOT an agent)
     │   └── .beads/             Rig-level beads (redirected to Dolt)
     ├── refinery/               Refinery agent home
-    │   ├── CLAUDE.md           Bootstrap pointer
     │   └── rig/                Worktree from mayor/rig
     ├── witness/                Witness agent home (no clone)
-    │   └── CLAUDE.md           Bootstrap pointer
-    ├── crew/                   Crew parent (shared settings)
-    │   ├── CLAUDE.md           Bootstrap pointer (shared by all crew)
+    ├── crew/                   Crew parent
     │   └── <name>/             Human workspaces (full clones)
-    └── polecats/               Polecats parent (shared settings)
-        ├── CLAUDE.md           Bootstrap pointer (shared by all polecats)
+    └── polecats/               Polecats parent
         └── <name>/<rigname>/   Worker worktrees from mayor/rig
 ```
 
-**Note**: Per-rig `mayor/rig/` does NOT have CLAUDE.md - it's a source clone for
-beads operations, not an agent directory. Bootstrap files (CLAUDE.md/AGENTS.md)
-are placed at agent directory level so Claude finds them via upward traversal.
+**Note**: No per-directory CLAUDE.md or AGENTS.md is created. Only `~/gt/CLAUDE.md`
+(town-root identity anchor) exists on disk. Full context is injected by `gt prime`
+via SessionStart hook.
 
 ### Worktree Architecture
 

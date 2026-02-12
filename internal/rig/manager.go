@@ -504,7 +504,6 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	if err := beads.SetupRedirect(m.townRoot, refineryRigPath); err != nil {
 		fmt.Printf("  Warning: Could not set up refinery beads redirect: %v\n", err)
 	}
-	refineryPath := filepath.Dir(refineryRigPath)
 	// Copy overlay files from .runtime/overlay/ to refinery root.
 	// This allows services to have .env and other config files at their root.
 	if err := CopyOverlay(rigPath, refineryRigPath); err != nil {
@@ -549,6 +548,7 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 		return nil, fmt.Errorf("creating witness dir: %w", err)
 	}
 	// Create witness hooks for patrol triggering
+	runtimeConfig := config.ResolveRoleAgentConfig("witness", m.townRoot, rigPath)
 	if err := m.createPatrolHooks(witnessPath, runtimeConfig); err != nil {
 		fmt.Printf("  Warning: Could not create witness hooks: %v\n", err)
 	}

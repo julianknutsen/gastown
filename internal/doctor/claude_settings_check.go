@@ -10,11 +10,8 @@ import (
 
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // gitFileStatus represents the git status of a file.
@@ -643,19 +640,7 @@ func (c *ClaudeSettingsCheck) Fix(ctx *CheckContext) error {
 		if sf.agentType == "mayor" && !strings.Contains(sf.path, "/mayor/") {
 			mayorDir := filepath.Join(ctx.TownRoot, "mayor")
 
-			if strings.HasSuffix(sf.path, "CLAUDE.md") {
-				// Town-root CLAUDE.md → recreate at mayor/
-				townName, _ := workspace.GetTownName(ctx.TownRoot)
-				if _, err := templates.CreateMayorCLAUDEmd(
-					mayorDir,
-					ctx.TownRoot,
-					townName,
-					session.MayorSessionName(),
-					session.DeaconSessionName(),
-				); err != nil {
-					errors = append(errors, fmt.Sprintf("failed to create mayor/CLAUDE.md: %v", err))
-				}
-			} else if strings.HasSuffix(claudeDir, ".claude") {
+			if strings.HasSuffix(claudeDir, ".claude") {
 				// Town-root .claude/settings.json → recreate at mayor/.claude/
 				if err := os.MkdirAll(mayorDir, 0755); err == nil {
 					runtimeConfig := config.ResolveRoleAgentConfig("mayor", ctx.TownRoot, mayorDir)

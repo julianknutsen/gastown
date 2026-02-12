@@ -61,10 +61,6 @@ func TestInstallCreatesCorrectStructure(t *testing.T) {
 		t.Errorf("rigs.json should be empty, got %d rigs", len(rigsConfig.Rigs))
 	}
 
-	// Verify CLAUDE.md exists in mayor/ (not town root, to avoid inheritance pollution)
-	claudePath := filepath.Join(hqPath, "mayor", "CLAUDE.md")
-	assertFileExists(t, claudePath, "mayor/CLAUDE.md")
-
 	// Verify Claude settings exist in mayor/.claude/ (not town root/.claude/)
 	// Mayor settings go here to avoid polluting child workspaces via directory traversal
 	// Uses settings.local.json (gitignored) instead of settings.json to avoid polluting user repos
