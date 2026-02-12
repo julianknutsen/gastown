@@ -1557,9 +1557,7 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 		resolvedEnv[k] = v
 	}
 
-	// Explicitly clear NODE_OPTIONS to prevent debugger flags from breaking agents
-	// (NODE_OPTIONS may be inherited from parent shell/tmux server environment)
-	resolvedEnv["NODE_OPTIONS"] = ""
+	sanitizeAgentEnv(resolvedEnv, envVars)
 
 	// Build environment export prefix
 	var exports []string
@@ -1587,6 +1585,21 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 	}
 
 	return cmd
+}
+
+// sanitizeAgentEnv clears environment variables that are known to break agent
+// startup when inherited from the parent shell/tmux environment.
+// The callerEnv map is checked so that intentionally-provided values (via envVars
+// or RuntimeConfig.Env) are preserved.
+func sanitizeAgentEnv(resolvedEnv, callerEnv map[string]string) {
+	// NODE_OPTIONS may contain debugger flags (e.g., --inspect from VSCode)
+	// that cause Claude's Node.js runtime to crash with "Debugger attached" errors.
+	// Only clear if not explicitly provided by the caller.
+	if _, ok := callerEnv["NODE_OPTIONS"]; !ok {
+		if _, ok := resolvedEnv["NODE_OPTIONS"]; !ok {
+			resolvedEnv["NODE_OPTIONS"] = ""
+		}
+	}
 }
 
 // PrependEnv prepends export statements to a command string.
@@ -1685,6 +1698,8 @@ func BuildStartupCommandWithAgentOverride(envVars map[string]string, rigPath, pr
 	for k, v := range rc.Env {
 		resolvedEnv[k] = v
 	}
+
+	sanitizeAgentEnv(resolvedEnv, envVars)
 
 	// Build environment export prefix
 	var exports []string
