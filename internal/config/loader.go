@@ -1041,6 +1041,22 @@ func ResolveRoleAgentConfig(role, townRoot, rigPath string) *RuntimeConfig {
 	return withRoleSettingsFlag(rc, role, rigPath)
 }
 
+// isClaudeAgent returns true if the RuntimeConfig represents a Claude agent.
+// When Provider is explicitly set, it's authoritative. When empty, the Command
+// is checked: bare "claude", a path ending in "/claude" (or "\claude" on Windows),
+// or an empty command (the default) all indicate Claude.
+func isClaudeAgent(rc *RuntimeConfig) bool {
+	if rc.Provider != "" {
+		return rc.Provider == "claude"
+	}
+	if rc.Command == "" || rc.Command == "claude" {
+		return true
+	}
+	base := filepath.Base(rc.Command)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	return base == "claude"
+}
+
 // withRoleSettingsFlag appends --settings to the Args for Claude agents whose
 // settings directory differs from the session working directory. Claude Code
 // resolves project-level settings from its working directory only; the --settings
@@ -1050,11 +1066,7 @@ func withRoleSettingsFlag(rc *RuntimeConfig, role, rigPath string) *RuntimeConfi
 		return rc
 	}
 
-	provider := rc.Provider
-	if provider == "" {
-		provider = "claude"
-	}
-	if provider != "claude" {
+	if !isClaudeAgent(rc) {
 		return rc
 	}
 
