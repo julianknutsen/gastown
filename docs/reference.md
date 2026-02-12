@@ -7,48 +7,35 @@ Technical reference for Gas Town internals. Read the README first.
 ```
 ~/gt/                           Town root
 ├── .beads/                     Town-level beads (hq-* prefix)
+├── CLAUDE.md                   Identity anchor (run gt prime)
 ├── mayor/                      Mayor agent home (town coordinator)
 │   ├── town.json               Town configuration
-│   ├── CLAUDE.md               Mayor context (bootstrap pointer)
-│   ├── AGENTS.md               Mayor context for Codex (same content)
-│   └── .claude/settings.json   Mayor Claude settings
+│   └── .claude/settings.local.json  Mayor Claude settings
 ├── deacon/                     Deacon agent home (background supervisor)
-│   └── .claude/settings.json   Deacon settings (context via gt prime)
+│   └── .claude/settings.local.json  Deacon settings (context via gt prime)
 └── <rig>/                      Project container (NOT a git clone)
     ├── config.json             Rig identity
     ├── .beads/ → mayor/rig/.beads
     ├── .repo.git/              Bare repo (shared by worktrees)
     ├── mayor/rig/              Mayor's clone (canonical beads, NOT an agent)
     ├── witness/                Witness agent home (monitors only)
-    │   ├── CLAUDE.md           Witness context (bootstrap pointer)
-    │   ├── AGENTS.md           Witness context for Codex
-    │   └── .claude/settings.json
-    ├── refinery/               Refinery settings parent
-    │   ├── CLAUDE.md           Refinery context (bootstrap pointer)
-    │   ├── AGENTS.md           Refinery context for Codex
-    │   ├── .claude/settings.json
+    ├── refinery/               Refinery agent home
     │   └── rig/                Worktree on main
-    ├── crew/                   Crew settings parent (shared)
-    │   ├── CLAUDE.md           Crew context (bootstrap pointer)
-    │   ├── AGENTS.md           Crew context for Codex
-    │   ├── .claude/settings.json
+    ├── crew/                   Crew parent
     │   └── <name>/             Human workspaces (worktrees)
-    └── polecats/               Polecat settings parent (shared)
-        ├── CLAUDE.md           Polecat context (bootstrap pointer)
-        ├── AGENTS.md           Polecat context for Codex
-        ├── .claude/settings.json
+    └── polecats/               Polecats parent
         └── <name>/<rigname>/   Worker worktrees
 ```
 
 **Key points:**
 
+- Only `~/gt/CLAUDE.md` exists on disk — a minimal identity anchor
+- No per-directory CLAUDE.md or AGENTS.md — full context comes from `gt prime` via SessionStart hook
+- Settings use `settings.local.json` at each agent's working directory
 - Rig root is a container, not a clone
-- `.repo.git/` is bare - refinery and polecats are worktrees
+- `.repo.git/` is bare — refinery and polecats are worktrees
 - Per-rig `mayor/rig/` holds canonical `.beads/`, others inherit via redirect
-- Per-rig `mayor/rig/` is just a source clone, NOT an agent directory (no CLAUDE.md)
-- Settings and bootstrap files placed in parent dirs (not git clones) for upward traversal
-- CLAUDE.md and AGENTS.md are "bootstrap pointers" - minimal files that tell agents to run `gt prime`
-- AGENTS.md provides multi-provider support (Codex reads AGENTS.md, Claude reads CLAUDE.md)
+- Per-rig `mayor/rig/` is just a source clone, NOT an agent directory
 
 ## Beads Routing
 
@@ -343,59 +330,33 @@ a git clone that holds the canonical `.beads/` database for that rig.
 
 ### Settings File Locations
 
-Claude Code searches for `.claude/settings.json` starting from the working
-directory and traversing upward. Settings are placed in **parent directories**
-(not inside git clones) so they're found via directory traversal without
-polluting source repositories:
+Claude Code does NOT traverse parent directories for `settings.local.json` —
+it only reads settings from the working directory. Settings are installed at
+each agent's working directory at startup:
 
 ```
 ~/gt/
-├── mayor/.claude/settings.json          # Mayor settings
-├── deacon/.claude/settings.json         # Deacon settings
+├── mayor/.claude/settings.local.json              # Mayor settings
+├── deacon/.claude/settings.local.json             # Deacon settings
 └── <rig>/
-    ├── witness/.claude/settings.json    # Witness settings (no rig/ subdir)
-    ├── refinery/.claude/settings.json   # Found by refinery/rig/ via traversal
-    ├── crew/.claude/settings.json       # Shared by all crew/<name>/rig/
-    └── polecats/.claude/settings.json   # Shared by all polecats/<name>/rig/
+    ├── witness/rig/.claude/settings.local.json    # Witness settings
+    ├── refinery/rig/.claude/settings.local.json   # Refinery settings
+    ├── crew/<name>/.claude/settings.local.json    # Per-crew-member settings
+    └── polecats/<name>/<rig>/.claude/settings.local.json  # Per-polecat settings
 ```
 
-**Why parent directories?** Agents working in git clones (like `refinery/rig/`)
-would pollute the source repo if settings were placed there. By putting settings
-one level up, Claude finds them via upward traversal, and all workers of the
-same type share the same settings.
+### CLAUDE.md
 
-### CLAUDE.md and AGENTS.md Locations
+Only `~/gt/CLAUDE.md` exists on disk — a minimal identity anchor that prevents
+agents from losing their Gas Town identity after context compaction or new sessions.
 
-Role context is delivered via bootstrap files (CLAUDE.md/AGENTS.md). These are
-minimal "pointer" files that tell agents to run `gt prime` for full context.
-AGENTS.md provides multi-provider support (Codex reads AGENTS.md, Claude reads CLAUDE.md).
+Full role context (~300-500 lines per role) is injected ephemerally by `gt prime`
+via the SessionStart hook. No per-directory CLAUDE.md or AGENTS.md files are created.
 
-| Role | Location | Notes |
-|------|----------|-------|
-| **Mayor** | `~/gt/mayor/CLAUDE.md` | Town-level mayor |
-| **Deacon** | (none) | Context injected via `gt prime` at SessionStart |
-| **Witness** | `<rig>/witness/CLAUDE.md` | At agent directory level |
-| **Refinery** | `<rig>/refinery/CLAUDE.md` | At agent directory level (not inside rig/) |
-| **Crew** | `<rig>/crew/CLAUDE.md` | Shared by all crew worktrees via upward traversal |
-| **Polecat** | `<rig>/polecats/CLAUDE.md` | Shared by all polecat worktrees via upward traversal |
-
-**Important**: Per-rig `<rig>/mayor/rig/` does NOT have CLAUDE.md - it's just a
-source clone that holds the canonical `.beads/` database, not an agent directory.
-
-**Bootstrap content**: Each file contains a minimal pointer like:
-```markdown
-# Refinery Context (myrig)
-
-> **Recovery**: Run `gt prime` after compaction, clear, or new session
-
-Full context is injected by `gt prime` at session start.
-```
-
-**Why parent directories?** Placing files at `<rig>/refinery/CLAUDE.md` instead
-of `<rig>/refinery/rig/CLAUDE.md` means:
-1. Files are outside git worktrees - no pollution of source repos
-2. Claude Code finds them via upward directory traversal
-3. All workers of the same type share the same bootstrap file
+**Why no per-directory files?**
+- Claude Code traverses upward from CWD for CLAUDE.md — all agents under `~/gt/` find the town-root file
+- AGENTS.md (for Codex) uses downward traversal from git root — parent directories are invisible, so per-directory AGENTS.md never worked
+- The real context comes from `gt prime`, making on-disk bootstrap pointers redundant
 
 ### Sparse Checkout (Source Repo Isolation)
 

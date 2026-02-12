@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/agent"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -435,10 +434,9 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		}
 	}
 
-	// NOTE: We do NOT create CLAUDE.md/AGENTS.md for per-rig mayor.
-	// The per-rig <rig>/mayor/rig/ is just a source repo clone for beads operations.
-	// The actual mayor agent lives at town level (<root>/mayor/) and gets its
-	// CLAUDE.md from gt install.
+	// NOTE: No per-directory CLAUDE.md/AGENTS.md is created for any agent.
+	// Only ~/gt/CLAUDE.md (town-root identity anchor) exists on disk.
+	// Full context is injected ephemerally by `gt prime` at session start.
 
 	// Initialize beads at rig level BEFORE creating worktrees.
 	// This ensures rig/.beads exists so worktree redirects can point to it.
@@ -473,12 +471,6 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	// Set up beads redirect for refinery (points to rig-level .beads)
 	if err := beads.SetupRedirect(m.townRoot, refineryRigPath); err != nil {
 		fmt.Printf("  Warning: Could not set up refinery beads redirect: %v\n", err)
-	}
-	// Create refinery CLAUDE.md at agent level (refinery/, not refinery/rig/)
-	// This is a minimal bootstrap pointer - full context comes from gt prime
-	refineryPath := filepath.Dir(refineryRigPath)
-	if err := m.createAgentInstructionsMD(refineryPath, "refinery", opts.Name); err != nil {
-		return nil, fmt.Errorf("creating refinery CLAUDE.md: %w", err)
 	}
 	// Copy overlay files from .runtime/overlay/ to refinery root.
 	// This allows services to have .env and other config files at their root.
@@ -518,32 +510,18 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	if err := os.WriteFile(readmePath, []byte(readmeContent), 0644); err != nil {
 		return nil, fmt.Errorf("creating crew README: %w", err)
 	}
-	// Create crew CLAUDE.md/AGENTS.md at parent level (for all crew worktrees)
-	if err := m.createAgentInstructionsMD(crewPath, "crew", opts.Name); err != nil {
-		return nil, fmt.Errorf("creating crew CLAUDE.md: %w", err)
-	}
-
 	// Create witness directory (no clone needed)
 	witnessPath := filepath.Join(rigPath, "witness")
 	if err := os.MkdirAll(witnessPath, 0755); err != nil {
 		return nil, fmt.Errorf("creating witness dir: %w", err)
 	}
 	// NOTE: Claude settings installed by witness agent at startup (not here)
-	// Create witness CLAUDE.md/AGENTS.md at agent level
-	if err := m.createAgentInstructionsMD(witnessPath, "witness", opts.Name); err != nil {
-		return nil, fmt.Errorf("creating witness CLAUDE.md: %w", err)
-	}
 
 	// Create polecats directory (empty)
 	polecatsPath := filepath.Join(rigPath, "polecats")
 	if err := os.MkdirAll(polecatsPath, 0755); err != nil {
 		return nil, fmt.Errorf("creating polecats dir: %w", err)
 	}
-	// Create polecats CLAUDE.md/AGENTS.md at parent level (for all polecat worktrees)
-	if err := m.createAgentInstructionsMD(polecatsPath, "polecats", opts.Name); err != nil {
-		return nil, fmt.Errorf("creating polecats CLAUDE.md: %w", err)
-	}
-
 	// NOTE: Claude settings are installed by each agent in their working directory at startup.
 	// Claude Code does NOT traverse parent directories for settings.json, so installing
 	// settings in parent directories (witness/, crew/, etc.) would be useless.
@@ -1103,23 +1081,6 @@ func (m *Manager) ListRigNames() []string {
 		names = append(names, name)
 	}
 	return names
-}
-
-// createAgentInstructionsMD creates a minimal bootstrap pointer CLAUDE.md file.
-// Full context is injected ephemerally by `gt prime` at session start.
-// This keeps on-disk files small (<30 lines) per the priming architecture.
-func (m *Manager) createAgentInstructionsMD(agentPath string, role string, rigName string) error {
-	bootstrap := agent.GenerateBootstrap(role, rigName)
-
-	claudePath := filepath.Join(agentPath, "CLAUDE.md")
-	if err := os.WriteFile(claudePath, []byte(bootstrap), 0644); err != nil {
-		return err
-	}
-
-	// Also create AGENTS.md with same content for multi-provider support
-	// (Codex reads AGENTS.md, Claude reads CLAUDE.md)
-	agentsPath := filepath.Join(agentPath, "AGENTS.md")
-	return os.WriteFile(agentsPath, []byte(bootstrap), 0644)
 }
 
 // seedPatrolMolecules creates patrol molecule prototypes in the rig's beads database.

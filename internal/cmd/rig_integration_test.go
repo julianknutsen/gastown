@@ -435,30 +435,9 @@ func TestRigAddCreatesCorrectStructure(t *testing.T) {
 		}
 	}
 
-	// Verify CLAUDE.md and AGENTS.md are created at agent level (outside git repos).
-	// These are bootstrap pointers - full context comes from gt prime.
-	// AGENTS.md is for multi-provider support (Codex reads AGENTS.md, Claude reads CLAUDE.md).
-	// NOTE: Per-rig mayor does NOT get these files - it's just a source clone.
-	// The town-level mayor (<root>/mayor/) gets its files from gt install.
-	expectedContextFiles := []struct {
-		path string
-		desc string
-	}{
-		{filepath.Join(rigPath, "refinery", "CLAUDE.md"), "refinery/CLAUDE.md"},
-		{filepath.Join(rigPath, "refinery", "AGENTS.md"), "refinery/AGENTS.md"},
-		{filepath.Join(rigPath, "witness", "CLAUDE.md"), "witness/CLAUDE.md"},
-		{filepath.Join(rigPath, "witness", "AGENTS.md"), "witness/AGENTS.md"},
-		{filepath.Join(rigPath, "crew", "CLAUDE.md"), "crew/CLAUDE.md"},
-		{filepath.Join(rigPath, "crew", "AGENTS.md"), "crew/AGENTS.md"},
-		{filepath.Join(rigPath, "polecats", "CLAUDE.md"), "polecats/CLAUDE.md"},
-		{filepath.Join(rigPath, "polecats", "AGENTS.md"), "polecats/AGENTS.md"},
-	}
-
-	for _, c := range expectedContextFiles {
-		if _, err := os.Stat(c.path); err != nil {
-			t.Errorf("%s not found: %v", c.desc, err)
-		}
-	}
+	// NOTE: No per-directory CLAUDE.md/AGENTS.md is created at agent level.
+	// Only ~/gt/CLAUDE.md (town-root identity anchor) exists on disk.
+	// Full context is injected ephemerally by `gt prime` at session start.
 
 	// NOTE: settings.local.json WILL exist inside working directories (witness/rig/.claude/settings.local.json)
 	// but only after agents start. gt rig add doesn't install settings; agents install them at startup.
@@ -477,7 +456,7 @@ func TestRigAddCreatesCorrectStructure(t *testing.T) {
 		}
 	}
 
-	// Verify CLAUDE.md is NOT created inside source repos or per-rig mayor (these would be wrong)
+	// Verify CLAUDE.md/AGENTS.md is NOT created at any agent directory or inside source repos
 	wrongClaudeMd := []struct {
 		path string
 		desc string
@@ -486,6 +465,14 @@ func TestRigAddCreatesCorrectStructure(t *testing.T) {
 		{filepath.Join(rigPath, "mayor", "AGENTS.md"), "mayor/AGENTS.md (per-rig mayor is just a clone)"},
 		{filepath.Join(rigPath, "mayor", "rig", "CLAUDE.md"), "mayor/rig/CLAUDE.md (inside source repo)"},
 		{filepath.Join(rigPath, "refinery", "rig", "CLAUDE.md"), "refinery/rig/CLAUDE.md (inside source repo)"},
+		{filepath.Join(rigPath, "refinery", "CLAUDE.md"), "refinery/CLAUDE.md (no per-directory bootstrap)"},
+		{filepath.Join(rigPath, "refinery", "AGENTS.md"), "refinery/AGENTS.md (no per-directory bootstrap)"},
+		{filepath.Join(rigPath, "witness", "CLAUDE.md"), "witness/CLAUDE.md (no per-directory bootstrap)"},
+		{filepath.Join(rigPath, "witness", "AGENTS.md"), "witness/AGENTS.md (no per-directory bootstrap)"},
+		{filepath.Join(rigPath, "crew", "CLAUDE.md"), "crew/CLAUDE.md (no per-directory bootstrap)"},
+		{filepath.Join(rigPath, "crew", "AGENTS.md"), "crew/AGENTS.md (no per-directory bootstrap)"},
+		{filepath.Join(rigPath, "polecats", "CLAUDE.md"), "polecats/CLAUDE.md (no per-directory bootstrap)"},
+		{filepath.Join(rigPath, "polecats", "AGENTS.md"), "polecats/AGENTS.md (no per-directory bootstrap)"},
 	}
 
 	for _, w := range wrongClaudeMd {
@@ -989,7 +976,7 @@ func TestAgentBeadIDs(t *testing.T) {
 // Known issues this test catches:
 // - Extra files in .beads/ beyond redirect (e.g., PRIME.md, databases)
 // - AGENTS.md being copied/created in worktrees
-// - CLAUDE.md being created in worktrees (should only be bootstrap pointer)
+// - CLAUDE.md being created in worktrees
 // - Any other Gas Town artifacts polluting the repo
 //
 // Tests two scenarios:

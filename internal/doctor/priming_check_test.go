@@ -444,11 +444,10 @@ func TestPrimingCheck_FixRemovesUnexpectedClaudeMd(t *testing.T) {
 	}
 }
 
-// TestPrimingCheck_DoesNotFlagAgentLevelClaudeMd verifies that CLAUDE.md
-// at agent level (e.g., refinery/CLAUDE.md) is NOT flagged as an issue.
-// Note: Per-rig mayor (<rig>/mayor/) does NOT get bootstrap files - it's just a source clone.
-// Only refinery and witness get bootstrap files at rig level.
-func TestPrimingCheck_DoesNotFlagAgentLevelClaudeMd(t *testing.T) {
+// TestPrimingCheck_FlagsStaleAgentLevelFiles verifies that CLAUDE.md/AGENTS.md
+// at agent level (e.g., refinery/CLAUDE.md) ARE flagged as stale files.
+// These are no longer created — only ~/gt/CLAUDE.md (town root) exists.
+func TestPrimingCheck_FlagsStaleAgentLevelFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
 
@@ -466,20 +465,18 @@ func TestPrimingCheck_DoesNotFlagAgentLevelClaudeMd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create refinery/ directory structure
+	// Create refinery/ directory structure with stale files
 	refineryPath := filepath.Join(tmpDir, rigName, "refinery")
 	refineryRigPath := filepath.Join(refineryPath, "rig")
 	if err := os.MkdirAll(refineryRigPath, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create CLAUDE.md and AGENTS.md at agent level (CORRECT location - outside source repo)
-	goodClaudeMd := filepath.Join(refineryPath, "CLAUDE.md")
-	if err := os.WriteFile(goodClaudeMd, []byte("# Good CLAUDE.md at agent level\n"), 0644); err != nil {
+	// Create stale CLAUDE.md and AGENTS.md at agent level
+	if err := os.WriteFile(filepath.Join(refineryPath, "CLAUDE.md"), []byte("# Stale CLAUDE.md\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	goodAgentsMd := filepath.Join(refineryPath, "AGENTS.md")
-	if err := os.WriteFile(goodAgentsMd, []byte("# Good AGENTS.md at agent level\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(refineryPath, "AGENTS.md"), []byte("# Stale AGENTS.md\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -488,20 +485,30 @@ func TestPrimingCheck_DoesNotFlagAgentLevelClaudeMd(t *testing.T) {
 	ctx := &CheckContext{TownRoot: tmpDir}
 	result := check.Run(ctx)
 
-	// Should NOT find any unexpected_claude_md issue for agent-level file
+	// Should find stale file issues for refinery
+	foundClaudeMdIssue := false
+	foundAgentsMdIssue := false
 	for _, detail := range result.Details {
-		// The agent-level path is refinery/CLAUDE.md, not refinery/rig/CLAUDE.md
-		// We should only flag refinery/rig/ paths
-		if strings.Contains(detail, "CLAUDE.md") && !strings.Contains(detail, "/rig") {
-			t.Errorf("should NOT flag agent-level CLAUDE.md, but got: %s", detail)
+		if strings.Contains(detail, "refinery") && strings.Contains(detail, "Stale CLAUDE.md") {
+			foundClaudeMdIssue = true
 		}
+		if strings.Contains(detail, "refinery") && strings.Contains(detail, "Stale AGENTS.md") {
+			foundAgentsMdIssue = true
+		}
+	}
+
+	if !foundClaudeMdIssue {
+		t.Errorf("expected stale CLAUDE.md issue for refinery, got details: %v", result.Details)
+	}
+	if !foundAgentsMdIssue {
+		t.Errorf("expected stale AGENTS.md issue for refinery, got details: %v", result.Details)
 	}
 }
 
 // TestPrimingCheck_NoIssuesWhenCorrectlyConfigured verifies that a correctly
 // configured rig reports no priming issues.
-// Note: Per-rig mayor does NOT get bootstrap files - it's just a source clone.
-// Refinery, witness, crew, and polecats get bootstrap files at rig level.
+// A correctly configured rig has NO per-directory CLAUDE.md/AGENTS.md files.
+// Only ~/gt/CLAUDE.md (town root identity anchor) exists on disk.
 func TestPrimingCheck_NoIssuesWhenCorrectlyConfigured(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
@@ -520,53 +527,27 @@ func TestPrimingCheck_NoIssuesWhenCorrectlyConfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create refinery structure with agent-level CLAUDE.md and AGENTS.md
-	refineryPath := filepath.Join(tmpDir, rigName, "refinery")
-	refineryRigPath := filepath.Join(refineryPath, "rig")
+	// Create refinery structure — NO CLAUDE.md or AGENTS.md
+	refineryRigPath := filepath.Join(tmpDir, rigName, "refinery", "rig")
 	if err := os.MkdirAll(refineryRigPath, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(refineryPath, "CLAUDE.md"), []byte("# Refinery\nRun gt prime\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(refineryPath, "AGENTS.md"), []byte("# Refinery\nRun gt prime\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 
-	// Create witness structure with agent-level CLAUDE.md and AGENTS.md
+	// Create witness structure — NO CLAUDE.md or AGENTS.md
 	witnessPath := filepath.Join(tmpDir, rigName, "witness")
-	witnessRigPath := filepath.Join(witnessPath, "rig")
-	if err := os.MkdirAll(witnessRigPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(witnessPath, "CLAUDE.md"), []byte("# Witness\nRun gt prime\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(witnessPath, "AGENTS.md"), []byte("# Witness\nRun gt prime\n"), 0644); err != nil {
+	if err := os.MkdirAll(witnessPath, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create crew directory with CLAUDE.md and AGENTS.md
+	// Create crew directory — NO CLAUDE.md or AGENTS.md
 	crewPath := filepath.Join(tmpDir, rigName, "crew")
 	if err := os.MkdirAll(crewPath, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(crewPath, "CLAUDE.md"), []byte("# Crew\nRun gt prime\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(crewPath, "AGENTS.md"), []byte("# Crew\nRun gt prime\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 
-	// Create polecats directory with CLAUDE.md and AGENTS.md
+	// Create polecats directory — NO CLAUDE.md or AGENTS.md
 	polecatsPath := filepath.Join(tmpDir, rigName, "polecats")
 	if err := os.MkdirAll(polecatsPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(polecatsPath, "CLAUDE.md"), []byte("# Polecats\nRun gt prime\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(polecatsPath, "AGENTS.md"), []byte("# Polecats\nRun gt prime\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -626,13 +607,16 @@ func TestPrimingCheck_DetectsLargeClaudeMd(t *testing.T) {
 	}
 }
 
-// TestPrimingCheck_DetectsMissingAgentBootstrapFiles verifies that missing CLAUDE.md
-// and/or AGENTS.md at agent level (e.g., refinery/) is detected as an issue.
-// Note: Per-rig mayor (<rig>/mayor/) does NOT get bootstrap files - it's just a source clone.
-// Refinery, witness, crew, and polecats get bootstrap files at rig level.
-func TestPrimingCheck_DetectsMissingAgentBootstrapFiles(t *testing.T) {
+// TestPrimingCheck_DetectsStaleIntermediateFiles verifies that stale CLAUDE.md/AGENTS.md
+// at intermediate directories (refinery/, witness/, crew/, polecats/, mayor/) are detected.
+func TestPrimingCheck_DetectsStaleIntermediateFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
+
+	// Create town root CLAUDE.md identity anchor
+	if err := os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Gas Town\nRun gt prime\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set up rig with .beads
 	rigBeadsDir := filepath.Join(tmpDir, rigName, ".beads")
@@ -643,36 +627,28 @@ func TestPrimingCheck_DetectsMissingAgentBootstrapFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create refinery with only CLAUDE.md (missing AGENTS.md)
-	refineryPath := filepath.Join(tmpDir, rigName, "refinery")
-	refineryRigPath := filepath.Join(refineryPath, "rig")
-	if err := os.MkdirAll(refineryRigPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(refineryPath, "CLAUDE.md"), []byte("# Refinery\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create witness WITHOUT CLAUDE.md or AGENTS.md
-	witnessPath := filepath.Join(tmpDir, rigName, "witness")
-	witnessRigPath := filepath.Join(witnessPath, "rig")
-	if err := os.MkdirAll(witnessRigPath, 0755); err != nil {
-		t.Fatal(err)
+	// Create stale files at all four intermediate directories
+	for _, role := range []string{"refinery", "witness", "crew", "polecats"} {
+		rolePath := filepath.Join(tmpDir, rigName, role)
+		if err := os.MkdirAll(rolePath, 0755); err != nil {
+			t.Fatal(err)
+		}
+		for _, filename := range []string{"CLAUDE.md", "AGENTS.md"} {
+			if err := os.WriteFile(filepath.Join(rolePath, filename), []byte("# Stale\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
-	// Create crew WITHOUT CLAUDE.md or AGENTS.md
-	crewPath := filepath.Join(tmpDir, rigName, "crew")
-	if err := os.MkdirAll(crewPath, 0755); err != nil {
+	// Also create stale mayor/CLAUDE.md and mayor/AGENTS.md
+	mayorPath := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorPath, 0755); err != nil {
 		t.Fatal(err)
 	}
-
-	// Create polecats with only AGENTS.md (missing CLAUDE.md)
-	polecatsPath := filepath.Join(tmpDir, rigName, "polecats")
-	if err := os.MkdirAll(polecatsPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(polecatsPath, "AGENTS.md"), []byte("# Polecats\n"), 0644); err != nil {
-		t.Fatal(err)
+	for _, filename := range []string{"CLAUDE.md", "AGENTS.md"} {
+		if err := os.WriteFile(filepath.Join(mayorPath, filename), []byte("# Stale\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Run priming check
@@ -680,47 +656,32 @@ func TestPrimingCheck_DetectsMissingAgentBootstrapFiles(t *testing.T) {
 	ctx := &CheckContext{TownRoot: tmpDir}
 	result := check.Run(ctx)
 
-	// Should find missing bootstrap issues for all
-	foundRefineryIssue := false
-	foundWitnessIssue := false
-	foundCrewIssue := false
-	foundPolecatsIssue := false
-	for _, detail := range result.Details {
-		if strings.Contains(detail, "refinery") && strings.Contains(detail, "bootstrap") {
-			foundRefineryIssue = true
+	// Should find stale issues for all roles + mayor
+	expectedLocations := []string{"refinery", "witness", "crew", "polecats", "mayor"}
+	for _, loc := range expectedLocations {
+		found := false
+		for _, detail := range result.Details {
+			if strings.Contains(detail, loc) && strings.Contains(detail, "Stale") {
+				found = true
+				break
+			}
 		}
-		if strings.Contains(detail, "witness") && strings.Contains(detail, "bootstrap") {
-			foundWitnessIssue = true
+		if !found {
+			t.Errorf("expected stale file issue for %s, got details: %v", loc, result.Details)
 		}
-		if strings.Contains(detail, "crew") && strings.Contains(detail, "bootstrap") {
-			foundCrewIssue = true
-		}
-		if strings.Contains(detail, "polecats") && strings.Contains(detail, "bootstrap") {
-			foundPolecatsIssue = true
-		}
-	}
-
-	if !foundRefineryIssue {
-		t.Errorf("expected to find missing bootstrap issue for refinery, got details: %v", result.Details)
-	}
-	if !foundWitnessIssue {
-		t.Errorf("expected to find missing bootstrap issue for witness, got details: %v", result.Details)
-	}
-	if !foundCrewIssue {
-		t.Errorf("expected to find missing bootstrap issue for crew, got details: %v", result.Details)
-	}
-	if !foundPolecatsIssue {
-		t.Errorf("expected to find missing bootstrap issue for polecats, got details: %v", result.Details)
 	}
 }
 
-// TestPrimingCheck_FixCreatesMissingBootstrapFiles verifies that doctor --fix
-// creates missing CLAUDE.md and AGENTS.md at agent level with correct bootstrap content.
-// Note: Per-rig mayor (<rig>/mayor/) does NOT get bootstrap files - it's just a source clone.
-// Refinery, witness, crew, and polecats get bootstrap files at rig level.
-func TestPrimingCheck_FixCreatesMissingBootstrapFiles(t *testing.T) {
+// TestPrimingCheck_FixRemovesStaleIntermediateFiles verifies that doctor --fix
+// removes stale CLAUDE.md/AGENTS.md from intermediate directories.
+func TestPrimingCheck_FixRemovesStaleIntermediateFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
+
+	// Create town root CLAUDE.md identity anchor
+	if err := os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Gas Town\nRun gt prime\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set up rig with .beads
 	rigBeadsDir := filepath.Join(tmpDir, rigName, ".beads")
@@ -731,33 +692,33 @@ func TestPrimingCheck_FixCreatesMissingBootstrapFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create refinery with only CLAUDE.md (missing AGENTS.md)
-	refineryPath := filepath.Join(tmpDir, rigName, "refinery")
-	refineryRigPath := filepath.Join(refineryPath, "rig")
-	if err := os.MkdirAll(refineryRigPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(refineryPath, "CLAUDE.md"), []byte("# Refinery\ngt prime\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create witness WITHOUT bootstrap files
-	witnessPath := filepath.Join(tmpDir, rigName, "witness")
-	witnessRigPath := filepath.Join(witnessPath, "rig")
-	if err := os.MkdirAll(witnessRigPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create crew WITHOUT bootstrap files
-	crewPath := filepath.Join(tmpDir, rigName, "crew")
-	if err := os.MkdirAll(crewPath, 0755); err != nil {
-		t.Fatal(err)
+	// Create stale files at intermediate directories
+	staleFiles := []string{}
+	for _, role := range []string{"refinery", "witness", "crew", "polecats"} {
+		rolePath := filepath.Join(tmpDir, rigName, role)
+		if err := os.MkdirAll(rolePath, 0755); err != nil {
+			t.Fatal(err)
+		}
+		for _, filename := range []string{"CLAUDE.md", "AGENTS.md"} {
+			filePath := filepath.Join(rolePath, filename)
+			if err := os.WriteFile(filePath, []byte("# Stale\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			staleFiles = append(staleFiles, filePath)
+		}
 	}
 
-	// Create polecats WITHOUT bootstrap files
-	polecatsPath := filepath.Join(tmpDir, rigName, "polecats")
-	if err := os.MkdirAll(polecatsPath, 0755); err != nil {
+	// Also create stale mayor files
+	mayorPath := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorPath, 0755); err != nil {
 		t.Fatal(err)
+	}
+	for _, filename := range []string{"CLAUDE.md", "AGENTS.md"} {
+		filePath := filepath.Join(mayorPath, filename)
+		if err := os.WriteFile(filePath, []byte("# Stale\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		staleFiles = append(staleFiles, filePath)
 	}
 
 	// Run priming check and fix
@@ -769,64 +730,17 @@ func TestPrimingCheck_FixCreatesMissingBootstrapFiles(t *testing.T) {
 		t.Fatalf("Fix() failed: %v", err)
 	}
 
-	// Verify witness files were created
-	witnessClaudeMd := filepath.Join(witnessPath, "CLAUDE.md")
-	witnessAgentsMd := filepath.Join(witnessPath, "AGENTS.md")
-	if _, err := os.Stat(witnessClaudeMd); os.IsNotExist(err) {
-		t.Errorf("CLAUDE.md should have been created at: %s", witnessClaudeMd)
-	}
-	if _, err := os.Stat(witnessAgentsMd); os.IsNotExist(err) {
-		t.Errorf("AGENTS.md should have been created at: %s", witnessAgentsMd)
+	// Verify all stale files were removed
+	for _, filePath := range staleFiles {
+		if _, err := os.Stat(filePath); err == nil {
+			t.Errorf("stale file should have been removed: %s", filePath)
+		}
 	}
 
-	// Verify witness content
-	content, _ := os.ReadFile(witnessClaudeMd)
-	if !strings.Contains(string(content), "Witness Context") {
-		t.Errorf("created CLAUDE.md should contain 'Witness Context', got: %s", string(content))
-	}
-
-	// Verify refinery AGENTS.md was created (CLAUDE.md already existed)
-	refineryAgentsMd := filepath.Join(refineryPath, "AGENTS.md")
-	if _, err := os.Stat(refineryAgentsMd); os.IsNotExist(err) {
-		t.Errorf("AGENTS.md should have been created at: %s", refineryAgentsMd)
-	}
-
-	// Verify refinery AGENTS.md content
-	content, _ = os.ReadFile(refineryAgentsMd)
-	if !strings.Contains(string(content), "Refinery Context") {
-		t.Errorf("created AGENTS.md should contain 'Refinery Context', got: %s", string(content))
-	}
-
-	// Verify crew files were created
-	crewClaudeMd := filepath.Join(crewPath, "CLAUDE.md")
-	crewAgentsMd := filepath.Join(crewPath, "AGENTS.md")
-	if _, err := os.Stat(crewClaudeMd); os.IsNotExist(err) {
-		t.Errorf("CLAUDE.md should have been created at: %s", crewClaudeMd)
-	}
-	if _, err := os.Stat(crewAgentsMd); os.IsNotExist(err) {
-		t.Errorf("AGENTS.md should have been created at: %s", crewAgentsMd)
-	}
-
-	// Verify crew content
-	content, _ = os.ReadFile(crewClaudeMd)
-	if !strings.Contains(string(content), "Crew Context") {
-		t.Errorf("created CLAUDE.md should contain 'Crew Context', got: %s", string(content))
-	}
-
-	// Verify polecats files were created
-	polecatsClaudeMd := filepath.Join(polecatsPath, "CLAUDE.md")
-	polecatsAgentsMd := filepath.Join(polecatsPath, "AGENTS.md")
-	if _, err := os.Stat(polecatsClaudeMd); os.IsNotExist(err) {
-		t.Errorf("CLAUDE.md should have been created at: %s", polecatsClaudeMd)
-	}
-	if _, err := os.Stat(polecatsAgentsMd); os.IsNotExist(err) {
-		t.Errorf("AGENTS.md should have been created at: %s", polecatsAgentsMd)
-	}
-
-	// Verify polecats content
-	content, _ = os.ReadFile(polecatsClaudeMd)
-	if !strings.Contains(string(content), "Polecat Context") {
-		t.Errorf("created CLAUDE.md should contain 'Polecat Context', got: %s", string(content))
+	// Verify town root CLAUDE.md was NOT removed (it's the identity anchor)
+	townRootClaude := filepath.Join(tmpDir, "CLAUDE.md")
+	if _, err := os.Stat(townRootClaude); os.IsNotExist(err) {
+		t.Errorf("town root CLAUDE.md should NOT have been removed")
 	}
 }
 
