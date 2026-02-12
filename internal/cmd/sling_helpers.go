@@ -252,7 +252,7 @@ func ensureAgentReady(sessionName string) error {
 	t := tmux.NewTmux()
 
 	// If an agent is already running, assume it's ready (session was started earlier)
-	if t.IsAgentRunning(sessionName) {
+	if t.IsAgentAlive(sessionName) {
 		return nil
 	}
 

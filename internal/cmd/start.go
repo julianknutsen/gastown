@@ -410,8 +410,9 @@ func startOrRestartCrewMember(t *tmux.Tmux, r *rig.Rig, crewName, townRoot strin
 	sessionID := crewSessionName(r.Name, crewName)
 	if running, _ := t.HasSession(sessionID); running {
 		// Session exists - check if agent is still running
-		agentCfg := config.ResolveRoleAgentConfig(constants.RoleCrew, townRoot, r.Path)
-		if !t.IsAgentRunning(sessionID, config.ExpectedPaneCommands(agentCfg)...) {
+		// Use IsAgentAlive (checks descendant processes) instead of IsAgentRunning
+		// (pane command only), since agents launch via bash wrapper.
+		if !t.IsAgentAlive(sessionID) {
 			// Agent has exited, restart it
 			// Build startup beacon for predecessor discovery via /resume
 			address := fmt.Sprintf("%s/crew/%s", r.Name, crewName)

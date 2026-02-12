@@ -227,13 +227,9 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 			style.Bold.Render("✓"), r.Name, name)
 	} else {
 		// Session exists - check if runtime is still running
-		// Uses both pane command check and UI marker detection to avoid
-		// restarting when user is in a subshell spawned from the runtime
-		agentCfg, _, err := config.ResolveAgentConfigWithOverride(townRoot, r.Path, crewAgentOverride)
-		if err != nil {
-			return fmt.Errorf("resolving agent: %w", err)
-		}
-		if !t.IsAgentRunning(sessionID, config.ExpectedPaneCommands(agentCfg)...) {
+		// Use IsAgentAlive (checks descendant processes) instead of IsAgentRunning
+		// (pane command only), since agents launch via bash wrapper.
+		if !t.IsAgentAlive(sessionID) {
 			// Runtime has exited, restart it using respawn-pane
 			fmt.Printf("Runtime exited, restarting...\n")
 
@@ -294,7 +290,7 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("resolving agent: %w", err)
 		}
-		if t.IsAgentRunning(sessionID, config.ExpectedPaneCommands(agentCfg)...) {
+		if t.IsAgentAlive(sessionID) {
 			// Agent is already running, nothing to do
 			fmt.Printf("Already in %s session with %s running.\n", name, agentCfg.Command)
 			return nil
