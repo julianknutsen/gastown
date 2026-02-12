@@ -225,24 +225,10 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 			continue
 		}
 
-		// Rig-level
-		targets = append(targets, Target{
-			Path: filepath.Join(rigPath, ".claude", "settings.local.json"),
-			Key:  rigName + "/rig",
-			Rig:  rigName,
-			Role: "rig",
-		})
-
-		// Crew-level
+		// Crew — only individual crew member worktrees (no parent crew/ target,
+		// since Claude Code does not traverse parent directories for settings)
 		crewDir := filepath.Join(rigPath, "crew")
 		if info, err := os.Stat(crewDir); err == nil && info.IsDir() {
-			targets = append(targets, Target{
-				Path: filepath.Join(crewDir, ".claude", "settings.local.json"),
-				Key:  rigName + "/crew",
-				Rig:  rigName,
-				Role: "crew",
-			})
-
 			// Individual crew members
 			if members, err := os.ReadDir(crewDir); err == nil {
 				for _, m := range members {
@@ -258,16 +244,10 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 			}
 		}
 
-		// Polecats-level
+		// Polecats — only individual polecat worktrees (no parent polecats/ target,
+		// since Claude Code does not traverse parent directories for settings)
 		polecatsDir := filepath.Join(rigPath, "polecats")
 		if info, err := os.Stat(polecatsDir); err == nil && info.IsDir() {
-			targets = append(targets, Target{
-				Path: filepath.Join(polecatsDir, ".claude", "settings.local.json"),
-				Key:  rigName + "/polecats",
-				Rig:  rigName,
-				Role: "polecats",
-			})
-
 			// Individual polecats
 			if polecats, err := os.ReadDir(polecatsDir); err == nil {
 				for _, p := range polecats {
