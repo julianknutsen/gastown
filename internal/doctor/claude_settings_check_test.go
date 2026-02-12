@@ -722,28 +722,22 @@ func TestClaudeSettingsCheck_GitStatusTrackedClean(t *testing.T) {
 	initTestGitRepo(t, rigDir)
 
 	// Create settings and commit it (tracked, clean)
-	wrongSettings := filepath.Join(rigDir, ".claude", "settings.json")
-	createValidSettings(t, wrongSettings)
-	gitAddAndCommit(t, rigDir, wrongSettings)
+	trackedSettings := filepath.Join(rigDir, ".claude", "settings.json")
+	createValidSettings(t, trackedSettings)
+	gitAddAndCommit(t, rigDir, trackedSettings)
 
 	check := NewClaudeSettingsCheck()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
 	result := check.Run(ctx)
 
-	if result.Status != StatusError {
-		t.Errorf("expected StatusError for wrong location, got %v", result.Status)
-	}
-	// Should mention "tracked but unmodified"
-	found := false
+	// Tracked settings.json in a worktree is the customer's legitimate project config.
+	// It should NOT be flagged as stale or wrong-location.
+	// The only issue should be the missing settings.local.json (informational).
 	for _, d := range result.Details {
-		if strings.Contains(d, "tracked but unmodified") {
-			found = true
-			break
+		if strings.Contains(d, "wrong location") && strings.Contains(d, "settings.json") {
+			t.Errorf("tracked settings.json should NOT be flagged as wrong location, got: %s", d)
 		}
-	}
-	if !found {
-		t.Errorf("expected details to mention tracked but unmodified, got %v", result.Details)
 	}
 }
 
@@ -759,12 +753,12 @@ func TestClaudeSettingsCheck_GitStatusTrackedModified(t *testing.T) {
 	initTestGitRepo(t, rigDir)
 
 	// Create settings and commit it
-	wrongSettings := filepath.Join(rigDir, ".claude", "settings.json")
-	createValidSettings(t, wrongSettings)
-	gitAddAndCommit(t, rigDir, wrongSettings)
+	trackedSettings := filepath.Join(rigDir, ".claude", "settings.json")
+	createValidSettings(t, trackedSettings)
+	gitAddAndCommit(t, rigDir, trackedSettings)
 
 	// Modify the file after commit
-	if err := os.WriteFile(wrongSettings, []byte(`{"modified": true}`), 0644); err != nil {
+	if err := os.WriteFile(trackedSettings, []byte(`{"modified": true}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -773,27 +767,16 @@ func TestClaudeSettingsCheck_GitStatusTrackedModified(t *testing.T) {
 
 	result := check.Run(ctx)
 
-	if result.Status != StatusError {
-		t.Errorf("expected StatusError for wrong location, got %v", result.Status)
-	}
-	// Should mention "local modifications"
-	found := false
+	// Tracked settings.json (even modified) in a worktree is the customer's project config.
+	// It should NOT be flagged as stale or wrong-location.
 	for _, d := range result.Details {
-		if strings.Contains(d, "local modifications") {
-			found = true
-			break
+		if strings.Contains(d, "wrong location") && strings.Contains(d, "settings.json") {
+			t.Errorf("tracked-modified settings.json should NOT be flagged as wrong location, got: %s", d)
 		}
-	}
-	if !found {
-		t.Errorf("expected details to mention local modifications, got %v", result.Details)
-	}
-	// Should also mention manual review
-	if !strings.Contains(result.FixHint, "manual review") {
-		t.Errorf("expected fix hint to mention manual review, got %q", result.FixHint)
 	}
 }
 
-func TestClaudeSettingsCheck_FixSkipsModifiedFiles(t *testing.T) {
+func TestClaudeSettingsCheck_FixPreservesModifiedFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
 
@@ -805,32 +788,27 @@ func TestClaudeSettingsCheck_FixSkipsModifiedFiles(t *testing.T) {
 	initTestGitRepo(t, rigDir)
 
 	// Create settings and commit it
-	wrongSettings := filepath.Join(rigDir, ".claude", "settings.json")
-	createValidSettings(t, wrongSettings)
-	gitAddAndCommit(t, rigDir, wrongSettings)
+	trackedSettings := filepath.Join(rigDir, ".claude", "settings.json")
+	createValidSettings(t, trackedSettings)
+	gitAddAndCommit(t, rigDir, trackedSettings)
 
 	// Modify the file after commit
-	if err := os.WriteFile(wrongSettings, []byte(`{"modified": true}`), 0644); err != nil {
+	if err := os.WriteFile(trackedSettings, []byte(`{"modified": true}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	check := NewClaudeSettingsCheck()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
-	// Run to detect
-	result := check.Run(ctx)
-	if result.Status != StatusError {
-		t.Fatalf("expected StatusError before fix, got %v", result.Status)
-	}
-
-	// Apply fix - should NOT delete the modified file
+	// Run to detect and fix
+	_ = check.Run(ctx)
 	if err := check.Fix(ctx); err != nil {
 		t.Fatalf("Fix failed: %v", err)
 	}
 
-	// Verify file still exists (was skipped)
-	if _, err := os.Stat(wrongSettings); os.IsNotExist(err) {
-		t.Error("expected modified file to be preserved, but it was deleted")
+	// Tracked-modified file should be preserved (customer's project config)
+	if _, err := os.Stat(trackedSettings); os.IsNotExist(err) {
+		t.Error("expected tracked-modified file to be preserved, but it was deleted")
 	}
 }
 
@@ -869,7 +847,7 @@ func TestClaudeSettingsCheck_FixDeletesUntrackedFiles(t *testing.T) {
 	}
 }
 
-func TestClaudeSettingsCheck_FixDeletesTrackedCleanFiles(t *testing.T) {
+func TestClaudeSettingsCheck_FixPreservesTrackedCleanFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
 
@@ -880,28 +858,25 @@ func TestClaudeSettingsCheck_FixDeletesTrackedCleanFiles(t *testing.T) {
 	}
 	initTestGitRepo(t, rigDir)
 
-	// Create settings and commit it (tracked, clean)
-	wrongSettings := filepath.Join(rigDir, ".claude", "settings.json")
-	createValidSettings(t, wrongSettings)
-	gitAddAndCommit(t, rigDir, wrongSettings)
+	// Create settings and commit it (tracked, clean) — customer's project config
+	trackedSettings := filepath.Join(rigDir, ".claude", "settings.json")
+	createValidSettings(t, trackedSettings)
+	gitAddAndCommit(t, rigDir, trackedSettings)
 
 	check := NewClaudeSettingsCheck()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
 	// Run to detect
-	result := check.Run(ctx)
-	if result.Status != StatusError {
-		t.Fatalf("expected StatusError before fix, got %v", result.Status)
-	}
+	_ = check.Run(ctx)
 
-	// Apply fix - should delete the tracked clean file
+	// Apply fix
 	if err := check.Fix(ctx); err != nil {
 		t.Fatalf("Fix failed: %v", err)
 	}
 
-	// Verify file was deleted
-	if _, err := os.Stat(wrongSettings); !os.IsNotExist(err) {
-		t.Error("expected tracked clean file to be deleted")
+	// Tracked settings.json should be preserved (customer's project config)
+	if _, err := os.Stat(trackedSettings); os.IsNotExist(err) {
+		t.Error("expected tracked settings.json to be preserved, but it was deleted")
 	}
 }
 

@@ -224,29 +224,10 @@ func (c *PrimingCheck) checkRigPriming(townRoot string) []primingIssue {
 			})
 		}
 
-		// Check for unexpected CLAUDE.md inside mayor/rig (pollutes user's repo)
-		// Agent-level CLAUDE.md belongs at mayor/, not mayor/rig/
-		mayorRigClaudeMd := filepath.Join(rigPath, "mayor", "rig", "CLAUDE.md")
-		if fileExists(mayorRigClaudeMd) {
-			issues = append(issues, primingIssue{
-				location:    fmt.Sprintf("%s/mayor/rig", rigName),
-				issueType:   "unexpected_claude_md",
-				description: "CLAUDE.md in source tree is unsupported and may conflict with Gas Town agent configuration",
-				fixable:     true,
-			})
-		}
-
-		// Check for unexpected CLAUDE.md inside refinery/rig (pollutes user's repo)
-		// Agent-level CLAUDE.md belongs at refinery/, not refinery/rig/
-		refineryRigClaudeMd := filepath.Join(rigPath, "refinery", "rig", "CLAUDE.md")
-		if fileExists(refineryRigClaudeMd) {
-			issues = append(issues, primingIssue{
-				location:    fmt.Sprintf("%s/refinery/rig", rigName),
-				issueType:   "unexpected_claude_md",
-				description: "CLAUDE.md in source tree is unsupported and may conflict with Gas Town agent configuration",
-				fixable:     true,
-			})
-		}
+		// NOTE: CLAUDE.md inside worktrees (mayor/rig, refinery/rig, crew/<name>,
+		// polecats/<name>/<rig>) is the customer's legitimate repo file.
+		// Sparse checkout has been removed — these files are no longer hidden.
+		// Gas Town's context comes from gt prime via SessionStart hook.
 
 		// Detect stale CLAUDE.md/AGENTS.md at intermediate directories.
 		// These are no longer created — only ~/gt/CLAUDE.md (town root) exists.
@@ -292,17 +273,6 @@ func (c *PrimingCheck) checkRigPriming(townRoot string) []primingIssue {
 				}
 				crewPath := filepath.Join(crewDir, crewEntry.Name())
 
-				// Check for unexpected CLAUDE.md inside crew worktree (pollutes user's repo)
-				crewClaudeMd := filepath.Join(crewPath, "CLAUDE.md")
-				if fileExists(crewClaudeMd) {
-					issues = append(issues, primingIssue{
-						location:    fmt.Sprintf("%s/crew/%s", rigName, crewEntry.Name()),
-						issueType:   "unexpected_claude_md",
-						description: "CLAUDE.md in source tree is unsupported and may conflict with Gas Town agent configuration",
-						fixable:     true,
-					})
-				}
-
 				// Check if beads redirect is set up (crew should redirect to rig)
 				beadsDir := beads.ResolveBeadsDir(crewPath)
 				primeMdPath := filepath.Join(beadsDir, "PRIME.md")
@@ -345,17 +315,6 @@ func (c *PrimingCheck) checkRigPriming(townRoot string) []primingIssue {
 				if !dirExists(polecatWorktree) {
 					// No worktree yet - skip (polecat may not be fully set up)
 					continue
-				}
-
-				// Check for unexpected CLAUDE.md inside polecat worktree (pollutes user's repo)
-				polecatClaudeMd := filepath.Join(polecatWorktree, "CLAUDE.md")
-				if fileExists(polecatClaudeMd) {
-					issues = append(issues, primingIssue{
-						location:    fmt.Sprintf("%s/polecats/%s/%s", rigName, pcEntry.Name(), rigName),
-						issueType:   "unexpected_claude_md",
-						description: "CLAUDE.md in source tree is unsupported and may conflict with Gas Town agent configuration",
-						fixable:     true,
-					})
 				}
 
 				// Check if beads redirect is set up in the worktree
@@ -470,14 +429,6 @@ func (c *PrimingCheck) Fix(ctx *CheckContext) error {
 				if err := beads.ProvisionPrimeMD(targetPath); err != nil {
 					errors = append(errors, fmt.Sprintf("%s: %v", issue.location, err))
 				}
-			}
-
-		case "unexpected_claude_md":
-			// Remove unexpected CLAUDE.md from inside repo worktrees
-			// Context should come from gt prime, not on-disk files
-			claudeMdPath := filepath.Join(ctx.TownRoot, issue.location, "CLAUDE.md")
-			if err := os.Remove(claudeMdPath); err != nil && !os.IsNotExist(err) {
-				errors = append(errors, fmt.Sprintf("%s: failed to remove CLAUDE.md: %v", issue.location, err))
 			}
 
 		case "stale_intermediate_instructions_md":

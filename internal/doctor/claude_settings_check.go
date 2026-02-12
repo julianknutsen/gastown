@@ -280,14 +280,26 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 		if !witnessHasRigDir {
 			witnessWorkDir = filepath.Join(rigPath, "witness")
 		}
-		// Always-stale paths: old filename at any location
-		for _, staleWitnessPath := range []string{
-			filepath.Join(rigPath, "witness", ".claude", "settings.json"),
-			filepath.Join(rigPath, "witness", "rig", ".claude", "settings.json"),
-		} {
-			if fileExists(staleWitnessPath) {
+		// Stale settings.json at witness locations
+		// Parent-level (witness/.claude/settings.json) is always a Gas Town artifact.
+		// Worktree-level (witness/rig/.claude/settings.json) may be customer-committed — skip if tracked.
+		witnessParentStale := filepath.Join(rigPath, "witness", ".claude", "settings.json")
+		if fileExists(witnessParentStale) {
+			files = append(files, staleSettingsInfo{
+				path:          witnessParentStale,
+				agentType:     "witness",
+				rigName:       rigName,
+				sessionName:   fmt.Sprintf("gt-%s-witness", rigName),
+				wrongLocation: true,
+				missing:       []string{fmt.Sprintf("stale settings (should be %s/.claude/settings.local.json)", filepath.Base(witnessWorkDir))},
+			})
+		}
+		witnessRigStale := filepath.Join(rigPath, "witness", "rig", ".claude", "settings.json")
+		if fileExists(witnessRigStale) {
+			gs := c.getGitFileStatus(witnessRigStale)
+			if gs != gitStatusTrackedClean && gs != gitStatusTrackedModified {
 				files = append(files, staleSettingsInfo{
-					path:          staleWitnessPath,
+					path:          witnessRigStale,
 					agentType:     "witness",
 					rigName:       rigName,
 					sessionName:   fmt.Sprintf("gt-%s-witness", rigName),
@@ -337,14 +349,26 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 		if !refineryHasRigDir {
 			refineryWorkDir = filepath.Join(rigPath, "refinery")
 		}
-		// Always-stale paths: old filename at any location
-		for _, staleRefineryPath := range []string{
-			filepath.Join(rigPath, "refinery", ".claude", "settings.json"),
-			filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.json"),
-		} {
-			if fileExists(staleRefineryPath) {
+		// Stale settings.json at refinery locations
+		// Parent-level (refinery/.claude/settings.json) is always a Gas Town artifact.
+		// Worktree-level (refinery/rig/.claude/settings.json) may be customer-committed — skip if tracked.
+		refineryParentStale := filepath.Join(rigPath, "refinery", ".claude", "settings.json")
+		if fileExists(refineryParentStale) {
+			files = append(files, staleSettingsInfo{
+				path:          refineryParentStale,
+				agentType:     "refinery",
+				rigName:       rigName,
+				sessionName:   fmt.Sprintf("gt-%s-refinery", rigName),
+				wrongLocation: true,
+				missing:       []string{fmt.Sprintf("stale settings (should be %s/.claude/settings.local.json)", filepath.Base(refineryWorkDir))},
+			})
+		}
+		refineryRigStale := filepath.Join(rigPath, "refinery", "rig", ".claude", "settings.json")
+		if fileExists(refineryRigStale) {
+			gs := c.getGitFileStatus(refineryRigStale)
+			if gs != gitStatusTrackedClean && gs != gitStatusTrackedModified {
 				files = append(files, staleSettingsInfo{
-					path:          staleRefineryPath,
+					path:          refineryRigStale,
 					agentType:     "refinery",
 					rigName:       rigName,
 					sessionName:   fmt.Sprintf("gt-%s-refinery", rigName),
@@ -406,6 +430,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			}
 		}
 		// Check individual crew workers for stale settings.json (should be settings.local.json)
+		// Skip if the file is tracked in git — it's the customer's legitimate project config.
 		if dirExists(crewDir) {
 			crewEntries, _ := os.ReadDir(crewDir)
 			for _, crewEntry := range crewEntries {
@@ -414,14 +439,17 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 				}
 				crewStaleSettings := filepath.Join(crewDir, crewEntry.Name(), ".claude", "settings.json")
 				if fileExists(crewStaleSettings) {
-					files = append(files, staleSettingsInfo{
-						path:          crewStaleSettings,
-						agentType:     "crew",
-						rigName:       rigName,
-						sessionName:   fmt.Sprintf("gt-%s-crew-%s", rigName, crewEntry.Name()),
-						wrongLocation: true,
-						missing:       []string{"stale settings.json (should be settings.local.json)"},
-					})
+					gs := c.getGitFileStatus(crewStaleSettings)
+					if gs != gitStatusTrackedClean && gs != gitStatusTrackedModified {
+						files = append(files, staleSettingsInfo{
+							path:          crewStaleSettings,
+							agentType:     "crew",
+							rigName:       rigName,
+							sessionName:   fmt.Sprintf("gt-%s-crew-%s", rigName, crewEntry.Name()),
+							wrongLocation: true,
+							missing:       []string{"stale settings.json (should be settings.local.json)"},
+						})
+					}
 				}
 				// Check for correct settings.local.json in crew working directory
 				crewCorrectSettings := filepath.Join(crewDir, crewEntry.Name(), ".claude", "settings.local.json")
@@ -465,22 +493,37 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			}
 		}
 		// Check individual polecats for stale settings
+		// Intermediate-level paths (polecats/<name>/) are always Gas Town artifacts.
+		// Worktree-level settings.json (polecats/<name>/<rig>/) may be customer-committed — skip if tracked.
 		if dirExists(polecatsDir) {
 			polecatEntries, _ := os.ReadDir(polecatsDir)
 			for _, pcEntry := range polecatEntries {
 				if !pcEntry.IsDir() || pcEntry.Name() == ".claude" {
 					continue
 				}
-				// Check for stale settings in various locations
-				stalePaths := []string{
+				// Parent-level stale paths — always Gas Town artifacts
+				for _, stalePath := range []string{
 					filepath.Join(polecatsDir, pcEntry.Name(), ".claude", "settings.json"),
 					filepath.Join(polecatsDir, pcEntry.Name(), ".claude", "settings.local.json"),
-					filepath.Join(polecatsDir, pcEntry.Name(), rigName, ".claude", "settings.json"),
-				}
-				for _, stalePath := range stalePaths {
+				} {
 					if fileExists(stalePath) {
 						files = append(files, staleSettingsInfo{
 							path:          stalePath,
+							agentType:     "polecat",
+							rigName:       rigName,
+							sessionName:   fmt.Sprintf("gt-%s-%s", rigName, pcEntry.Name()),
+							wrongLocation: true,
+							missing:       []string{"stale settings (should be settings.local.json in worktree)"},
+						})
+					}
+				}
+				// Worktree-level settings.json — skip if tracked (customer's project config)
+				pcWorktreeStale := filepath.Join(polecatsDir, pcEntry.Name(), rigName, ".claude", "settings.json")
+				if fileExists(pcWorktreeStale) {
+					gs := c.getGitFileStatus(pcWorktreeStale)
+					if gs != gitStatusTrackedClean && gs != gitStatusTrackedModified {
+						files = append(files, staleSettingsInfo{
+							path:          pcWorktreeStale,
 							agentType:     "polecat",
 							rigName:       rigName,
 							sessionName:   fmt.Sprintf("gt-%s-%s", rigName, pcEntry.Name()),

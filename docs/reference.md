@@ -358,25 +358,27 @@ via the SessionStart hook. No per-directory CLAUDE.md or AGENTS.md files are cre
 - AGENTS.md (for Codex) uses downward traversal from git root — parent directories are invisible, so per-directory AGENTS.md never worked
 - The real context comes from `gt prime`, making on-disk bootstrap pointers redundant
 
-### Sparse Checkout (Source Repo Isolation)
+### Customer Repo Files (CLAUDE.md and .claude/)
 
-When agents work on source repositories that have their own Claude Code configuration,
-Gas Town uses git sparse checkout to exclude Claude Code context files:
+Gas Town no longer uses git sparse checkout to hide customer repo files. Customer
+repositories can have their own `.claude/` directory and `CLAUDE.md` — these are
+preserved in all worktrees (crew, polecats, refinery, mayor/rig).
 
-```bash
-# Automatically configured for worktrees - excludes:
-# - .claude/       : settings, rules, agents, commands
-# - CLAUDE.md      : primary context file
-# - CLAUDE.local.md: personal context file
-# Note: .mcp.json is NOT excluded so worktrees inherit MCP server config
-git sparse-checkout set --no-cone '/*' '!/.claude/' '!/CLAUDE.md' '!/CLAUDE.local.md'
-```
+Gas Town's context comes from the town-root `CLAUDE.md` identity anchor
+(picked up by all agents via Claude Code's upward directory traversal),
+`gt prime` via the SessionStart hook, and the customer repo's own `CLAUDE.md`.
+These coexist safely because:
 
-This ensures agents use Gas Town's context, not the source repo's instructions.
-MCP servers defined in `.mcp.json` are inherited by all worktrees for tool access.
+- **`settings.local.json` takes precedence** over `settings.json` in Claude Code,
+  so Gas Town's agent-specific settings always win
+- **`gt prime` injects role context** ephemerally via SessionStart hook, which is
+  additive with the customer's `CLAUDE.md` — both are loaded
+- Only `.claude/settings.local.json` is gitignored (not the entire `.claude/` directory),
+  so customer skills, settings, and other `.claude/` files are visible
 
-**Doctor check**: `gt doctor` verifies sparse checkout is configured correctly.
-Run `gt doctor --fix` to update legacy configurations missing the newer patterns.
+**Doctor check**: `gt doctor` warns if legacy sparse checkout is still configured.
+Run `gt doctor --fix` to remove it. Tracked `settings.json` files in worktrees are
+recognized as customer project config and are not flagged as stale.
 
 ### Settings Inheritance
 

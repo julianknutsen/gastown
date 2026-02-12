@@ -201,11 +201,17 @@ func TestPrimingCheck_FixRemovesBadPolecatBeads(t *testing.T) {
 	}
 }
 
-// TestPrimingCheck_DetectsUnexpectedClaudeMdInMayorRig verifies that CLAUDE.md
-// inside mayor/rig/ (the source repo) is detected as an issue.
-func TestPrimingCheck_DetectsUnexpectedClaudeMdInMayorRig(t *testing.T) {
+// TestPrimingCheck_AllowsClaudeMdInMayorRig verifies that CLAUDE.md
+// inside mayor/rig/ (the customer's source repo) is NOT flagged.
+// With sparse checkout removed, this is the customer's legitimate file.
+func TestPrimingCheck_AllowsClaudeMdInMayorRig(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
+
+	// Create town root CLAUDE.md identity anchor
+	if err := os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Gas Town\nRun gt prime\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set up rig with .beads
 	rigBeadsDir := filepath.Join(tmpDir, rigName, ".beads")
@@ -222,9 +228,9 @@ func TestPrimingCheck_DetectsUnexpectedClaudeMdInMayorRig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create CLAUDE.md inside mayor/rig/ (WRONG location - inside source repo)
-	badClaudeMd := filepath.Join(mayorRigPath, "CLAUDE.md")
-	if err := os.WriteFile(badClaudeMd, []byte("# Bad CLAUDE.md\n"), 0644); err != nil {
+	// Create CLAUDE.md inside mayor/rig/ — customer's legitimate file
+	customerClaudeMd := filepath.Join(mayorRigPath, "CLAUDE.md")
+	if err := os.WriteFile(customerClaudeMd, []byte("# Customer CLAUDE.md\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -233,29 +239,24 @@ func TestPrimingCheck_DetectsUnexpectedClaudeMdInMayorRig(t *testing.T) {
 	ctx := &CheckContext{TownRoot: tmpDir}
 	result := check.Run(ctx)
 
-	// Should find the unexpected_claude_md issue
-	foundIssue := false
+	// Should NOT flag CLAUDE.md inside worktrees
 	for _, detail := range result.Details {
 		if strings.Contains(detail, "mayor/rig") && strings.Contains(detail, "CLAUDE.md") {
-			foundIssue = true
-			break
+			t.Errorf("CLAUDE.md inside mayor/rig should NOT be flagged (customer file), got: %s", detail)
 		}
-	}
-
-	if !foundIssue {
-		t.Errorf("expected to find unexpected CLAUDE.md issue for mayor/rig, got details: %v", result.Details)
-	}
-
-	if result.Status != StatusError {
-		t.Errorf("expected StatusError, got %v", result.Status)
 	}
 }
 
-// TestPrimingCheck_DetectsUnexpectedClaudeMdInRefineryRig verifies that CLAUDE.md
-// inside refinery/rig/ (the source repo worktree) is detected as an issue.
-func TestPrimingCheck_DetectsUnexpectedClaudeMdInRefineryRig(t *testing.T) {
+// TestPrimingCheck_AllowsClaudeMdInRefineryRig verifies that CLAUDE.md
+// inside refinery/rig/ (the customer's source repo worktree) is NOT flagged.
+func TestPrimingCheck_AllowsClaudeMdInRefineryRig(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
+
+	// Create town root CLAUDE.md identity anchor
+	if err := os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Gas Town\nRun gt prime\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set up rig with .beads
 	rigBeadsDir := filepath.Join(tmpDir, rigName, ".beads")
@@ -272,9 +273,9 @@ func TestPrimingCheck_DetectsUnexpectedClaudeMdInRefineryRig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create CLAUDE.md inside refinery/rig/ (WRONG location - inside source repo)
-	badClaudeMd := filepath.Join(refineryRigPath, "CLAUDE.md")
-	if err := os.WriteFile(badClaudeMd, []byte("# Bad CLAUDE.md\n"), 0644); err != nil {
+	// Create CLAUDE.md inside refinery/rig/ — customer's legitimate file
+	customerClaudeMd := filepath.Join(refineryRigPath, "CLAUDE.md")
+	if err := os.WriteFile(customerClaudeMd, []byte("# Customer CLAUDE.md\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -283,26 +284,25 @@ func TestPrimingCheck_DetectsUnexpectedClaudeMdInRefineryRig(t *testing.T) {
 	ctx := &CheckContext{TownRoot: tmpDir}
 	result := check.Run(ctx)
 
-	// Should find the unexpected_claude_md issue
-	foundIssue := false
+	// Should NOT flag CLAUDE.md inside worktrees
 	for _, detail := range result.Details {
 		if strings.Contains(detail, "refinery/rig") && strings.Contains(detail, "CLAUDE.md") {
-			foundIssue = true
-			break
+			t.Errorf("CLAUDE.md inside refinery/rig should NOT be flagged (customer file), got: %s", detail)
 		}
-	}
-
-	if !foundIssue {
-		t.Errorf("expected to find unexpected CLAUDE.md issue for refinery/rig, got details: %v", result.Details)
 	}
 }
 
-// TestPrimingCheck_DetectsUnexpectedClaudeMdInCrewWorktree verifies that CLAUDE.md
-// inside crew/<name>/ (the worktree itself) is detected as an issue.
-func TestPrimingCheck_DetectsUnexpectedClaudeMdInCrewWorktree(t *testing.T) {
+// TestPrimingCheck_AllowsClaudeMdInCrewWorktree verifies that CLAUDE.md
+// inside crew/<name>/ (the customer's worktree) is NOT flagged.
+func TestPrimingCheck_AllowsClaudeMdInCrewWorktree(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
 	crewName := "alice"
+
+	// Create town root CLAUDE.md identity anchor
+	if err := os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Gas Town\nRun gt prime\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set up rig with .beads
 	rigBeadsDir := filepath.Join(tmpDir, rigName, ".beads")
@@ -323,9 +323,9 @@ func TestPrimingCheck_DetectsUnexpectedClaudeMdInCrewWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create CLAUDE.md inside crew worktree (WRONG - inside source repo)
-	badClaudeMd := filepath.Join(crewWorktree, "CLAUDE.md")
-	if err := os.WriteFile(badClaudeMd, []byte("# Bad CLAUDE.md\n"), 0644); err != nil {
+	// Create CLAUDE.md inside crew worktree — customer's legitimate file
+	customerClaudeMd := filepath.Join(crewWorktree, "CLAUDE.md")
+	if err := os.WriteFile(customerClaudeMd, []byte("# Customer CLAUDE.md\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -334,26 +334,25 @@ func TestPrimingCheck_DetectsUnexpectedClaudeMdInCrewWorktree(t *testing.T) {
 	ctx := &CheckContext{TownRoot: tmpDir}
 	result := check.Run(ctx)
 
-	// Should find the unexpected_claude_md issue
-	foundIssue := false
+	// Should NOT flag CLAUDE.md inside worktrees
 	for _, detail := range result.Details {
 		if strings.Contains(detail, "crew/"+crewName) && strings.Contains(detail, "CLAUDE.md") {
-			foundIssue = true
-			break
+			t.Errorf("CLAUDE.md inside crew/%s should NOT be flagged (customer file), got: %s", crewName, detail)
 		}
-	}
-
-	if !foundIssue {
-		t.Errorf("expected to find unexpected CLAUDE.md issue for crew/%s, got details: %v", crewName, result.Details)
 	}
 }
 
-// TestPrimingCheck_DetectsUnexpectedClaudeMdInPolecatWorktree verifies that CLAUDE.md
-// inside polecats/<name>/<rigname>/ (the worktree) is detected as an issue.
-func TestPrimingCheck_DetectsUnexpectedClaudeMdInPolecatWorktree(t *testing.T) {
+// TestPrimingCheck_AllowsClaudeMdInPolecatWorktree verifies that CLAUDE.md
+// inside polecats/<name>/<rigname>/ (the customer's worktree) is NOT flagged.
+func TestPrimingCheck_AllowsClaudeMdInPolecatWorktree(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
 	polecatName := "testpc"
+
+	// Create town root CLAUDE.md identity anchor
+	if err := os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Gas Town\nRun gt prime\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set up rig with .beads
 	rigBeadsDir := filepath.Join(tmpDir, rigName, ".beads")
@@ -374,9 +373,9 @@ func TestPrimingCheck_DetectsUnexpectedClaudeMdInPolecatWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create CLAUDE.md inside polecat worktree (WRONG - inside source repo)
-	badClaudeMd := filepath.Join(polecatWorktree, "CLAUDE.md")
-	if err := os.WriteFile(badClaudeMd, []byte("# Bad CLAUDE.md\n"), 0644); err != nil {
+	// Create CLAUDE.md inside polecat worktree — customer's legitimate file
+	customerClaudeMd := filepath.Join(polecatWorktree, "CLAUDE.md")
+	if err := os.WriteFile(customerClaudeMd, []byte("# Customer CLAUDE.md\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -385,25 +384,25 @@ func TestPrimingCheck_DetectsUnexpectedClaudeMdInPolecatWorktree(t *testing.T) {
 	ctx := &CheckContext{TownRoot: tmpDir}
 	result := check.Run(ctx)
 
-	// Should find the unexpected_claude_md issue
-	foundIssue := false
+	// Should NOT flag CLAUDE.md inside worktrees
 	for _, detail := range result.Details {
 		if strings.Contains(detail, "polecats/"+polecatName) && strings.Contains(detail, "CLAUDE.md") {
-			foundIssue = true
-			break
+			t.Errorf("CLAUDE.md inside polecats/%s should NOT be flagged (customer file), got: %s", polecatName, detail)
 		}
-	}
-
-	if !foundIssue {
-		t.Errorf("expected to find unexpected CLAUDE.md issue for polecats/%s, got details: %v", polecatName, result.Details)
 	}
 }
 
-// TestPrimingCheck_FixRemovesUnexpectedClaudeMd verifies that doctor --fix
-// removes CLAUDE.md files from inside source repos.
-func TestPrimingCheck_FixRemovesUnexpectedClaudeMd(t *testing.T) {
+// TestPrimingCheck_FixPreservesCustomerClaudeMd verifies that doctor --fix
+// does NOT delete CLAUDE.md files from inside source repo worktrees.
+// With sparse checkout removed, these are the customer's legitimate files.
+func TestPrimingCheck_FixPreservesCustomerClaudeMd(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
+
+	// Create town root CLAUDE.md identity anchor
+	if err := os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Gas Town\nRun gt prime\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set up rig with .beads
 	rigBeadsDir := filepath.Join(tmpDir, rigName, ".beads")
@@ -414,19 +413,14 @@ func TestPrimingCheck_FixRemovesUnexpectedClaudeMd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create mayor/rig/ with bad CLAUDE.md
+	// Create mayor/rig/ with customer's CLAUDE.md
 	mayorRigPath := filepath.Join(tmpDir, rigName, "mayor", "rig")
 	if err := os.MkdirAll(mayorRigPath, 0755); err != nil {
 		t.Fatal(err)
 	}
-	badClaudeMd := filepath.Join(mayorRigPath, "CLAUDE.md")
-	if err := os.WriteFile(badClaudeMd, []byte("# Bad CLAUDE.md\n"), 0644); err != nil {
+	customerClaudeMd := filepath.Join(mayorRigPath, "CLAUDE.md")
+	if err := os.WriteFile(customerClaudeMd, []byte("# Customer CLAUDE.md\n"), 0644); err != nil {
 		t.Fatal(err)
-	}
-
-	// Verify bad file exists before fix
-	if _, err := os.Stat(badClaudeMd); os.IsNotExist(err) {
-		t.Fatal("test setup failed: bad CLAUDE.md should exist")
 	}
 
 	// Run priming check and fix
@@ -438,9 +432,9 @@ func TestPrimingCheck_FixRemovesUnexpectedClaudeMd(t *testing.T) {
 		t.Fatalf("Fix() failed: %v", err)
 	}
 
-	// Verify bad CLAUDE.md was removed
-	if _, err := os.Stat(badClaudeMd); err == nil {
-		t.Errorf("bad CLAUDE.md should have been removed: %s", badClaudeMd)
+	// Verify customer's CLAUDE.md was NOT removed
+	if _, err := os.Stat(customerClaudeMd); os.IsNotExist(err) {
+		t.Errorf("customer's CLAUDE.md should NOT have been removed: %s", customerClaudeMd)
 	}
 }
 
