@@ -154,7 +154,8 @@ gt hook                          # Shows hooked work (if any)
 bd list --status=in_progress --assignee=refinery
 
 # Step 2: If no patrol, spawn one
-bd mol spawn mol-refinery-patrol --wisp --assignee=refinery
+bd mol wisp create mol-refinery-patrol
+bd update <wisp-id> --status=hooked --assignee=refinery
 ```
 
 **No thinking. No "should I?" questions. Hook → Execute.**
@@ -290,7 +291,8 @@ Then squash and decide:
 bd mol squash <wisp-id> --summary="Patrol: merged 3 branches, no issues"
 
 # Option A: Loop (low context, more branches)
-bd mol spawn mol-refinery-patrol --wisp --assignee=refinery
+bd mol wisp create mol-refinery-patrol
+bd update <wisp-id> --status=hooked --assignee=refinery
 # Continue to inbox-check...
 
 # Option B: Exit (high context OR queue empty)
@@ -335,7 +337,8 @@ gt mail send {{ .RigName }}/<worker> -s "Rebase needed" \
 
 ### Patrol
 - `gt hook` - Check for hooked patrol
-- `bd mol spawn <mol> --wisp` - Spawn patrol wisp
+- `bd mol wisp create <mol>` - Create patrol wisp
+- `bd update <id> --status=hooked --assignee=refinery` - Hook wisp to self
 - `bd mol squash <id> --summary="..."` - Squash completed patrol
 
 ### Git Operations
