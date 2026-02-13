@@ -35,25 +35,16 @@ jobs:
                 // Skip PRs (the issues API returns both)
                 if (issue.pull_request) continue;
 
-                // Check if the label was applied after the last non-bot comment
-                // by looking at whether the most recent comment is from the reporter
-                const comments = await github.rest.issues.listComments({
+                // Find when the label was most recently applied (paginate to
+                // handle issues with many events)
+                const events = await github.paginate(github.rest.issues.listEvents, {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issue.number,
-                  per_page: 5,
-                  direction: 'desc',
+                  per_page: 100,
                 });
 
-                // Find when the label was applied
-                const events = await github.rest.issues.listEvents({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  per_page: 50,
-                });
-
-                const labelEvent = events.data
+                const labelEvent = events
                   .filter(e => e.event === 'labeled' && e.label?.name === label)
                   .pop();
 
@@ -61,8 +52,18 @@ jobs:
 
                 const labeledAt = new Date(labelEvent.created_at);
 
-                // Check for any comment from the issue author AFTER the label was applied
-                const authorReplied = comments.data.some(c =>
+                // Check for any comment from the issue author AFTER the label
+                // was applied. Paginate to ensure we don't miss replies on
+                // issues with many comments (the API returns ascending order).
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  since: labeledAt.toISOString(),
+                  per_page: 100,
+                });
+
+                const authorReplied = comments.some(c =>
                   c.user?.login === issue.user?.login &&
                   new Date(c.created_at) > labeledAt
                 );
