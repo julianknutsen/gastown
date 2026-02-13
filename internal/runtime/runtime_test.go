@@ -285,6 +285,61 @@ func TestEnsureSettingsForRole_UnknownProvider(t *testing.T) {
 	}
 }
 
+func TestEnsureSettingsForRole_OpenCodeUsesWorkDir(t *testing.T) {
+	// OpenCode plugins must be installed in workDir (not settingsDir) because
+	// OpenCode has no --settings equivalent for path redirection.
+	settingsDir := t.TempDir()
+	workDir := t.TempDir()
+
+	rc := &config.RuntimeConfig{
+		Hooks: &config.RuntimeHooksConfig{
+			Provider:     "opencode",
+			Dir:          "plugins",
+			SettingsFile: "gastown.js",
+		},
+	}
+
+	err := EnsureSettingsForRole(settingsDir, workDir, "crew", rc)
+	if err != nil {
+		t.Fatalf("EnsureSettingsForRole() error = %v", err)
+	}
+
+	// Plugin should be in workDir, not settingsDir
+	if _, err := os.Stat(settingsDir + "/plugins/gastown.js"); err == nil {
+		t.Error("OpenCode plugin should NOT be in settingsDir")
+	}
+	if _, err := os.Stat(workDir + "/plugins/gastown.js"); err != nil {
+		t.Error("OpenCode plugin should be in workDir")
+	}
+}
+
+func TestEnsureSettingsForRole_ClaudeUsesSettingsDir(t *testing.T) {
+	// Claude settings must be installed in settingsDir (passed via --settings flag).
+	settingsDir := t.TempDir()
+	workDir := t.TempDir()
+
+	rc := &config.RuntimeConfig{
+		Hooks: &config.RuntimeHooksConfig{
+			Provider:     "claude",
+			Dir:          ".claude",
+			SettingsFile: "settings.json",
+		},
+	}
+
+	err := EnsureSettingsForRole(settingsDir, workDir, "crew", rc)
+	if err != nil {
+		t.Fatalf("EnsureSettingsForRole() error = %v", err)
+	}
+
+	// Settings should be in settingsDir, not workDir
+	if _, err := os.Stat(settingsDir + "/.claude/settings.json"); err != nil {
+		t.Error("Claude settings should be in settingsDir")
+	}
+	if _, err := os.Stat(workDir + "/.claude/settings.json"); err == nil {
+		t.Error("Claude settings should NOT be in workDir when dirs differ")
+	}
+}
+
 func TestGetStartupFallbackInfo_HooksWithPrompt(t *testing.T) {
 	// Claude: hooks enabled, prompt mode "arg"
 	rc := &config.RuntimeConfig{

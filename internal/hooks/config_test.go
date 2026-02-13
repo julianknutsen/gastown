@@ -134,6 +134,7 @@ func TestValidTarget(t *testing.T) {
 		{"witness", true},
 		{"refinery", true},
 		{"polecats", true},
+		{"polecat", true},
 		{"mayor", true},
 		{"deacon", true},
 		{"rig", false},
@@ -153,6 +154,35 @@ func TestValidTarget(t *testing.T) {
 		t.Run(tt.target, func(t *testing.T) {
 			if got := ValidTarget(tt.target); got != tt.valid {
 				t.Errorf("ValidTarget(%q) = %v, want %v", tt.target, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestNormalizeTarget(t *testing.T) {
+	tests := []struct {
+		input      string
+		normalized string
+		valid      bool
+	}{
+		{"crew", "crew", true},
+		{"polecats", "polecats", true},
+		{"polecat", "polecats", true},
+		{"gastown/polecats", "gastown/polecats", true},
+		{"gastown/polecat", "gastown/polecats", true},
+		{"mayor", "mayor", true},
+		{"invalid", "", false},
+		{"gastown/invalid", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, ok := NormalizeTarget(tt.input)
+			if ok != tt.valid {
+				t.Errorf("NormalizeTarget(%q) valid = %v, want %v", tt.input, ok, tt.valid)
+			}
+			if got != tt.normalized {
+				t.Errorf("NormalizeTarget(%q) = %q, want %q", tt.input, got, tt.normalized)
 			}
 		})
 	}
@@ -500,6 +530,48 @@ func TestDiscoverTargets(t *testing.T) {
 	for _, expected := range []string{"mayor", "deacon", "testrig/crew", "testrig/witness"} {
 		if !found[expected] {
 			t.Errorf("expected target %q not found", expected)
+		}
+	}
+}
+
+func TestDiscoverTargets_RoleNames(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	os.MkdirAll(filepath.Join(tmpDir, "mayor"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "deacon"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "rig1", "crew", "alice"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "rig1", "polecats", "toast"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "rig1", "witness"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "rig1", "refinery"), 0755)
+
+	targets, err := DiscoverTargets(tmpDir)
+	if err != nil {
+		t.Fatalf("DiscoverTargets failed: %v", err)
+	}
+
+	// Verify Role field uses singular form (matching RoleSettingsDir conventions)
+	roleByKey := make(map[string]string)
+	for _, tgt := range targets {
+		roleByKey[tgt.Key] = tgt.Role
+	}
+
+	expected := map[string]string{
+		"mayor":         "mayor",
+		"deacon":        "deacon",
+		"rig1/crew":     "crew",
+		"rig1/polecats": "polecat",
+		"rig1/witness":  "witness",
+		"rig1/refinery": "refinery",
+	}
+
+	for key, wantRole := range expected {
+		gotRole, ok := roleByKey[key]
+		if !ok {
+			t.Errorf("target %q not found", key)
+			continue
+		}
+		if gotRole != wantRole {
+			t.Errorf("target %q: Role = %q, want %q", key, gotRole, wantRole)
 		}
 	}
 }

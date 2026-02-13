@@ -133,16 +133,13 @@ type Target struct {
 	Path string // Full path to .claude/settings.json
 	Key  string // Override key: "gastown/crew", "mayor", etc.
 	Rig  string // Rig name or empty for town-level
-	Role string // crew, witness, refinery, polecats, mayor, deacon
+	Role string // Informational only — does NOT participate in override resolution (Key does). Singular form matching RoleSettingsDir: crew, witness, refinery, polecat, mayor, deacon.
 }
 
 // DisplayKey returns a human-readable label for the target.
 // For targets with a rig, shows "rig/role"; for town-level targets, shows the role.
 func (t Target) DisplayKey() string {
-	if t.Rig != "" {
-		return t.Rig + "/" + t.Role
-	}
-	return t.Role
+	return t.Key
 }
 
 // Merge merges an override config into a base config using per-matcher merging.
@@ -247,7 +244,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 				Path: filepath.Join(polecatsDir, ".claude", "settings.json"),
 				Key:  rigName + "/polecats",
 				Rig:  rigName,
-				Role: "polecats",
+				Role: "polecat",
 			})
 		}
 
@@ -407,9 +404,15 @@ func MarshalConfig(cfg *HooksConfig) ([]byte, error) {
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
-// ValidTarget returns true if the target string is a valid override target.
-// Valid targets are roles (crew, witness, etc.) or rig/role combinations.
-func ValidTarget(target string) bool {
+// NormalizeTarget normalizes a target string, mapping singular role aliases
+// to their canonical forms (e.g., "polecat" → "polecats", "rig/polecat" → "rig/polecats").
+// Returns the normalized target and true if valid, or ("", false) if invalid.
+func NormalizeTarget(target string) (string, bool) {
+	// Alias map: singular → canonical
+	aliases := map[string]string{
+		"polecat": "polecats",
+	}
+
 	validRoles := map[string]bool{
 		"crew": true, "witness": true, "refinery": true,
 		"polecats": true, "mayor": true, "deacon": true,
@@ -417,16 +420,33 @@ func ValidTarget(target string) bool {
 
 	// Simple role target
 	if validRoles[target] {
-		return true
+		return target, true
+	}
+	if canonical, ok := aliases[target]; ok {
+		return canonical, true
 	}
 
 	// Rig/role target (e.g., "gastown/crew")
 	parts := strings.SplitN(target, "/", 2)
-	if len(parts) == 2 && parts[0] != "" && validRoles[parts[1]] {
-		return true
+	if len(parts) == 2 && parts[0] != "" {
+		role := parts[1]
+		if validRoles[role] {
+			return target, true
+		}
+		if canonical, ok := aliases[role]; ok {
+			return parts[0] + "/" + canonical, true
+		}
 	}
 
-	return false
+	return "", false
+}
+
+// ValidTarget returns true if the target string is a valid override target.
+// Valid targets are roles (crew, witness, etc.) or rig/role combinations.
+// Accepts singular aliases (e.g., "polecat") — use NormalizeTarget to get canonical form.
+func ValidTarget(target string) bool {
+	_, ok := NormalizeTarget(target)
+	return ok
 }
 
 // DefaultBase returns a sensible default base configuration.

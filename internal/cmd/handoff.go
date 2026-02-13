@@ -411,6 +411,12 @@ func buildRestartCommand(sessionName string) (string, error) {
 	}
 	gtRole := identity.GTRole()
 
+	// Derive rigPath from session identity for --settings flag resolution
+	rigPath := ""
+	if identity.Rig != "" {
+		rigPath = filepath.Join(townRoot, identity.Rig)
+	}
+
 	// Build startup beacon for predecessor discovery via /resume
 	// Use FormatStartupBeacon instead of bare "gt prime" which confuses agents
 	// The SessionStart hook handles context injection (gt prime --hook)
@@ -441,12 +447,12 @@ func buildRestartCommand(sessionName string) (string, error) {
 	var runtimeCmd string
 	if currentAgent != "" {
 		var err error
-		runtimeCmd, err = config.GetRuntimeCommandWithPromptAndAgentOverride("", beacon, currentAgent)
+		runtimeCmd, err = config.GetRuntimeCommandWithPromptAndAgentOverride(rigPath, beacon, currentAgent)
 		if err != nil {
 			return "", fmt.Errorf("resolving agent config: %w", err)
 		}
 	} else {
-		runtimeCmd = config.GetRuntimeCommandWithPrompt("", beacon)
+		runtimeCmd = config.GetRuntimeCommandWithPrompt(rigPath, beacon)
 	}
 
 	// Build environment exports - role vars first, then Claude vars
@@ -459,14 +465,14 @@ func buildRestartCommand(sessionName string) (string, error) {
 		// Otherwise, fall back to role-based resolution.
 		var runtimeConfig *config.RuntimeConfig
 		if currentAgent != "" {
-			rc, _, err := config.ResolveAgentConfigWithOverride(townRoot, "", currentAgent)
+			rc, _, err := config.ResolveAgentConfigWithOverride(townRoot, rigPath, currentAgent)
 			if err == nil {
 				runtimeConfig = rc
 			} else {
-				runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, "")
+				runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath)
 			}
 		} else {
-			runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, "")
+			runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath)
 		}
 		agentEnv = runtimeConfig.Env
 		exports = append(exports, "GT_ROLE="+gtRole)

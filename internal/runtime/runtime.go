@@ -42,7 +42,9 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 			return err
 		}
 	case "opencode":
-		if err := opencode.EnsurePluginAt(settingsDir, rc.Hooks.Dir, rc.Hooks.SettingsFile); err != nil {
+		// OpenCode plugins stay in workDir — OpenCode has no --settings equivalent
+		// for path redirection, so it discovers plugins from the working directory.
+		if err := opencode.EnsurePluginAt(workDir, rc.Hooks.Dir, rc.Hooks.SettingsFile); err != nil {
 			return err
 		}
 	}

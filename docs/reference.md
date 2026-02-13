@@ -377,20 +377,22 @@ a git clone that holds the canonical `.beads/` database for that rig.
 
 ### Settings File Locations
 
-Claude Code does NOT traverse parent directories for `settings.local.json` —
-it only reads settings from the working directory. Settings are installed at
-each agent's working directory at startup:
+Settings are installed in gastown-managed parent directories and passed to
+Claude Code via the `--settings` flag. This keeps customer repos clean:
 
 ```
 ~/gt/
-├── mayor/.claude/settings.local.json              # Mayor settings
-├── deacon/.claude/settings.local.json             # Deacon settings
+├── mayor/.claude/settings.json              # Mayor settings (cwd = settings dir)
+├── deacon/.claude/settings.json             # Deacon settings (cwd = settings dir)
 └── <rig>/
-    ├── witness/rig/.claude/settings.local.json    # Witness settings
-    ├── refinery/rig/.claude/settings.local.json   # Refinery settings
-    ├── crew/<name>/.claude/settings.local.json    # Per-crew-member settings
-    └── polecats/<name>/<rig>/.claude/settings.local.json  # Per-polecat settings
+    ├── crew/.claude/settings.json           # Shared by all crew members
+    ├── polecats/.claude/settings.json       # Shared by all polecats
+    ├── witness/.claude/settings.json        # Witness settings
+    └── refinery/.claude/settings.json       # Refinery settings
 ```
+
+The `--settings` flag loads these as a separate priority tier that merges
+additively with any project-level settings in the customer repo.
 
 ### CLAUDE.md
 
@@ -416,12 +418,12 @@ Gas Town's context comes from the town-root `CLAUDE.md` identity anchor
 `gt prime` via the SessionStart hook, and the customer repo's own `CLAUDE.md`.
 These coexist safely because:
 
-- **`settings.local.json` takes precedence** over `settings.json` in Claude Code,
-  so Gas Town's agent-specific settings always win
+- **`--settings` flag provides Gas Town settings** as a separate tier that merges
+  additively with customer project settings, so both coexist cleanly
 - **`gt prime` injects role context** ephemerally via SessionStart hook, which is
   additive with the customer's `CLAUDE.md` — both are loaded
-- Only `.claude/settings.local.json` is gitignored (not the entire `.claude/` directory),
-  so customer skills, settings, and other `.claude/` files are visible
+- Gas Town settings live in parent directories (not in customer repos), so
+  customer `.claude/` files are fully preserved
 
 **Doctor check**: `gt doctor` warns if legacy sparse checkout is still configured.
 Run `gt doctor --fix` to remove it. Tracked `settings.json` files in worktrees are
@@ -429,14 +431,16 @@ recognized as customer project config and are not flagged as stale.
 
 ### Settings Inheritance
 
-Claude Code's settings search order (first match wins):
+Claude Code's settings are layered from multiple sources:
 
-1. `.claude/settings.json` in current working directory
+1. `.claude/settings.json` in current working directory (customer project)
 2. `.claude/settings.json` in parent directories (traversing up)
 3. `~/.claude/settings.json` (user global settings)
+4. `--settings <path>` flag (loaded as a separate additive tier)
 
-Gas Town places settings at each agent's working directory root, so agents
-find their role-specific settings before reaching any parent or global config.
+Gas Town uses the `--settings` flag to inject role-specific settings from
+gastown-managed parent directories. This merges additively with customer
+project settings rather than overriding them.
 
 ### Settings Templates
 
@@ -454,8 +458,8 @@ at session start. Interactive agents wait for user prompts.
 
 | Problem | Solution |
 |---------|----------|
-| Agent using wrong settings | Check `gt doctor`, verify settings.local.json |
-| Settings not found | Ensure `.claude/settings.local.json` exists at role home |
+| Agent using wrong settings | Check `gt doctor`, verify `.claude/settings.json` in role parent dir |
+| Settings not found | Run `gt install` to recreate settings, or `gt doctor --fix` |
 | Source repo settings leaking | Run `gt doctor --fix` to remove legacy sparse checkout |
 | Mayor settings affecting polecats | Mayor should run in `mayor/`, not town root |
 
