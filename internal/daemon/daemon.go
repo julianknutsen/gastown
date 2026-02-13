@@ -382,12 +382,7 @@ func (d *Daemon) heartbeat(state *State) {
 	}
 
 	// 6. Ensure Mayor is running (restart if dead)
-	// Check patrol config - can be disabled in mayor/daemon.json
-	if IsPatrolEnabled(d.patrolConfig, "mayor") {
-		d.ensureMayorRunning()
-	} else {
-		d.logger.Printf("Mayor patrol disabled in config, skipping")
-	}
+	d.ensureMayorRunning()
 
 	// 7. Trigger pending polecat spawns (bootstrap mode - ZFC violation acceptable)
 	// This ensures polecats get nudged even when Deacon isn't in a patrol cycle.
@@ -786,33 +781,15 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 }
 
 // ensureMayorRunning ensures the Mayor is running.
-// Without Mayor supervision, work dispatch stalls until human intervention via 'gt mayor attach'.
+// Uses mayor.Manager for consistent startup behavior (zombie detection, GUPP, etc.).
 func (d *Daemon) ensureMayorRunning() {
 	mgr := mayor.NewManager(d.config.TownRoot)
 
-	running, err := mgr.IsRunning()
-	if err != nil {
-		d.logger.Printf("Error checking Mayor status: %v", err)
-		return
-	}
-
-	if running {
-		// Mayor is running - check for zombie state (tmux alive but Claude dead)
-		sessionName := mgr.SessionName()
-		if d.tmux.IsAgentAlive(sessionName) {
-			// All good - Mayor is running and Claude is active
+	if err := mgr.Start(""); err != nil {
+		if err == mayor.ErrAlreadyRunning {
+			// Mayor is running - nothing to do
 			return
 		}
-		// Zombie session - kill and restart
-		d.logger.Printf("Mayor session %s is zombie (Claude dead), killing and restarting", sessionName)
-		if err := d.tmux.KillSessionWithProcesses(sessionName); err != nil {
-			d.logger.Printf("Error killing zombie Mayor session: %v", err)
-		}
-		// Fall through to restart
-	}
-
-	// Start Mayor
-	if err := mgr.Start(""); err != nil {
 		d.logger.Printf("Error starting Mayor: %v", err)
 		return
 	}
