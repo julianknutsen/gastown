@@ -22,6 +22,7 @@ func TestRoutesJSONLCorruption(t *testing.T) {
 	if _, err := exec.LookPath("bd"); err != nil {
 		t.Skip("bd not installed, skipping test")
 	}
+	requireDoltServer(t)
 
 	t.Run("TownLevelRoutesNotCorrupted", func(t *testing.T) {
 		// Test that gt install creates issues.jsonl before routes.jsonl

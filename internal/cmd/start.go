@@ -461,10 +461,7 @@ func runShutdown(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
 
-	// Get session names for categorization
-	mayorSession := getMayorSessionName()
-	deaconSession := getDeaconSessionName()
-	toStop, preserved := categorizeSessions(sessions, mayorSession, deaconSession)
+	toStop, preserved := categorizeSessions(sessions)
 
 	if len(toStop) == 0 {
 		fmt.Printf("%s Gas Town was not running\n", style.Dim.Render("○"))
@@ -512,8 +509,7 @@ func runShutdown(cmd *cobra.Command, args []string) error {
 }
 
 // categorizeSessions splits sessions into those to stop and those to preserve.
-// mayorSession and deaconSession are the dynamic session names for the current town.
-func categorizeSessions(sessions []string, mayorSession, deaconSession string) (toStop, preserved []string) {
+func categorizeSessions(sessions []string) (toStop, preserved []string) {
 	for _, sess := range sessions {
 		// Gas Town sessions use gt- (rig-level) or hq- (town-level) prefix
 		if !strings.HasPrefix(sess, "gt-") && !strings.HasPrefix(sess, "hq-") {

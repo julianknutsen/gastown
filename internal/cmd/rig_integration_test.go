@@ -993,6 +993,7 @@ func TestAgentWorktreesStayClean(t *testing.T) {
 	if _, err := exec.LookPath("bd"); err != nil {
 		t.Skip("bd not installed, skipping integration test")
 	}
+	requireDoltServer(t)
 
 	testCases := []struct {
 		name            string
