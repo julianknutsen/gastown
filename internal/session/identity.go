@@ -146,6 +146,9 @@ func ParseSessionName(session string) (*AgentIdentity, error) {
 
 	// Legacy format: gt-witness-<rig> or gt-refinery-<rig>
 	// (role appears before rig, opposite of canonical format)
+	// NOTE: This collides with rigs named "witness" or "refinery" —
+	// polecats in such rigs would be misidentified as patrol agents.
+	// Restriction: do not name a rig "witness" or "refinery".
 	if parts[0] == "witness" && len(parts) >= 2 {
 		rig := strings.Join(parts[1:], "-")
 		return &AgentIdentity{Role: RoleWitness, Rig: rig}, nil

@@ -463,6 +463,7 @@ func createCleanupWisp(workDir, polecatName, issueID, branch string) (string, er
 
 	output, err := util.ExecWithOutput(workDir, "bd", "create",
 		"--ephemeral",
+		"--json",
 		"--title", title,
 		"--description", description,
 		"--labels", labels,
@@ -471,21 +472,20 @@ func createCleanupWisp(workDir, polecatName, issueID, branch string) (string, er
 		return "", err
 	}
 
-	// Extract wisp ID from output (bd create outputs "Created: <id>")
+	// Parse JSON output from bd create --json
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(output), &created); err == nil && created.ID != "" {
+		return created.ID, nil
+	}
+
+	// Fallback: extract from "Created: <id>" format
 	if strings.HasPrefix(output, "Created:") {
 		return strings.TrimSpace(strings.TrimPrefix(output, "Created:")), nil
 	}
 
-	// Try to extract ID from output
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		// Look for bead ID pattern (e.g., "gt-abc123")
-		if strings.Contains(line, "-") && len(line) < 20 {
-			return line, nil
-		}
-	}
-
-	return output, nil
+	return "", fmt.Errorf("could not parse bead ID from bd create output: %q", output)
 }
 
 // createSwarmWisp creates a wisp to track swarm (batch) work.

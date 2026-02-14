@@ -636,12 +636,9 @@ func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) {
 	// The slot is held while conflict resolution is in progress
 	holder := e.rig.Name + "/refinery"
 	if err := e.mergeSlotRelease(holder); err != nil {
-		// Not an error if slot wasn't held - it's optional
-		// Only log if it seems like an actual issue
-		errStr := err.Error()
-		if !strings.Contains(errStr, "not held") && !strings.Contains(errStr, "not found") {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to release merge slot: %v\n", err)
-		}
+		// Best-effort: slot release failures are always non-fatal.
+		// Slot may not have been held (optional acquisition) or may have expired.
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Note: merge slot release: %v\n", err)
 	} else {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
 	}
@@ -805,9 +802,9 @@ func (e *Engineer) createConflictResolutionTaskForMR(mr *MRInfo, _ ProcessResult
 			_, _ = fmt.Fprintf(e.output, "[Engineer] Merge slot held by %s - deferring conflict resolution\n", status.Holder)
 			_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s will retry after current resolution completes\n", mr.ID)
 			return "", nil // Not an error - just deferred
+		} else {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Acquired merge slot: %s\n", slotID)
 		}
-		// Either we acquired the slot, or status indicates we already hold it
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Acquired merge slot: %s\n", slotID)
 	}
 
 	// Get the current main SHA for conflict tracking

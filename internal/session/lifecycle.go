@@ -235,6 +235,8 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (*StartResult, error) {
 	if cfg.VerifySurvived {
 		running, err := t.HasSession(cfg.SessionID)
 		if err != nil {
+			// Clean up session on verification error to prevent orphan
+			_ = t.KillSessionWithProcesses(cfg.SessionID)
 			return nil, fmt.Errorf("verifying session: %w", err)
 		}
 		if !running {

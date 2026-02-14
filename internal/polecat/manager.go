@@ -1125,17 +1125,9 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 		return nil, fmt.Errorf("creating fresh worktree from %s: %w", startPoint, err)
 	}
 
-	// New worktree created successfully — now safe to reset old bead and remove old worktree.
-	// Resetting the bead AFTER creation prevents inconsistent state if creation fails.
-	// NOTE: We use ResetAgentBeadForReuse instead of CloseAndClearAgentBead to avoid
-	// the close/reopen cycle that fails on Dolt backend (gt-14b8o).
-	agentID := m.agentBeadID(name)
-	if err := m.beads.ResetAgentBeadForReuse(agentID, "polecat repair"); err != nil {
-		if !errors.Is(err, beads.ErrNotFound) {
-			fmt.Printf("Warning: could not reset old agent bead %s: %v\n", agentID, err)
-		}
-	}
-
+	// New worktree created successfully — now safe to remove old worktree and reset bead.
+	// Remove old worktree BEFORE resetting bead to prevent name collision if a new
+	// spawn sees the clean bead while the old worktree still exists.
 	if err := repoGit.WorktreeRemove(oldClonePath, true); err != nil {
 		// Fall back to direct removal
 		if removeErr := os.RemoveAll(oldClonePath); removeErr != nil {
@@ -1143,6 +1135,16 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 			_ = repoGit.WorktreeRemove(tmpClonePath, true)
 			_ = os.RemoveAll(tmpClonePath)
 			return nil, fmt.Errorf("removing old clone path: %w", removeErr)
+		}
+	}
+
+	// Reset agent bead AFTER old worktree is confirmed removed.
+	// NOTE: We use ResetAgentBeadForReuse instead of CloseAndClearAgentBead to avoid
+	// the close/reopen cycle that fails on Dolt backend (gt-14b8o).
+	agentID := m.agentBeadID(name)
+	if err := m.beads.ResetAgentBeadForReuse(agentID, "polecat repair"); err != nil {
+		if !errors.Is(err, beads.ErrNotFound) {
+			fmt.Printf("Warning: could not reset old agent bead %s: %v\n", agentID, err)
 		}
 	}
 
