@@ -5,14 +5,23 @@
 # - Clean filesystem without existing Gas Town installations
 # - Independent beads daemon and Dolt server
 #
-# Usage:
+# Usage (install/infra tests):
 #   docker build -f Dockerfile.e2e -t gastown-test .
 #   docker run --rm gastown-test
+#
+# Usage (agent e2e tests via LiteLLM + OpenRouter):
+#   docker build -f Dockerfile.e2e -t gastown-agent-test .
+#   docker run --rm -e OPENROUTER_API_KEY gastown-agent-test \
+#     sh -c "/app/scripts/start-litellm.sh && go test -tags=e2e_agent -timeout=10m -v -count=1 -parallel 1 -run TestAgent ./internal/cmd/..."
 
 FROM golang:1.25-alpine
 
 # Install dependencies including CGO build requirements for beads daemon
 # procps and lsof are required by gt dolt start for process verification
+# python3/pip: LiteLLM proxy for agent e2e tests
+# nodejs/npm: Claude Code CLI for agent e2e tests
+# tmux: polecat session management
+# curl: LiteLLM health check
 RUN apk add --no-cache \
     git \
     bash \
@@ -21,7 +30,19 @@ RUN apk add --no-cache \
     zstd-dev \
     icu-dev \
     procps \
-    lsof
+    lsof \
+    python3 \
+    py3-pip \
+    nodejs \
+    npm \
+    tmux \
+    curl
+
+# Install LiteLLM (proxies Anthropic API calls to cheap models for agent e2e tests)
+RUN pip install --break-system-packages litellm
+
+# Install Claude Code CLI (agent runtime for e2e tests)
+RUN npm install -g @anthropic-ai/claude-code@0.2.57
 
 # Install beads daemon (bd)
 RUN go install github.com/steveyegge/beads/cmd/bd@v0.50.2
@@ -48,9 +69,14 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Make agent test scripts executable
+RUN chmod +x /app/scripts/start-litellm.sh
+
 # Build gt binary
 RUN go build -ldflags "-X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1" -o /usr/local/bin/gt ./cmd/gt
 
 # Run e2e tests (all TestInstall* functions from install_integration_test.go)
 # Note: Using -count=1 to disable test caching, -parallel 1 for sequential execution
+# For agent tests, override CMD:
+#   sh -c "/app/scripts/start-litellm.sh && go test -tags=e2e_agent -timeout=10m -v -count=1 -parallel 1 -run TestAgent ./internal/cmd/..."
 CMD ["go", "test", "-tags=e2e", "-timeout=5m", "-v", "-count=1", "-parallel", "1", "-run", "TestInstall", "./internal/cmd/..."]
