@@ -187,6 +187,134 @@ func TestAgentSpawnAndReady(t *testing.T) {
 	}
 }
 
+// polecatWorktree locates the git worktree directory for a polecat.
+// Checks new structure (polecats/<name>/<rigname>/) first, falls back to old.
+func polecatWorktree(t *testing.T, hqPath, rigName, polecatName string) string {
+	t.Helper()
+	// New structure: <rig>/polecats/<name>/<rigname>/
+	newPath := filepath.Join(hqPath, rigName, "polecats", polecatName, rigName)
+	if info, err := os.Stat(newPath); err == nil && info.IsDir() {
+		return newPath
+	}
+	// Old structure: <rig>/polecats/<name>/
+	oldPath := filepath.Join(hqPath, rigName, "polecats", polecatName)
+	if info, err := os.Stat(oldPath); err == nil && info.IsDir() {
+		return oldPath
+	}
+	t.Fatalf("polecat worktree not found at %s or %s", newPath, oldPath)
+	return ""
+}
+
+// capturePaneTail returns the last non-empty lines from a tmux pane.
+func capturePaneTail(sessionName string, n int) string {
+	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p")
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Sprintf("(capture failed: %v)", err)
+	}
+	lines := strings.Split(string(out), "\n")
+	var tail []string
+	for i := len(lines) - 1; i >= 0 && len(tail) < n; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			tail = append([]string{lines[i]}, tail...)
+		}
+	}
+	return strings.Join(tail, "\n")
+}
+
+// TestAgentSlingTextChange verifies the full agent work pipeline end-to-end:
+// sling a task → model creates a file → file is committed to the polecat branch.
+//
+// This is the strongest e2e test: it proves the model receives work instructions
+// (via beacon + gt prime), executes tool calls through LiteLLM, and produces a
+// committed git change — touching every layer of the pipeline.
+func TestAgentSlingTextChange(t *testing.T) {
+	gtBinary := buildGT(t)
+	hqPath, env := setupAgentTestTown(t, gtBinary)
+
+	// Create bead with explicit, verifiable instructions.
+	// The model sees this as the Title in "gt prime --hook" output.
+	beadID := "hq-sling1"
+	createTestBead(t, hqPath, env, beadID,
+		"Create and commit a file named test-output.txt containing exactly: e2e-agent-test-ok")
+
+	// Sling to rig — auto-spawns polecat, sends beacon with "Run gt prime --hook"
+	sessionName := slingToRig(t, gtBinary, hqPath, env, beadID, "testrig")
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+	})
+
+	// Wait for agent ready
+	waitForReady(t, sessionName, 90*time.Second)
+
+	// Find the polecat worktree where the model works
+	polecatName := strings.TrimPrefix(sessionName, "gt-testrig-")
+	worktree := polecatWorktree(t, hqPath, "testrig", polecatName)
+	t.Logf("Polecat %s worktree: %s", polecatName, worktree)
+
+	// Poll for the file to be committed to the branch.
+	// The model needs to: read the task → create the file → git add → git commit.
+	targetFile := "test-output.txt"
+	expectedContent := "e2e-agent-test-ok"
+	timeout := 3 * time.Minute
+	deadline := time.Now().Add(timeout)
+	lastLog := time.Now()
+	committed := false
+
+	for time.Now().Before(deadline) {
+		// Fail fast if session died (agent crashed)
+		if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
+			t.Fatalf("agent session died while waiting for text change\nLast pane:\n%s",
+				capturePaneTail(sessionName, 10))
+		}
+
+		// Check if file is committed to the branch via git show HEAD:<file>
+		gitShow := exec.Command("git", "show", "HEAD:"+targetFile)
+		gitShow.Dir = worktree
+		if out, err := gitShow.Output(); err == nil {
+			if strings.TrimSpace(string(out)) == expectedContent {
+				committed = true
+				t.Logf("File committed with correct content after %s",
+					time.Since(deadline.Add(-timeout)).Round(time.Second))
+				break
+			}
+		}
+
+		// Periodic debug logging
+		if time.Since(lastLog) >= 15*time.Second {
+			filePath := filepath.Join(worktree, targetFile)
+			if content, err := os.ReadFile(filePath); err == nil {
+				t.Logf("File in worktree (not yet committed): %q", strings.TrimSpace(string(content)))
+			}
+			t.Logf("Pane tail:\n%s", capturePaneTail(sessionName, 5))
+			lastLog = time.Now()
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+	if !committed {
+		// Distinguish "file exists but uncommitted" from "file never created"
+		filePath := filepath.Join(worktree, targetFile)
+		if content, err := os.ReadFile(filePath); err == nil {
+			t.Fatalf("file exists with content %q but was not committed to branch\nPane:\n%s",
+				strings.TrimSpace(string(content)), capturePaneTail(sessionName, 15))
+		}
+		t.Fatalf("agent did not create and commit %s within %s\nPane:\n%s",
+			targetFile, timeout, capturePaneTail(sessionName, 15))
+	}
+
+	// Verify the commit is on the polecat's branch (not detached HEAD etc)
+	gitLog := exec.Command("git", "log", "--oneline", "--", targetFile)
+	gitLog.Dir = worktree
+	logOut, err := gitLog.Output()
+	if err != nil || strings.TrimSpace(string(logOut)) == "" {
+		t.Errorf("no git log entries for %s despite git show succeeding", targetFile)
+	} else {
+		t.Logf("Commits touching %s:\n%s", targetFile, strings.TrimSpace(string(logOut)))
+	}
+}
+
 // TestAgentDone tests polecat cleanup after agent work completes.
 //
 // After spawning a polecat via sling and waiting for it to be ready,
