@@ -23,10 +23,8 @@ RUN apk add --no-cache \
     procps \
     lsof
 
-# Install beads daemon (bd) - build from source to handle replace directives
-RUN git clone --depth 1 https://github.com/steveyegge/beads /tmp/beads && \
-    cd /tmp/beads && go install ./cmd/bd && \
-    rm -rf /tmp/beads
+# Install beads daemon (bd)
+RUN go install github.com/steveyegge/beads/cmd/bd@v0.50.2
 
 # Install Dolt (required for beads database server)
 RUN git clone --depth 1 https://github.com/dolthub/dolt /tmp/dolt && \
