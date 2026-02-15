@@ -25,8 +25,8 @@ func TestMain(m *testing.M) {
 }
 
 func checkAgentPrereqs() error {
-	if os.Getenv("GEMINI_API_KEY") == "" {
-		return fmt.Errorf("GEMINI_API_KEY not set")
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		return fmt.Errorf("OPENAI_API_KEY not set (required for gpt-5-mini via LiteLLM)")
 	}
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return fmt.Errorf("tmux not found: %w", err)
