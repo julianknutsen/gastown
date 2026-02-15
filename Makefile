@@ -1,4 +1,4 @@
-.PHONY: build install clean test test-e2e-container generate check-up-to-date
+.PHONY: build install clean test test-e2e-container test-e2e-agent-container generate check-up-to-date
 
 BINARY := gt
 BUILD_DIR := .
@@ -61,3 +61,9 @@ test:
 test-e2e-container:
 	docker build -f Dockerfile.e2e -t gastown-test .
 	docker run --rm gastown-test
+
+# Run agent e2e tests with LiteLLM proxy (requires OPENROUTER_API_KEY)
+test-e2e-agent-container:
+	docker build -f Dockerfile.e2e -t gastown-agent-test .
+	docker run --rm -e OPENROUTER_API_KEY gastown-agent-test \
+		sh -c "/app/scripts/start-litellm.sh && go test -tags=e2e_agent -timeout=10m -v -count=1 -parallel 1 -run TestAgent ./internal/cmd/..."

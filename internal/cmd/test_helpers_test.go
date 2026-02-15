@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -60,4 +61,45 @@ func buildGT(t *testing.T) string {
 
 	cachedGTBinary = tmpBinary
 	return tmpBinary
+}
+
+// cleanE2EEnv returns os.Environ() with all GT_* variables removed.
+// This ensures tests don't inherit stale role environment from CI or previous tests.
+func cleanE2EEnv() []string {
+	var clean []string
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "GT_") {
+			clean = append(clean, env)
+		}
+	}
+	return clean
+}
+
+// configureDoltIdentity sets dolt global config in the test's HOME directory.
+// Tests override HOME to a temp dir for isolation, so dolt can't find the
+// container's build-time global config. This must run before gt dolt init-rig.
+func configureDoltIdentity(t *testing.T, env []string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"config", "--global", "--add", "user.name", "Test User"},
+		{"config", "--global", "--add", "user.email", "test@test.com"},
+	} {
+		cmd := exec.Command("dolt", args...)
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("dolt %v failed: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// runGTCmd runs a gt command and fails the test if it fails.
+func runGTCmd(t *testing.T, binary, dir string, env []string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(binary, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gt %v failed: %v\n%s", args, err, out)
+	}
 }
