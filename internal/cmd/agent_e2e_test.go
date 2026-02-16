@@ -58,11 +58,24 @@ const (
 	modelSmart = "sonnet" // complex tasks: read instructions, create files, commit
 )
 
+// agentTestOpts configures setupAgentTestTown behavior.
+type agentTestOpts struct {
+	// ClaudeConfigDir overrides the credentials directory. When set, uses real
+	// credentials from this path and skips LiteLLM proxy (no ANTHROPIC_BASE_URL).
+	// When empty, creates fake credentials and routes through LiteLLM.
+	ClaudeConfigDir string
+}
+
 // setupAgentTestTown creates a town with beads, dolt, and a rig for agent tests.
 // model selects which Claude model name to use (routed by LiteLLM to cheap backends).
 // Returns (hqPath, env). The caller must defer cleanup (registered via t.Cleanup).
-func setupAgentTestTown(t *testing.T, gtBinary, model string) (string, []string) {
+func setupAgentTestTown(t *testing.T, gtBinary, model string, opts ...agentTestOpts) (string, []string) {
 	t.Helper()
+
+	var opt agentTestOpts
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 
 	tmpDir := t.TempDir()
 	hqPath := filepath.Join(tmpDir, "test-hq")
@@ -73,6 +86,26 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string) (string, []string)
 	// Install town with beads (gt install handles dolt init + start)
 	configureDoltIdentity(t, env)
 	runGTCmd(t, gtBinary, tmpDir, env, "install", hqPath, "--name", "test-town", "--git")
+
+	// Verify dolt server is running after install (formula sling needs it for transactions).
+	// gt install starts dolt, but it may die in the test environment.
+	doltStatus := exec.Command(gtBinary, "dolt", "status")
+	doltStatus.Dir = hqPath
+	doltStatus.Env = env
+	if statusOut, err := doltStatus.CombinedOutput(); err != nil {
+		t.Logf("Dolt not running after install (starting manually): %v\n%s", err, statusOut)
+		startCmd := exec.Command(gtBinary, "dolt", "start")
+		startCmd.Dir = hqPath
+		startCmd.Env = env
+		if startOut, err := startCmd.CombinedOutput(); err != nil {
+			t.Logf("WARNING: dolt start failed: %v\n%s", err, startOut)
+		} else {
+			t.Logf("Dolt started manually: %s", strings.TrimSpace(string(startOut)))
+		}
+	} else {
+		t.Logf("Dolt status: %s", strings.TrimSpace(string(statusOut)))
+	}
+
 	t.Cleanup(func() {
 		cmd := exec.Command(gtBinary, "down")
 		cmd.Dir = hqPath
@@ -80,17 +113,37 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string) (string, []string)
 		_ = cmd.Run()
 	})
 
-	// --- Fake Claude Code credentials ---
-	// Claude Code requires OAuth creds to skip the login prompt.
-	// We create a fake .credentials.json and point to it via accounts.json.
-	// LiteLLM ignores the auth token and uses its own OpenRouter key.
-	claudeConfigDir := filepath.Join(tmpDir, ".claude-litellm")
-	if err := os.MkdirAll(claudeConfigDir, 0755); err != nil {
-		t.Fatalf("mkdir claude config: %v", err)
-	}
-	credJSON := `{"claudeAiOauth":{"accessToken":"sk-ant-fake","refreshToken":"sk-ant-fake","expiresAt":4102444800000,"scopes":["user:inference"],"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}`
-	if err := os.WriteFile(filepath.Join(claudeConfigDir, ".credentials.json"), []byte(credJSON), 0644); err != nil {
-		t.Fatalf("write credentials: %v", err)
+	// --- Claude Code credentials ---
+	var claudeConfigDir string
+	if opt.ClaudeConfigDir != "" {
+		// Copy real credentials into test temp dir (passthrough mode).
+		// No LiteLLM proxy — calls go directly to Anthropic.
+		// We copy rather than symlink so the polecat has its own token state.
+		claudeConfigDir = filepath.Join(tmpDir, ".claude-passthrough")
+		if err := os.MkdirAll(claudeConfigDir, 0755); err != nil {
+			t.Fatalf("mkdir claude config: %v", err)
+		}
+		srcCred := filepath.Join(opt.ClaudeConfigDir, ".credentials.json")
+		credData, err := os.ReadFile(srcCred)
+		if err != nil {
+			t.Fatalf("read credentials from %s: %v", srcCred, err)
+		}
+		if err := os.WriteFile(filepath.Join(claudeConfigDir, ".credentials.json"), credData, 0600); err != nil {
+			t.Fatalf("copy credentials: %v", err)
+		}
+		t.Logf("Using real credentials copied from %s (passthrough, no LiteLLM)", opt.ClaudeConfigDir)
+	} else {
+		// Fake credentials for LiteLLM proxy mode.
+		// Claude Code requires OAuth creds to skip the login prompt.
+		// LiteLLM ignores the auth token and uses its own OpenRouter key.
+		claudeConfigDir = filepath.Join(tmpDir, ".claude-litellm")
+		if err := os.MkdirAll(claudeConfigDir, 0755); err != nil {
+			t.Fatalf("mkdir claude config: %v", err)
+		}
+		credJSON := `{"claudeAiOauth":{"accessToken":"sk-ant-fake","refreshToken":"sk-ant-fake","expiresAt":4102444800000,"scopes":["user:inference"],"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}`
+		if err := os.WriteFile(filepath.Join(claudeConfigDir, ".credentials.json"), []byte(credJSON), 0644); err != nil {
+			t.Fatalf("write credentials: %v", err)
+		}
 	}
 
 	// Write accounts.json so gastown resolves CLAUDE_CONFIG_DIR for the polecat
@@ -115,9 +168,9 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string) (string, []string)
 	}
 
 	// --- TownSettings: agent command + env vars ---
-	// ANTHROPIC_BASE_URL routes API calls to LiteLLM proxy.
-	// --model selects which Claude model name (LiteLLM routes to cheap backend).
+	// --model selects which Claude model name.
 	// --dangerously-skip-permissions skips interactive prompts.
+	// ANTHROPIC_BASE_URL is only set for LiteLLM mode (proxy to cheap backends).
 	settingsPath := filepath.Join(hqPath, "settings", "config.json")
 	settingsData, err := os.ReadFile(settingsPath)
 	var settings config.TownSettings
@@ -126,18 +179,25 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string) (string, []string)
 	} else {
 		settings = *config.NewTownSettings()
 	}
-	settings.Agents["claude"] = &config.RuntimeConfig{
+	rc := &config.RuntimeConfig{
 		Command: "claude",
 		Args:    []string{"--model", model, "--dangerously-skip-permissions"},
-		Env: map[string]string{
-			"ANTHROPIC_BASE_URL": "http://localhost:4000",
-		},
 	}
+	if opt.ClaudeConfigDir == "" {
+		// LiteLLM mode: route API calls through proxy
+		rc.Env = map[string]string{
+			"ANTHROPIC_BASE_URL": "http://localhost:4000",
+		}
+		t.Logf("Agent: claude --model %s, ANTHROPIC_BASE_URL=http://localhost:4000, credentials=%s", model, claudeConfigDir)
+	} else {
+		// Passthrough mode: direct to Anthropic
+		t.Logf("Agent: claude --model %s (passthrough), credentials=%s", model, claudeConfigDir)
+	}
+	settings.Agents["claude"] = rc
 	settings.DefaultAgent = "claude"
 	if err := config.SaveTownSettings(settingsPath, &settings); err != nil {
 		t.Fatalf("save town settings: %v", err)
 	}
-	t.Logf("Agent: claude --model %s, ANTHROPIC_BASE_URL=http://localhost:4000, credentials=%s", model, claudeConfigDir)
 
 	// Add rig
 	runGTCmd(t, gtBinary, hqPath, env, "rig", "add", "testrig",
@@ -146,11 +206,13 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string) (string, []string)
 	return hqPath, env
 }
 
-// createTestBead creates a bead in the town's beads database and returns its ID.
-func createTestBead(t *testing.T, hqPath string, env []string, beadID, title string) {
+// createTestBead creates a bead in the beads database resolved from workDir.
+// Use the rig directory (not hqPath) so beads end up in the rig's beads DB,
+// which is where findAgentWork() searches from the polecat worktree.
+func createTestBead(t *testing.T, workDir string, env []string, beadID, title string) {
 	t.Helper()
 	cmd := exec.Command("bd", "create", title, "--id="+beadID, "--force")
-	cmd.Dir = hqPath
+	cmd.Dir = workDir
 	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bd create %s failed: %v\n%s", beadID, err, out)
@@ -243,9 +305,10 @@ func TestAgentSpawnAndReady(t *testing.T) {
 	gtBinary := buildGT(t)
 	hqPath, env := setupAgentTestTown(t, gtBinary, modelCheap)
 
-	// Create a test bead to sling
-	beadID := "hq-test1"
-	createTestBead(t, hqPath, env, beadID, "Test agent spawn task")
+	// Create a test bead in the rig's beads DB (not HQ — polecat resolves from rig)
+	rigPath := filepath.Join(hqPath, "testrig")
+	beadID := "tr-test1"
+	createTestBead(t, rigPath, env, beadID, "Test agent spawn task")
 
 	// Sling bead to rig — auto-spawns a polecat with Claude Code
 	sessionName := slingToRig(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
@@ -380,10 +443,11 @@ func TestAgentSlingTextChange(t *testing.T) {
 	gtBinary := buildGT(t)
 	hqPath, env := setupAgentTestTown(t, gtBinary, modelSmart)
 
-	// Create bead with explicit, verifiable instructions.
+	// Create bead in rig's beads DB with explicit, verifiable instructions.
 	// The model sees this as the Title in "gt prime --hook" output.
-	beadID := "hq-sling1"
-	createTestBead(t, hqPath, env, beadID,
+	rigPath := filepath.Join(hqPath, "testrig")
+	beadID := "tr-sling1"
+	createTestBead(t, rigPath, env, beadID,
 		"Create and commit a file named test-output.txt containing exactly: e2e-agent-test-ok")
 
 	// Sling to rig — auto-spawns polecat, sends beacon with "Run gt prime --hook"
@@ -464,6 +528,278 @@ func TestAgentSlingTextChange(t *testing.T) {
 	}
 }
 
+// extractWispID parses sling output for the wisp ID created by formula instantiation.
+// Looks for "Formula wisp created: <id>" or "Wisp created: <id>".
+func extractWispID(t *testing.T, slingOutput string) string {
+	t.Helper()
+	for _, line := range strings.Split(slingOutput, "\n") {
+		if strings.Contains(line, "isp created:") {
+			parts := strings.Split(line, "isp created: ")
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	t.Fatalf("no wisp ID found in sling output:\n%s", slingOutput)
+	return ""
+}
+
+// slingFormulaToRig slings a bead with formula to a rig, returning both the
+// tmux session name and the wisp ID for molecule progress tracking.
+func slingFormulaToRig(t *testing.T, gtBinary, hqPath string, env []string,
+	beadID, rigName, rigPrefix string) (sessionName, wispID string) {
+	t.Helper()
+
+	slingCmd := exec.Command(gtBinary, "sling", beadID, rigName,
+		"--var", "setup_command=",
+		"--var", "typecheck_command=",
+		"--var", "lint_command=",
+		"--var", "build_command=",
+	)
+	slingCmd.Dir = hqPath
+	slingCmd.Env = env
+	slingOut, err := slingCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gt sling %s %s failed: %v\n%s", beadID, rigName, err, slingOut)
+	}
+	t.Logf("Sling output:\n%s", slingOut)
+
+	output := string(slingOut)
+
+	// Extract wisp ID
+	wispID = extractWispID(t, output)
+	t.Logf("Wisp ID: %s", wispID)
+
+	// Extract polecat name
+	var polecatName string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "Allocated polecat:") {
+			parts := strings.Split(line, "Allocated polecat: ")
+			if len(parts) == 2 {
+				polecatName = strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	if polecatName == "" {
+		t.Fatalf("no polecat name found in sling output")
+	}
+
+	// Wait for session
+	sessionName = rigPrefix + "-" + polecatName
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if exec.Command("tmux", "has-session", "-t", sessionName).Run() == nil {
+			t.Logf("Found session: %s (polecat: %s)", sessionName, polecatName)
+			return sessionName, wispID
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("tmux session %q not found after sling", sessionName)
+	return "", ""
+}
+
+// getMoleculeProgress queries molecule step progress via bd mol current.
+// Uses bd mol current instead of gt mol progress because gt mol progress
+// calls bd list which excludes ephemeral wisp steps.
+// Returns (doneSteps, totalSteps, error).
+func getMoleculeProgress(t *testing.T, workDir string, env []string, wispID string) (int, int, error) {
+	t.Helper()
+	cmd := exec.Command("bd", "mol", "current", wispID, "--json")
+	cmd.Dir = workDir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, 0, fmt.Errorf("bd mol current failed: %v\n%s", err, out)
+	}
+
+	var molecules []struct {
+		Steps []struct {
+			Status string `json:"status"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(out, &molecules); err != nil {
+		return 0, 0, fmt.Errorf("parse mol current JSON: %v\nraw: %s", err, out)
+	}
+	if len(molecules) == 0 || len(molecules[0].Steps) == 0 {
+		return 0, 0, fmt.Errorf("no molecule steps in output")
+	}
+
+	total := len(molecules[0].Steps)
+	done := 0
+	for _, step := range molecules[0].Steps {
+		if step.Status == "done" {
+			done++
+		}
+	}
+	return done, total, nil
+}
+
+// TestAgentFormulaWork verifies that the agent follows the mol-polecat-work
+// molecule steps, advancing through them with bd close <step>.
+//
+// This is a regression test for the formula pipeline:
+//   - gt sling creates a wisp with molecule steps
+//   - gt prime --hook shows the current step with "EXECUTE THIS STEP NOW"
+//   - Agent runs bd close <step-id> after completing each step
+//   - Molecule progress (done_steps) increases over time
+//
+// The key assertion is that done_steps > 0, proving the agent followed the
+// molecule workflow rather than shortcutting based on the bead title alone.
+//
+// Routes through LiteLLM to Claude Sonnet 4.5 via OpenRouter. This test
+// requires a model that can follow the 10-step molecule protocol — cheaper
+// models (Gemini Flash) shortcut the workflow and never run bd close.
+func TestAgentFormulaWork(t *testing.T) {
+	gtBinary := buildGT(t)
+	hqPath, env := setupAgentTestTown(t, gtBinary, modelSmart)
+
+	// Create bead in rig's beads DB with simple instructions the model can execute
+	rigPath := filepath.Join(hqPath, "testrig")
+	beadID := "tr-formula1"
+	createTestBead(t, rigPath, env, beadID,
+		"Create and commit a file named formula-test.txt containing exactly: formula-e2e-ok")
+
+	// Sling with formula — returns wisp ID for progress tracking
+	sessionName, wispID := slingFormulaToRig(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
+	t.Cleanup(func() {
+		captureAllSessions(t, t.Name())
+		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+	})
+
+	// Wait for agent ready
+	waitForReady(t, sessionName, 90*time.Second)
+
+	// Diagnostic: check what gt prime --dry-run shows from the polecat worktree.
+	// This reveals whether the molecule instructions are actually presented to the agent.
+	polecatName := strings.TrimPrefix(sessionName, "tr-")
+	worktree := polecatWorktree(t, hqPath, "testrig", polecatName)
+	primeCmd := exec.Command(gtBinary, "prime", "--dry-run")
+	primeCmd.Dir = worktree
+	primeCmd.Env = env
+	if primeOut, err := primeCmd.CombinedOutput(); err != nil {
+		t.Logf("gt prime --dry-run FAILED: %v\n%s", err, primeOut)
+	} else {
+		output := string(primeOut)
+		if strings.Contains(output, "EXECUTE THIS STEP") || strings.Contains(output, "bd close") {
+			t.Logf("GOOD: gt prime shows molecule step instructions")
+		} else if strings.Contains(output, "PROPULSION PRINCIPLE") {
+			t.Logf("WARNING: gt prime shows generic PROPULSION message (no specific steps)")
+		} else if strings.Contains(output, "AUTONOMOUS WORK") {
+			t.Logf("WARNING: gt prime shows AUTONOMOUS WORK (no molecule attachment)")
+		} else {
+			t.Logf("gt prime output (first 500 chars): %s", output[:min(500, len(output))])
+		}
+		// Log any molecule-related lines
+		for _, line := range strings.Split(output, "\n") {
+			if strings.Contains(line, "molecule") || strings.Contains(line, "Molecule") ||
+				strings.Contains(line, "MOLECULE") || strings.Contains(line, "bd close") ||
+				strings.Contains(line, "EXECUTE") || strings.Contains(line, "PROPULSION") ||
+				strings.Contains(line, "attached") || strings.Contains(line, "wisp") {
+				t.Logf("  prime> %s", line)
+			}
+		}
+	}
+
+	// Verify molecule was instantiated with steps.
+	// Retry a few times — dolt may need a moment after formula instantiation writes.
+	var done, total int
+	for attempt := 0; attempt < 5; attempt++ {
+		var err error
+		done, total, err = getMoleculeProgress(t, rigPath, env, wispID)
+		if err == nil {
+			break
+		}
+		if attempt < 4 {
+			t.Logf("molecule progress check attempt %d failed (retrying): %v", attempt+1, err)
+			time.Sleep(3 * time.Second)
+		} else {
+			t.Fatalf("initial molecule progress check failed after %d attempts: %v", attempt+1, err)
+		}
+	}
+	t.Logf("Molecule %s: %d/%d steps done (initial)", wispID, done, total)
+	if total == 0 {
+		t.Fatalf("molecule has 0 steps — formula instantiation failed")
+	}
+
+	// Poll for molecule step advancement.
+	// The agent should run bd close <step-id> as it works through the molecule.
+	// We check both molecule progress AND the committed file.
+	timeout := 5 * time.Minute // molecule workflow takes longer than direct sling
+	deadline := time.Now().Add(timeout)
+	lastLog := time.Now()
+	maxDone := 0
+	fileCommitted := false
+
+	sessionCaptured := false
+	for time.Now().Before(deadline) {
+		// Fail fast if session died
+		if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
+			t.Logf("Agent session ended. Final progress: %d/%d steps", maxDone, total)
+			break
+		}
+
+		// Continuously capture session scrollback so we have the latest state if it dies.
+		fullPane := captureFullPane(sessionName)
+		if len(fullPane) > 200 {
+			outDir := filepath.Join(os.TempDir(), "e2e-agent-sessions", t.Name())
+			_ = os.MkdirAll(outDir, 0755)
+			_ = os.WriteFile(filepath.Join(outDir, sessionName+".log"), []byte(fullPane), 0644)
+			if !sessionCaptured {
+				t.Logf("Captured %s scrollback: %d bytes", sessionName, len(fullPane))
+				sessionCaptured = true
+			}
+		}
+
+		// Check molecule progress
+		done, _, err := getMoleculeProgress(t, rigPath, env, wispID)
+		if err == nil && done > maxDone {
+			t.Logf("Molecule progress: %d/%d steps done (+%d)", done, total, done-maxDone)
+			maxDone = done
+		}
+
+		// Check if file was committed
+		if !fileCommitted {
+			gitShow := exec.Command("git", "show", "HEAD:formula-test.txt")
+			gitShow.Dir = worktree
+			if out, err := gitShow.Output(); err == nil {
+				if strings.TrimSpace(string(out)) == "formula-e2e-ok" {
+					fileCommitted = true
+					t.Logf("File committed after %s (molecule at %d/%d)",
+						time.Since(deadline.Add(-timeout)).Round(time.Second), maxDone, total)
+				}
+			}
+		}
+
+		// If molecule is substantially done AND file committed, we're good
+		if maxDone >= 4 && fileCommitted {
+			t.Logf("Molecule workflow succeeded: %d/%d steps, file committed", maxDone, total)
+			break
+		}
+
+		// Periodic debug logging
+		if time.Since(lastLog) >= 20*time.Second {
+			t.Logf("Waiting... molecule: %d/%d, file committed: %v", maxDone, total, fileCommitted)
+			t.Logf("Pane tail:\n%s", capturePaneTail(sessionName, 5))
+			lastLog = time.Now()
+		}
+
+		time.Sleep(10 * time.Second)
+	}
+
+	// Assertions
+	if maxDone == 0 {
+		t.Errorf("agent never advanced any molecule steps (0/%d done) — it ignored the molecule workflow\nPane:\n%s",
+			total, capturePaneTail(sessionName, 20))
+	} else {
+		t.Logf("PASS: agent advanced %d/%d molecule steps", maxDone, total)
+	}
+
+	if !fileCommitted {
+		t.Errorf("agent did not create and commit formula-test.txt within %s\nMolecule progress: %d/%d\nPane:\n%s",
+			timeout, maxDone, total, capturePaneTail(sessionName, 20))
+	}
+}
+
 // TestHookVisibility is a diagnostic test verifying that a hooked bead is
 // discoverable from the polecat's worktree. This tests the same codepath as
 // findAgentWork() in gt prime --hook.
@@ -475,8 +811,9 @@ func TestHookVisibility(t *testing.T) {
 	gtBinary := buildGT(t)
 	hqPath, env := setupAgentTestTown(t, gtBinary, modelCheap)
 
-	beadID := "hq-hook1"
-	createTestBead(t, hqPath, env, beadID, "Test hook visibility")
+	rigPath := filepath.Join(hqPath, "testrig")
+	beadID := "tr-hook1"
+	createTestBead(t, rigPath, env, beadID, "Test hook visibility")
 
 	// Sling and extract polecat name from output (raw bead, no formula needed for diagnostic)
 	slingCmd := exec.Command(gtBinary, "sling", beadID, "testrig", "--hook-raw-bead")
@@ -638,9 +975,10 @@ func TestAgentDone(t *testing.T) {
 	gtBinary := buildGT(t)
 	hqPath, env := setupAgentTestTown(t, gtBinary, modelCheap)
 
-	// Create and sling a bead
-	beadID := "hq-test2"
-	createTestBead(t, hqPath, env, beadID, "Test agent done task")
+	// Create bead in rig's beads DB and sling it
+	rigPath := filepath.Join(hqPath, "testrig")
+	beadID := "tr-test2"
+	createTestBead(t, rigPath, env, beadID, "Test agent done task")
 	sessionName := slingToRig(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
 
 	// Wait for agent to be ready before nuking
