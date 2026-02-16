@@ -1,39 +1,38 @@
 # E2E agent test model routing via LiteLLM proxy.
 #
-# Strategy: gpt-5-mini as primary (cheap, capable), claude-sonnet-4-5 on retry.
-# All Claude model names map to gpt-5-mini; on failure LiteLLM retries with Sonnet.
+# Routes Claude model requests to cheap models via OpenRouter.
+# Tests must use --model sonnet or --model haiku (fake OAuth creds block opus).
 #
-# Required: OPENAI_API_KEY
-# Optional: ANTHROPIC_API_KEY (enables fallback — tests pass without it)
+# Claude Code 2.1.42 model IDs:
+#   --model sonnet → claude-sonnet-4-5-20250929    → Gemini 2.5 Flash ($0.15/$0.60)
+#   --model haiku  → claude-haiku-4-5-20251001     → Gemini 2.0 Flash ($0.10/$0.40)
+#   fallback       → claude-sonnet-4-20250514      → Gemini 2.5 Flash
+#   fallback       → claude-3-5-sonnet-20241022    → Gemini 2.5 Flash
+#
+# Required: OPENROUTER_API_KEY
 
 model_list:
-  # Primary: gpt-5-mini ($0.25/$2.00 per 1M tokens)
+  - model_name: claude-sonnet-4-5-20250929
+    litellm_params:
+      model: openrouter/google/gemini-2.5-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      drop_params: true
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: openai/gpt-5-mini
-      api_key: os.environ/OPENAI_API_KEY
-  - model_name: claude-opus-4-20250514
+      model: openrouter/google/gemini-2.5-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      drop_params: true
+  - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: openai/gpt-5-mini
-      api_key: os.environ/OPENAI_API_KEY
+      model: openrouter/google/gemini-2.0-flash-001
+      api_key: os.environ/OPENROUTER_API_KEY
+      drop_params: true
   - model_name: claude-3-5-sonnet-20241022
     litellm_params:
-      model: openai/gpt-5-mini
-      api_key: os.environ/OPENAI_API_KEY
-
-  # Fallback: claude-sonnet-4-5 ($3/$15 per 1M — only on retry)
-  - model_name: sonnet-fallback
-    litellm_params:
-      model: anthropic/claude-sonnet-4-5-20250929
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-general_settings:
-  drop_params: true  # Drop provider-specific params the target doesn't support
+      model: openrouter/google/gemini-2.5-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      drop_params: true
 
 router_settings:
   num_retries: 2
   timeout: 120
-  fallbacks:
-    - claude-sonnet-4-20250514: [sonnet-fallback]
-    - claude-opus-4-20250514: [sonnet-fallback]
-    - claude-3-5-sonnet-20241022: [sonnet-fallback]
