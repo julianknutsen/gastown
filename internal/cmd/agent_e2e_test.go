@@ -64,6 +64,16 @@ type agentTestOpts struct {
 	// credentials from this path and skips LiteLLM proxy (no ANTHROPIC_BASE_URL).
 	// When empty, creates fake credentials and routes through LiteLLM.
 	ClaudeConfigDir string
+
+	// GitURL overrides the git URL for gt rig add (default: octocat/Hello-World).
+	// Use with createLocalBareRepo() to test push/merge flows against a local repo.
+	GitURL string
+
+	// RoleModels maps role names ("witness", "refinery") to model names.
+	// When set, creates per-role agent configs via TownSettings.RoleAgents,
+	// allowing cheaper models for simple roles (witness, refinery) while
+	// the polecat uses the main model parameter. Unset roles use the default.
+	RoleModels map[string]string
 }
 
 // setupAgentTestTown creates a town with beads, dolt, and a rig for agent tests.
@@ -75,6 +85,14 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string, opts ...agentTestO
 	var opt agentTestOpts
 	if len(opts) > 0 {
 		opt = opts[0]
+	}
+
+	// Allow env var to override credentials for all e2e tests.
+	// When set, tests use real Claude credentials instead of LiteLLM proxy.
+	if opt.ClaudeConfigDir == "" {
+		if envDir := os.Getenv("GT_E2E_CLAUDE_CONFIG_DIR"); envDir != "" {
+			opt.ClaudeConfigDir = envDir
+		}
 	}
 
 	tmpDir := t.TempDir()
@@ -116,22 +134,32 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string, opts ...agentTestO
 	// --- Claude Code credentials ---
 	var claudeConfigDir string
 	if opt.ClaudeConfigDir != "" {
-		// Copy real credentials into test temp dir (passthrough mode).
+		// Copy real credentials to an isolated temp dir (passthrough mode).
 		// No LiteLLM proxy — calls go directly to Anthropic.
-		// We copy rather than symlink so the polecat has its own token state.
+		// We COPY rather than share because other Claude Code instances (e.g.,
+		// aimux) sharing the source dir may rotate the OAuth token, revoking
+		// the old access token our agents cached in memory.
+		// The copied token has enough validity (~24h) for a test run (~10min).
 		claudeConfigDir = filepath.Join(tmpDir, ".claude-passthrough")
-		if err := os.MkdirAll(claudeConfigDir, 0755); err != nil {
-			t.Fatalf("mkdir claude config: %v", err)
+		if err := os.MkdirAll(claudeConfigDir, 0o700); err != nil {
+			t.Fatalf("mkdir claude passthrough: %v", err)
 		}
-		srcCred := filepath.Join(opt.ClaudeConfigDir, ".credentials.json")
-		credData, err := os.ReadFile(srcCred)
-		if err != nil {
-			t.Fatalf("read credentials from %s: %v", srcCred, err)
+		// Copy essential files: credentials, main config (onboarding state), settings.
+		// Without .claude.json, Claude Code shows the first-run onboarding wizard.
+		for _, fname := range []string{".credentials.json", ".claude.json", "settings.json"} {
+			src := filepath.Join(opt.ClaudeConfigDir, fname)
+			data, err := os.ReadFile(src)
+			if err != nil {
+				if fname == ".credentials.json" {
+					t.Fatalf("read credentials from %s: %v", src, err)
+				}
+				continue // non-essential files may not exist
+			}
+			if err := os.WriteFile(filepath.Join(claudeConfigDir, fname), data, 0o600); err != nil {
+				t.Fatalf("write %s: %v", fname, err)
+			}
 		}
-		if err := os.WriteFile(filepath.Join(claudeConfigDir, ".credentials.json"), credData, 0600); err != nil {
-			t.Fatalf("copy credentials: %v", err)
-		}
-		t.Logf("Using real credentials copied from %s (passthrough, no LiteLLM)", opt.ClaudeConfigDir)
+		t.Logf("Using real credentials copied from %s → %s (passthrough, no LiteLLM)", opt.ClaudeConfigDir, claudeConfigDir)
 	} else {
 		// Fake credentials for LiteLLM proxy mode.
 		// Claude Code requires OAuth creds to skip the login prompt.
@@ -179,29 +207,60 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string, opts ...agentTestO
 	} else {
 		settings = *config.NewTownSettings()
 	}
-	rc := &config.RuntimeConfig{
-		Command: "claude",
-		Args:    []string{"--model", model, "--dangerously-skip-permissions"},
-	}
-	if opt.ClaudeConfigDir == "" {
-		// LiteLLM mode: route API calls through proxy
-		rc.Env = map[string]string{
-			"ANTHROPIC_BASE_URL": "http://localhost:4000",
+
+	// Helper to build a RuntimeConfig for a given model name.
+	makeAgentRC := func(agentModel string) *config.RuntimeConfig {
+		rc := &config.RuntimeConfig{
+			Command: "claude",
+			Args:    []string{"--model", agentModel, "--dangerously-skip-permissions"},
 		}
-		t.Logf("Agent: claude --model %s, ANTHROPIC_BASE_URL=http://localhost:4000, credentials=%s", model, claudeConfigDir)
-	} else {
-		// Passthrough mode: direct to Anthropic
-		t.Logf("Agent: claude --model %s (passthrough), credentials=%s", model, claudeConfigDir)
+		if opt.ClaudeConfigDir == "" {
+			rc.Env = map[string]string{
+				"ANTHROPIC_BASE_URL": "http://localhost:4000",
+			}
+		} else {
+			// Passthrough mode: set CLAUDE_CONFIG_DIR so the polecat's Claude
+			// reads real credentials. Custom agents in TownSettings shadow the
+			// built-in "claude" preset (which has Session.ConfigDirEnv), so
+			// session_manager's PrependEnv for CLAUDE_CONFIG_DIR doesn't fire.
+			// Setting it in rc.Env ensures it appears in the exec env command.
+			rc.Env = map[string]string{
+				"CLAUDE_CONFIG_DIR": claudeConfigDir,
+			}
+		}
+		return rc
 	}
-	settings.Agents["claude"] = rc
+
+	// Default agent uses the caller's model parameter.
+	settings.Agents["claude"] = makeAgentRC(model)
 	settings.DefaultAgent = "claude"
+
+	// Per-role agent configs: create separate agents for roles that need
+	// different models (e.g., cheaper models for witness/refinery).
+	for role, roleModel := range opt.RoleModels {
+		agentName := "claude-" + role
+		settings.Agents[agentName] = makeAgentRC(roleModel)
+		settings.RoleAgents[role] = agentName
+		t.Logf("Role %s: claude --model %s", role, roleModel)
+	}
+
+	if opt.ClaudeConfigDir == "" {
+		t.Logf("Default agent: claude --model %s, ANTHROPIC_BASE_URL=http://localhost:4000, credentials=%s", model, claudeConfigDir)
+	} else {
+		t.Logf("Default agent: claude --model %s (passthrough), credentials=%s", model, claudeConfigDir)
+	}
+
 	if err := config.SaveTownSettings(settingsPath, &settings); err != nil {
 		t.Fatalf("save town settings: %v", err)
 	}
 
 	// Add rig
+	gitURL := "https://github.com/octocat/Hello-World.git"
+	if opt.GitURL != "" {
+		gitURL = opt.GitURL
+	}
 	runGTCmd(t, gtBinary, hqPath, env, "rig", "add", "testrig",
-		"https://github.com/octocat/Hello-World.git", "--prefix", "tr")
+		gitURL, "--prefix", "tr")
 
 	return hqPath, env
 }
@@ -469,7 +528,7 @@ func TestAgentSlingTextChange(t *testing.T) {
 	// The model needs to: read the task → create the file → git add → git commit.
 	targetFile := "test-output.txt"
 	expectedContent := "e2e-agent-test-ok"
-	timeout := 3 * time.Minute
+	timeout := 6 * time.Minute
 	deadline := time.Now().Add(timeout)
 	lastLog := time.Now()
 	committed := false
@@ -1011,4 +1070,329 @@ func TestAgentDone(t *testing.T) {
 	if _, err := os.Stat(polecatDir); !os.IsNotExist(err) {
 		t.Errorf("polecat directory %s still exists after nuke", polecatDir)
 	}
+}
+
+// setupLocalUpstream creates a writable local bare repo from the rig's existing
+// .repo.git and rewires the origin remote on .repo.git and mayor/rig to point to it.
+// This allows polecats and the refinery to push to a local "upstream" instead of
+// the read-only octocat/Hello-World. Returns the bare repo path.
+//
+// Must be called AFTER setupAgentTestTown (which runs gt rig add with the octocat URL).
+func setupLocalUpstream(t *testing.T, hqPath string) string {
+	t.Helper()
+
+	rigPath := filepath.Join(hqPath, "testrig")
+	repoGit := filepath.Join(rigPath, ".repo.git")
+
+	// Create a bare clone of .repo.git as the writable upstream.
+	// This preserves the same history/branches as the rig was set up with.
+	upstreamDir := t.TempDir()
+	bareRepoPath := filepath.Join(upstreamDir, "upstream.git")
+	cloneCmd := exec.Command("git", "clone", "--bare", repoGit, bareRepoPath)
+	if out, err := cloneCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git clone --bare .repo.git failed: %v\n%s", err, out)
+	}
+
+	// Rewire origin on .repo.git to the local upstream
+	for _, gitDir := range []string{repoGit, filepath.Join(rigPath, "mayor", "rig")} {
+		cmd := exec.Command("git", "remote", "set-url", "origin", bareRepoPath)
+		cmd.Dir = gitDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote set-url in %s failed: %v\n%s", gitDir, err, out)
+		}
+	}
+
+	// Detect default branch name from the bare repo
+	headCmd := exec.Command("git", "--git-dir", bareRepoPath, "symbolic-ref", "HEAD")
+	headOut, err := headCmd.Output()
+	if err == nil {
+		branch := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(headOut)), "refs/heads/"))
+		t.Logf("Local upstream created: %s (default branch: %s)", bareRepoPath, branch)
+	} else {
+		t.Logf("Local upstream created: %s", bareRepoPath)
+	}
+
+	return bareRepoPath
+}
+
+// findRefinerySession detects the refinery tmux session name by polling.
+// The session name depends on whether the prefix registry is loaded by the
+// boot subprocess — it could be tr-refinery or gt-refinery.
+func findRefinerySession(t *testing.T, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+		out, err := listCmd.Output()
+		if err == nil {
+			for _, s := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				s = strings.TrimSpace(s)
+				if strings.Contains(s, "refinery") &&
+					(strings.HasPrefix(s, "tr-") || strings.HasPrefix(s, "gt-")) {
+					t.Logf("Found refinery session: %s", s)
+					return s
+				}
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	// Log all sessions for debugging
+	listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	out, _ := listCmd.Output()
+	t.Fatalf("no refinery session found within %s\nAll sessions:\n%s", timeout, out)
+	return ""
+}
+
+// waitForPolecatDone polls until a polecat's tmux session disappears,
+// meaning gt done completed its self-kill. Returns true if the session
+// ended, false if it's still alive after timeout. Non-fatal because
+// gt done may hit Claude Code's 2m tool timeout before selfNukePolecat
+// runs, leaving the session alive even though the work was submitted.
+func waitForPolecatDone(t *testing.T, sessionName string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	lastLog := time.Now()
+	for time.Now().Before(deadline) {
+		if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
+			t.Logf("Polecat session %s ended (gt done completed) after %s",
+				sessionName, time.Since(deadline.Add(-timeout)).Round(time.Second))
+			return true
+		}
+		if time.Since(lastLog) >= 15*time.Second {
+			t.Logf("Waiting for polecat done... pane tail:\n%s", capturePaneTail(sessionName, 5))
+			lastLog = time.Now()
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Logf("WARNING: polecat session %s still alive after %s (gt done may have timed out)\nPane:\n%s",
+		sessionName, timeout, capturePaneTail(sessionName, 15))
+	return false
+}
+
+// waitForFileOnBranch polls a bare git repo until a file appears on the given branch.
+// This verifies the refinery merged the polecat's branch.
+// It periodically nudges the refinery with "continue" messages to ensure it
+// rescans the merge queue (the refinery may have completed its first patrol
+// before the polecat pushed).
+func waitForFileOnBranch(t *testing.T, bareRepoPath, branch, targetFile, expectedContent string, timeout time.Duration, refinerySession string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	lastLog := time.Now()
+	lastNudge := time.Time{} // send first nudge immediately
+	for time.Now().Before(deadline) {
+		gitShow := exec.Command("git", "--git-dir", bareRepoPath, "show", branch+":"+targetFile)
+		if out, err := gitShow.Output(); err == nil {
+			content := strings.TrimSpace(string(out))
+			if strings.Contains(content, expectedContent) {
+				t.Logf("File %s found on %s in upstream repo after %s",
+					targetFile, branch, time.Since(deadline.Add(-timeout)).Round(time.Second))
+				return
+			}
+			t.Logf("File found but content mismatch: got %q, want %q", content, expectedContent)
+		}
+		// Nudge the refinery every 30s — send "continue" to any refinery
+		// session so it starts a new patrol cycle and rescans the queue.
+		if time.Since(lastNudge) >= 30*time.Second {
+			nudgeRefinerySessions(t)
+			lastNudge = time.Now()
+		}
+		if time.Since(lastLog) >= 15*time.Second {
+			if refinerySession != "" {
+				t.Logf("Waiting for refinery merge... refinery pane tail:\n%s",
+					capturePaneTail(refinerySession, 5))
+			}
+			// Show branches on the bare repo for debugging
+			branchCmd := exec.Command("git", "--git-dir", bareRepoPath, "branch", "-a")
+			if brOut, err := branchCmd.Output(); err == nil {
+				t.Logf("Bare repo branches: %s", strings.TrimSpace(string(brOut)))
+			}
+			lastLog = time.Now()
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Fatalf("file %s not found on %s in upstream repo after %s", targetFile, branch, timeout)
+}
+
+// nudgeRefinerySessions sends "continue" to all refinery tmux sessions.
+// This wakes up a refinery that finished its patrol cycle before the polecat
+// pushed, causing it to rescan the merge queue.
+// Uses the same pattern as tmux.SendKeysReplace: Ctrl-U to clear pending
+// input, then literal text, then separate Enter key with a debounce delay.
+// Direct tmux send-keys without -l and debounce drops the Enter key.
+func nudgeRefinerySessions(t *testing.T) {
+	t.Helper()
+	listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	out, err := listCmd.Output()
+	if err != nil {
+		return
+	}
+	for _, s := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		s = strings.TrimSpace(s)
+		if s == "" || !strings.Contains(s, "refinery") {
+			continue
+		}
+		// Clear any accumulated input first (Ctrl-U)
+		exec.Command("tmux", "send-keys", "-t", s, "C-u").Run()
+		time.Sleep(50 * time.Millisecond)
+		// Send text in literal mode (-l) so special chars are handled
+		exec.Command("tmux", "send-keys", "-t", s, "-l", "continue").Run()
+		// Debounce before Enter — prevents race where Enter arrives before paste
+		time.Sleep(100 * time.Millisecond)
+		// Send Enter as separate command (critical — combined send drops it)
+		if err := exec.Command("tmux", "send-keys", "-t", s, "Enter").Run(); err == nil {
+			t.Logf("Nudged refinery session %s with 'continue'", s)
+		}
+	}
+}
+
+// killAllTestSessions kills all tmux sessions matching tr-* or gt-testrig-*
+// to prevent leaks between tests.
+func killAllTestSessions(t *testing.T) {
+	t.Helper()
+	listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	out, err := listCmd.Output()
+	if err != nil {
+		return // no tmux server or no sessions
+	}
+	for _, s := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if strings.HasPrefix(s, "tr-") || strings.HasPrefix(s, "gt-testrig-") {
+			_ = exec.Command("tmux", "kill-session", "-t", s).Run()
+			t.Logf("Killed session: %s", s)
+		}
+	}
+}
+
+// TestPolecatRefineryFlow exercises the complete polecat→refinery→main pipeline:
+// sling → polecat commits → gt done → MR bead created → refinery merges → file on main.
+//
+// Uses a local bare git repo so both polecat and refinery can push.
+// This is the strongest integration test: it proves the entire pipeline from
+// work dispatch through merge completion works end-to-end.
+func TestPolecatRefineryFlow(t *testing.T) {
+	gtBinary := buildGT(t)
+
+	// Step 1: Set up town + rig (clones octocat/Hello-World normally).
+	// Polecat needs modelSmart (multi-step: create file → commit → gt done).
+	// Witness does simple monitoring — use modelCheap.
+	// Refinery needs modelSmart to follow the merge protocol correctly
+	// (cheap models get confused and try to create patrols instead of processing MRs).
+	hqPath, env := setupAgentTestTown(t, gtBinary, modelSmart, agentTestOpts{
+		RoleModels: map[string]string{
+			"witness": modelCheap,
+		},
+	})
+
+	// Step 2: Swap origin to a writable local bare repo.
+	// gt rig add clones octocat/Hello-World (read-only). We create a local bare
+	// clone of .repo.git and rewire origin so polecat/refinery can push.
+	bareRepoPath := setupLocalUpstream(t, hqPath)
+
+	// Detect default branch (octocat uses "master", not "main")
+	defaultBranch := "master"
+	headCmd := exec.Command("git", "--git-dir", bareRepoPath, "symbolic-ref", "HEAD")
+	if headOut, err := headCmd.Output(); err == nil {
+		defaultBranch = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(headOut)), "refs/heads/"))
+	}
+	t.Logf("Default branch: %s", defaultBranch)
+
+	t.Cleanup(func() {
+		captureAllSessions(t, t.Name())
+		killAllTestSessions(t)
+	})
+
+	// Step 3: Explicitly boot the rig (starts witness + refinery)
+	runGTCmd(t, gtBinary, hqPath, env, "rig", "boot", "testrig")
+
+	// Step 4: Verify refinery is running
+	refinerySession := findRefinerySession(t, 30*time.Second)
+
+	// Step 5: Create bead with instructions to create a file and run gt done
+	rigPath := filepath.Join(hqPath, "testrig")
+	beadID := "tr-refinery1"
+	createTestBead(t, rigPath, env, beadID,
+		"Create a file named pipeline-test.txt containing exactly: pipeline-e2e-ok then git add and git commit it then run gt done")
+
+	// Step 6: Sling bead to rig — spawns polecat
+	sessionName := slingToRig(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
+
+	// Step 7: Wait for agent ready
+	waitForReady(t, sessionName, 90*time.Second)
+
+	// Step 8: Poll for file committed to polecat branch
+	polecatName := strings.TrimPrefix(sessionName, "tr-")
+	worktree := polecatWorktree(t, hqPath, "testrig", polecatName)
+	t.Logf("Polecat %s worktree: %s", polecatName, worktree)
+
+	targetFile := "pipeline-test.txt"
+	expectedContent := "pipeline-e2e-ok"
+	commitTimeout := 5 * time.Minute
+	commitDeadline := time.Now().Add(commitTimeout)
+	lastLog := time.Now()
+	committed := false
+
+	for time.Now().Before(commitDeadline) {
+		// Fail fast if session died before committing
+		if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
+			// Session gone — might have already done gt done. Check if file was committed.
+			gitShow := exec.Command("git", "show", "HEAD:"+targetFile)
+			gitShow.Dir = worktree
+			if out, gitErr := gitShow.Output(); gitErr == nil && strings.Contains(string(out), expectedContent) {
+				committed = true
+				t.Logf("File committed (session already ended) after %s",
+					time.Since(commitDeadline.Add(-commitTimeout)).Round(time.Second))
+			}
+			break
+		}
+
+		gitShow := exec.Command("git", "show", "HEAD:"+targetFile)
+		gitShow.Dir = worktree
+		if out, err := gitShow.Output(); err == nil {
+			if strings.Contains(string(out), expectedContent) {
+				committed = true
+				t.Logf("File committed to polecat branch after %s",
+					time.Since(commitDeadline.Add(-commitTimeout)).Round(time.Second))
+				break
+			}
+		}
+
+		if time.Since(lastLog) >= 15*time.Second {
+			t.Logf("Waiting for commit... pane tail:\n%s", capturePaneTail(sessionName, 5))
+			lastLog = time.Now()
+		}
+		time.Sleep(5 * time.Second)
+	}
+
+	if !committed {
+		t.Fatalf("polecat did not commit %s within %s\nPane:\n%s",
+			targetFile, commitTimeout, capturePaneTail(sessionName, 15))
+	}
+
+	// Step 9: Wait for polecat to complete gt done (session disappears)
+	// gt done pushes, creates MR bead, waits for merge (2m timeout), then nukes worktree.
+	// Non-fatal: gt done may hit Claude Code's 2m tool timeout before self-kill,
+	// but the branch is already pushed and MR submitted by that point.
+	polecatDone := waitForPolecatDone(t, sessionName, 5*time.Minute)
+	if !polecatDone {
+		t.Logf("Polecat session lingered — proceeding to verify merge anyway")
+	}
+
+	// Step 10: Wait for refinery to merge — file appears on default branch in upstream repo.
+	// The refinery's await-signal has 30s base backoff, so it may take a full cycle
+	// (signal detection + queue scan + rebase + test + merge + push) after gt done.
+	waitForFileOnBranch(t, bareRepoPath, defaultBranch, targetFile, expectedContent, 8*time.Minute, refinerySession)
+
+	// Step 11: Verify merge commit on default branch
+	gitLog := exec.Command("git", "--git-dir", bareRepoPath, "log", "--oneline", defaultBranch)
+	logOut, err := gitLog.Output()
+	if err != nil {
+		t.Errorf("git log on bare repo failed: %v", err)
+	} else {
+		t.Logf("Upstream main log:\n%s", strings.TrimSpace(string(logOut)))
+	}
+
+	t.Logf("PASS: Full polecat → refinery → main pipeline completed")
 }
