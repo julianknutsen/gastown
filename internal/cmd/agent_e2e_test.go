@@ -32,15 +32,17 @@ func checkAgentPrereqs() error {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return fmt.Errorf("claude CLI not found: %w", err)
 	}
-	// LiteLLM proxy must be running (routes Claude API calls to cheap models).
+	// LiteLLM proxy must be running unless using real credentials (passthrough mode).
 	// OPENROUTER_API_KEY must be set in the LiteLLM process env.
-	resp, err := http.Get("http://localhost:4000/health")
-	if err != nil {
-		return fmt.Errorf("LiteLLM not reachable at localhost:4000: %w (start with: litellm --config litellm-config.yaml)", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("LiteLLM unhealthy: status %d", resp.StatusCode)
+	if os.Getenv("GT_E2E_CLAUDE_CONFIG_DIR") == "" {
+		resp, err := http.Get("http://localhost:4000/health")
+		if err != nil {
+			return fmt.Errorf("LiteLLM not reachable at localhost:4000: %w (start with: litellm --config litellm-config.yaml)", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("LiteLLM unhealthy: status %d", resp.StatusCode)
+		}
 	}
 	return nil
 }
