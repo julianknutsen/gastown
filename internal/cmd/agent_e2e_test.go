@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/steveyegge/gastown/internal/config"
 )
 
 // TestMain checks prerequisites for agent e2e tests and skips all tests if
@@ -179,70 +177,76 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string, opts ...agentTestO
 	if err := os.MkdirAll(mayorDir, 0755); err != nil {
 		t.Fatalf("mkdir mayor: %v", err)
 	}
-	accountsCfg := &config.AccountsConfig{
-		Version: config.CurrentAccountsVersion,
-		Accounts: map[string]config.Account{
-			"litellm": {
-				Email:       "test@example.com",
-				Description: "LiteLLM test account",
-				ConfigDir:   claudeConfigDir,
+	accountsPath := filepath.Join(mayorDir, "accounts.json")
+	writeJSONFile(t, accountsPath, map[string]any{
+		"version": 1,
+		"accounts": map[string]any{
+			"litellm": map[string]any{
+				"email":       "test@example.com",
+				"description": "LiteLLM test account",
+				"config_dir":  claudeConfigDir,
 			},
 		},
-		Default: "litellm",
-	}
-	accountsPath := filepath.Join(mayorDir, "accounts.json")
-	if err := config.SaveAccountsConfig(accountsPath, accountsCfg); err != nil {
-		t.Fatalf("save accounts.json: %v", err)
-	}
+		"default": "litellm",
+	})
 
 	// --- TownSettings: agent command + env vars ---
 	// --model selects which Claude model name.
 	// --dangerously-skip-permissions skips interactive prompts.
 	// ANTHROPIC_BASE_URL is only set for LiteLLM mode (proxy to cheap backends).
 	settingsPath := filepath.Join(hqPath, "settings", "config.json")
-	settingsData, err := os.ReadFile(settingsPath)
-	var settings config.TownSettings
-	if err == nil {
-		_ = json.Unmarshal(settingsData, &settings)
+	var settings map[string]any
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		_ = json.Unmarshal(data, &settings)
 	} else {
-		settings = *config.NewTownSettings()
+		settings = map[string]any{
+			"type":    "town-settings",
+			"version": 1,
+		}
 	}
 
-	// Helper to build a RuntimeConfig for a given model name.
-	makeAgentRC := func(agentModel string) *config.RuntimeConfig {
-		rc := &config.RuntimeConfig{
-			Command: "claude",
-			Args:    []string{"--model", agentModel, "--dangerously-skip-permissions"},
+	// Ensure agents and role_agents maps exist
+	agents, _ := settings["agents"].(map[string]any)
+	if agents == nil {
+		agents = map[string]any{}
+	}
+	roleAgents, _ := settings["role_agents"].(map[string]any)
+	if roleAgents == nil {
+		roleAgents = map[string]any{}
+	}
+
+	makeAgentRC := func(agentModel string) map[string]any {
+		rc := map[string]any{
+			"command": "claude",
+			"args":    []string{"--model", agentModel, "--dangerously-skip-permissions"},
 		}
 		if opt.ClaudeConfigDir == "" {
-			rc.Env = map[string]string{
-				"ANTHROPIC_BASE_URL": "http://localhost:4000",
-			}
+			rc["env"] = map[string]string{"ANTHROPIC_BASE_URL": "http://localhost:4000"}
 		} else {
 			// Passthrough mode: set CLAUDE_CONFIG_DIR so the polecat's Claude
 			// reads real credentials. Custom agents in TownSettings shadow the
 			// built-in "claude" preset (which has Session.ConfigDirEnv), so
 			// session_manager's PrependEnv for CLAUDE_CONFIG_DIR doesn't fire.
 			// Setting it in rc.Env ensures it appears in the exec env command.
-			rc.Env = map[string]string{
-				"CLAUDE_CONFIG_DIR": claudeConfigDir,
-			}
+			rc["env"] = map[string]string{"CLAUDE_CONFIG_DIR": claudeConfigDir}
 		}
 		return rc
 	}
 
 	// Default agent uses the caller's model parameter.
-	settings.Agents["claude"] = makeAgentRC(model)
-	settings.DefaultAgent = "claude"
+	agents["claude"] = makeAgentRC(model)
+	settings["default_agent"] = "claude"
+	settings["agents"] = agents
 
 	// Per-role agent configs: create separate agents for roles that need
 	// different models (e.g., cheaper models for witness/refinery).
 	for role, roleModel := range opt.RoleModels {
 		agentName := "claude-" + role
-		settings.Agents[agentName] = makeAgentRC(roleModel)
-		settings.RoleAgents[role] = agentName
+		agents[agentName] = makeAgentRC(roleModel)
+		roleAgents[role] = agentName
 		t.Logf("Role %s: claude --model %s", role, roleModel)
 	}
+	settings["role_agents"] = roleAgents
 
 	if opt.ClaudeConfigDir == "" {
 		t.Logf("Default agent: claude --model %s, ANTHROPIC_BASE_URL=http://localhost:4000, credentials=%s", model, claudeConfigDir)
@@ -250,9 +254,7 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string, opts ...agentTestO
 		t.Logf("Default agent: claude --model %s (passthrough), credentials=%s", model, claudeConfigDir)
 	}
 
-	if err := config.SaveTownSettings(settingsPath, &settings); err != nil {
-		t.Fatalf("save town settings: %v", err)
-	}
+	writeJSONFile(t, settingsPath, settings)
 
 	// Add rig
 	gitURL := "https://github.com/octocat/Hello-World.git"
@@ -278,76 +280,26 @@ func createTestBead(t *testing.T, workDir string, env []string, beadID, title st
 	}
 }
 
-// slingToRig slings a bead to a rig and returns the polecat's tmux session name.
-// The session name is constructed from the sling output ("Allocated polecat: <name>")
-// and the rig prefix (e.g. "tr"), giving "tr-<name>" (e.g. "tr-rust").
-func slingToRig(t *testing.T, gtBinary, hqPath string, env []string, beadID, rigName, rigPrefix string) string {
-	t.Helper()
-
-	slingCmd := exec.Command(gtBinary, "sling", beadID, rigName,
-		"--var", "setup_command=",
-		"--var", "typecheck_command=",
-		"--var", "lint_command=",
-		"--var", "build_command=",
-	)
-	slingCmd.Dir = hqPath
-	slingCmd.Env = env
-	slingOut, err := slingCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("gt sling %s %s failed: %v\n%s", beadID, rigName, err, slingOut)
-	}
-	t.Logf("Sling output:\n%s", slingOut)
-
-	// Extract polecat name from sling output
-	var polecatName string
-	for _, line := range strings.Split(string(slingOut), "\n") {
-		if strings.Contains(line, "Allocated polecat:") {
-			parts := strings.Split(line, "Allocated polecat: ")
-			if len(parts) == 2 {
-				polecatName = strings.TrimSpace(parts[1])
-			}
-		}
-	}
-	if polecatName == "" {
-		t.Fatalf("no polecat name found in sling output")
-	}
-
-	// Polecat session name = <rigPrefix>-<polecatName> (e.g. "tr-rust")
-	sessionName := rigPrefix + "-" + polecatName
-
-	// Wait for session to appear
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if exec.Command("tmux", "has-session", "-t", sessionName).Run() == nil {
-			t.Logf("Found session: %s (polecat: %s)", sessionName, polecatName)
-			return sessionName
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("tmux session %q not found after sling", sessionName)
-	return ""
-}
 
 // waitForReady polls the tmux pane for the Claude Code ready prompt (❯).
 func waitForReady(t *testing.T, sessionName string, timeout time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p")
-		out, err := captureCmd.Output()
-		if err == nil {
-			// Normalize NBSP for prompt matching (same as matchesPromptPrefix in tmux.go)
-			content := strings.ReplaceAll(string(out), "\u00a0", " ")
-			if strings.Contains(content, "❯") {
-				t.Logf("Agent ready after %s", time.Since(deadline.Add(-timeout)).Round(time.Second))
-				return
-			}
+	start := time.Now()
+	ok := pollUntil(t, "agent ready (❯ prompt)", timeout, 2*time.Second, func() bool {
+		out, err := tmuxCapture(sessionName)
+		if err != nil {
+			return false
 		}
-		time.Sleep(2 * time.Second)
+		// Normalize NBSP for prompt matching (same as matchesPromptPrefix in tmux.go)
+		content := strings.ReplaceAll(out, "\u00a0", " ")
+		return strings.Contains(content, "❯")
+	})
+	if ok {
+		t.Logf("Agent ready after %s", time.Since(start).Round(time.Second))
+		return
 	}
 	// Capture final pane state for debugging
-	captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p")
-	out, _ := captureCmd.Output()
+	out, _ := tmuxCapture(sessionName)
 	t.Fatalf("agent did not show ready prompt (❯) within %s\nFinal pane content:\n%s", timeout, out)
 }
 
@@ -370,19 +322,15 @@ func TestAgentSpawnAndReady(t *testing.T) {
 	createTestBead(t, rigPath, env, beadID, "Test agent spawn task")
 
 	// Sling bead to rig — auto-spawns a polecat with Claude Code
-	sessionName := slingToRig(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
-	t.Cleanup(func() {
-		captureAllSessions(t, t.Name())
-		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
-	})
+	sr := slingAndWait(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
+	t.Cleanup(func() { cleanupTestSessions(t) })
 
 	// Wait for Claude Code to become ready (❯ prompt appears)
-	waitForReady(t, sessionName, 90*time.Second)
+	waitForReady(t, sr.SessionName, 90*time.Second)
 
 	// Verify session is still alive after ready detection
-	hasSession := exec.Command("tmux", "has-session", "-t", sessionName)
-	if err := hasSession.Run(); err != nil {
-		t.Fatalf("session %s died after ready detection", sessionName)
+	if !tmuxHasSession(sr.SessionName) {
+		t.Fatalf("session %s died after ready detection", sr.SessionName)
 	}
 }
 
@@ -406,12 +354,11 @@ func polecatWorktree(t *testing.T, hqPath, rigName, polecatName string) string {
 
 // capturePaneTail returns the last non-empty lines from a tmux pane.
 func capturePaneTail(sessionName string, n int) string {
-	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p")
-	out, err := cmd.Output()
+	out, err := tmuxCapture(sessionName)
 	if err != nil {
 		return fmt.Sprintf("(capture failed: %v)", err)
 	}
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(out, "\n")
 	var tail []string
 	for i := len(lines) - 1; i >= 0 && len(tail) < n; i-- {
 		if strings.TrimSpace(lines[i]) != "" {
@@ -423,13 +370,11 @@ func capturePaneTail(sessionName string, n int) string {
 
 // captureFullPane captures the full scrollback history from a tmux pane.
 func captureFullPane(sessionName string) string {
-	// Capture full scrollback into a tmux buffer, then dump it
-	capCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", "-")
-	out, err := capCmd.Output()
+	out, err := tmuxCaptureScrollback(sessionName)
 	if err != nil {
 		return fmt.Sprintf("(capture failed: %v)", err)
 	}
-	return string(out)
+	return out
 }
 
 // captureAllSessions captures full scrollback from all tmux sessions matching
@@ -444,21 +389,15 @@ func captureAllSessions(t *testing.T, testName string) {
 		return
 	}
 
-	listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-	listOut, err := listCmd.Output()
-	if err != nil {
+	sessions := tmuxListSessions()
+	if len(sessions) == 0 {
 		t.Logf("WARNING: no tmux sessions to capture")
 		return
 	}
 
 	var captured []string
-	for _, session := range strings.Split(strings.TrimSpace(string(listOut)), "\n") {
-		session = strings.TrimSpace(session)
-		if session == "" {
-			continue
-		}
-		// Capture sessions belonging to the test rig (tr-* and gt-testrig-*)
-		if !strings.HasPrefix(session, "tr-") && !strings.HasPrefix(session, "gt-testrig-") {
+	for _, session := range sessions {
+		if !isTestSession(session) {
 			continue
 		}
 
@@ -510,19 +449,16 @@ func TestAgentSlingTextChange(t *testing.T) {
 		"Create and commit a file named test-output.txt containing exactly: e2e-agent-test-ok")
 
 	// Sling to rig — auto-spawns polecat, sends beacon with "Run gt prime --hook"
-	sessionName := slingToRig(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
-	t.Cleanup(func() {
-		captureAllSessions(t, t.Name())
-		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
-	})
+	sr := slingAndWait(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
+	sessionName := sr.SessionName
+	t.Cleanup(func() { cleanupTestSessions(t) })
 
 	// Wait for agent ready
 	waitForReady(t, sessionName, 90*time.Second)
 
 	// Find the polecat worktree where the model works
-	polecatName := strings.TrimPrefix(sessionName, "tr-")
-	worktree := polecatWorktree(t, hqPath, "testrig", polecatName)
-	t.Logf("Polecat %s worktree: %s", polecatName, worktree)
+	worktree := polecatWorktree(t, hqPath, "testrig", sr.PolecatName)
+	t.Logf("Polecat %s worktree: %s", sr.PolecatName, worktree)
 
 	// Poll for the file to be committed to the branch.
 	// The model needs to: read the task → create the file → git add → git commit.
@@ -535,7 +471,7 @@ func TestAgentSlingTextChange(t *testing.T) {
 
 	for time.Now().Before(deadline) {
 		// Fail fast if session died (agent crashed)
-		if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
+		if !tmuxHasSession(sessionName) {
 			t.Fatalf("agent session died while waiting for text change\nLast pane:\n%s",
 				capturePaneTail(sessionName, 10))
 		}
@@ -587,75 +523,6 @@ func TestAgentSlingTextChange(t *testing.T) {
 	}
 }
 
-// extractWispID parses sling output for the wisp ID created by formula instantiation.
-// Looks for "Formula wisp created: <id>" or "Wisp created: <id>".
-func extractWispID(t *testing.T, slingOutput string) string {
-	t.Helper()
-	for _, line := range strings.Split(slingOutput, "\n") {
-		if strings.Contains(line, "isp created:") {
-			parts := strings.Split(line, "isp created: ")
-			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1])
-			}
-		}
-	}
-	t.Fatalf("no wisp ID found in sling output:\n%s", slingOutput)
-	return ""
-}
-
-// slingFormulaToRig slings a bead with formula to a rig, returning both the
-// tmux session name and the wisp ID for molecule progress tracking.
-func slingFormulaToRig(t *testing.T, gtBinary, hqPath string, env []string,
-	beadID, rigName, rigPrefix string) (sessionName, wispID string) {
-	t.Helper()
-
-	slingCmd := exec.Command(gtBinary, "sling", beadID, rigName,
-		"--var", "setup_command=",
-		"--var", "typecheck_command=",
-		"--var", "lint_command=",
-		"--var", "build_command=",
-	)
-	slingCmd.Dir = hqPath
-	slingCmd.Env = env
-	slingOut, err := slingCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("gt sling %s %s failed: %v\n%s", beadID, rigName, err, slingOut)
-	}
-	t.Logf("Sling output:\n%s", slingOut)
-
-	output := string(slingOut)
-
-	// Extract wisp ID
-	wispID = extractWispID(t, output)
-	t.Logf("Wisp ID: %s", wispID)
-
-	// Extract polecat name
-	var polecatName string
-	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, "Allocated polecat:") {
-			parts := strings.Split(line, "Allocated polecat: ")
-			if len(parts) == 2 {
-				polecatName = strings.TrimSpace(parts[1])
-			}
-		}
-	}
-	if polecatName == "" {
-		t.Fatalf("no polecat name found in sling output")
-	}
-
-	// Wait for session
-	sessionName = rigPrefix + "-" + polecatName
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if exec.Command("tmux", "has-session", "-t", sessionName).Run() == nil {
-			t.Logf("Found session: %s (polecat: %s)", sessionName, polecatName)
-			return sessionName, wispID
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("tmux session %q not found after sling", sessionName)
-	return "", ""
-}
 
 // getMoleculeProgress queries molecule step progress via bd mol current.
 // Uses bd mol current instead of gt mol progress because gt mol progress
@@ -719,18 +586,19 @@ func TestAgentFormulaWork(t *testing.T) {
 		"Create and commit a file named formula-test.txt containing exactly: formula-e2e-ok")
 
 	// Sling with formula — returns wisp ID for progress tracking
-	sessionName, wispID := slingFormulaToRig(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
-	t.Cleanup(func() {
-		captureAllSessions(t, t.Name())
-		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
-	})
+	sr := slingAndWait(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
+	sessionName, wispID := sr.SessionName, sr.WispID
+	if wispID == "" {
+		t.Fatalf("formula sling did not produce a wisp ID")
+	}
+	t.Cleanup(func() { cleanupTestSessions(t) })
 
 	// Wait for agent ready
 	waitForReady(t, sessionName, 90*time.Second)
 
 	// Diagnostic: check what gt prime --dry-run shows from the polecat worktree.
 	// This reveals whether the molecule instructions are actually presented to the agent.
-	polecatName := strings.TrimPrefix(sessionName, "tr-")
+	polecatName := sr.PolecatName
 	worktree := polecatWorktree(t, hqPath, "testrig", polecatName)
 	primeCmd := exec.Command(gtBinary, "prime", "--dry-run")
 	primeCmd.Dir = worktree
@@ -792,7 +660,7 @@ func TestAgentFormulaWork(t *testing.T) {
 	sessionCaptured := false
 	for time.Now().Before(deadline) {
 		// Fail fast if session died
-		if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
+		if !tmuxHasSession(sessionName) {
 			t.Logf("Agent session ended. Final progress: %d/%d steps", maxDone, total)
 			break
 		}
@@ -885,32 +753,10 @@ func TestHookVisibility(t *testing.T) {
 	t.Logf("Sling output:\n%s", slingOut)
 
 	// Extract polecat name
-	var polecatName string
-	for _, line := range strings.Split(string(slingOut), "\n") {
-		if strings.Contains(line, "Allocated polecat:") {
-			parts := strings.Split(line, "Allocated polecat: ")
-			if len(parts) == 2 {
-				polecatName = strings.TrimSpace(parts[1])
-			}
-		}
-	}
-	if polecatName == "" {
-		t.Fatalf("no polecat name found in sling output")
-	}
+	polecatName := extractPolecatName(t, string(slingOut))
 	t.Logf("Polecat: %s", polecatName)
 
-	// Capture sessions and kill only those spawned by this test
-	t.Cleanup(func() {
-		captureAllSessions(t, t.Name())
-		listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-		if out, err := listCmd.Output(); err == nil {
-			for _, s := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				if strings.HasPrefix(s, "gt-testrig-") || strings.HasPrefix(s, "tr-") {
-					_ = exec.Command("tmux", "kill-session", "-t", s).Run()
-				}
-			}
-		}
-	})
+	t.Cleanup(func() { cleanupTestSessions(t) })
 
 	// Construct worktree path directly
 	worktree := polecatWorktree(t, hqPath, "testrig", polecatName)
@@ -1038,16 +884,15 @@ func TestAgentDone(t *testing.T) {
 	rigPath := filepath.Join(hqPath, "testrig")
 	beadID := "tr-test2"
 	createTestBead(t, rigPath, env, beadID, "Test agent done task")
-	sessionName := slingToRig(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
+	sr := slingAndWait(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
 
 	// Wait for agent to be ready before nuking
-	waitForReady(t, sessionName, 90*time.Second)
+	waitForReady(t, sr.SessionName, 90*time.Second)
 
 	// Capture sessions before nuke destroys them
 	captureAllSessions(t, t.Name())
 
-	// Extract polecat name from session name (format: gt-<rig>-<polecat>)
-	polecatName := strings.TrimPrefix(sessionName, "tr-")
+	polecatName := sr.PolecatName
 	t.Logf("Nuking polecat: testrig/%s", polecatName)
 
 	// Nuke the polecat (tests cleanup path: session kill + worktree removal)
@@ -1060,9 +905,8 @@ func TestAgentDone(t *testing.T) {
 
 	// Verify session is gone
 	time.Sleep(1 * time.Second)
-	hasSession := exec.Command("tmux", "has-session", "-t", sessionName)
-	if err := hasSession.Run(); err == nil {
-		t.Errorf("session %s still exists after nuke", sessionName)
+	if tmuxHasSession(sr.SessionName) {
+		t.Errorf("session %s still exists after nuke", sr.SessionName)
 	}
 
 	// Verify polecat worktree directory is removed
@@ -1120,27 +964,19 @@ func setupLocalUpstream(t *testing.T, hqPath string) string {
 // boot subprocess — it could be tr-refinery or gt-refinery.
 func findRefinerySession(t *testing.T, timeout time.Duration) string {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-		out, err := listCmd.Output()
-		if err == nil {
-			for _, s := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				s = strings.TrimSpace(s)
-				if strings.Contains(s, "refinery") &&
-					(strings.HasPrefix(s, "tr-") || strings.HasPrefix(s, "gt-")) {
-					t.Logf("Found refinery session: %s", s)
-					return s
-				}
+	var found string
+	pollUntilFatal(t, "refinery session", timeout, 2*time.Second, func() bool {
+		for _, s := range tmuxListSessions() {
+			if strings.Contains(s, "refinery") &&
+				(strings.HasPrefix(s, "tr-") || strings.HasPrefix(s, "gt-")) {
+				found = s
+				return true
 			}
 		}
-		time.Sleep(2 * time.Second)
-	}
-	// Log all sessions for debugging
-	listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-	out, _ := listCmd.Output()
-	t.Fatalf("no refinery session found within %s\nAll sessions:\n%s", timeout, out)
-	return ""
+		return false
+	})
+	t.Logf("Found refinery session: %s", found)
+	return found
 }
 
 // waitForPolecatDone polls until a polecat's tmux session disappears,
@@ -1150,19 +986,22 @@ func findRefinerySession(t *testing.T, timeout time.Duration) string {
 // runs, leaving the session alive even though the work was submitted.
 func waitForPolecatDone(t *testing.T, sessionName string, timeout time.Duration) bool {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
 	lastLog := time.Now()
-	for time.Now().Before(deadline) {
-		if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
-			t.Logf("Polecat session %s ended (gt done completed) after %s",
-				sessionName, time.Since(deadline.Add(-timeout)).Round(time.Second))
+	ok := pollUntil(t, "polecat done", timeout, 5*time.Second, func() bool {
+		if !tmuxHasSession(sessionName) {
 			return true
 		}
 		if time.Since(lastLog) >= 15*time.Second {
 			t.Logf("Waiting for polecat done... pane tail:\n%s", capturePaneTail(sessionName, 5))
 			lastLog = time.Now()
 		}
-		time.Sleep(5 * time.Second)
+		return false
+	})
+	if ok {
+		t.Logf("Polecat session %s ended (gt done completed) after %s",
+			sessionName, time.Since(start).Round(time.Second))
+		return true
 	}
 	t.Logf("WARNING: polecat session %s still alive after %s (gt done may have timed out)\nPane:\n%s",
 		sessionName, timeout, capturePaneTail(sessionName, 15))
@@ -1221,50 +1060,24 @@ func waitForFileOnBranch(t *testing.T, bareRepoPath, branch, targetFile, expecte
 // Direct tmux send-keys without -l and debounce drops the Enter key.
 func nudgeRefinerySessions(t *testing.T) {
 	t.Helper()
-	listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-	out, err := listCmd.Output()
-	if err != nil {
-		return
-	}
-	for _, s := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		s = strings.TrimSpace(s)
-		if s == "" || !strings.Contains(s, "refinery") {
+	for _, s := range tmuxListSessions() {
+		if !strings.Contains(s, "refinery") {
 			continue
 		}
 		// Clear any accumulated input first (Ctrl-U)
-		exec.Command("tmux", "send-keys", "-t", s, "C-u").Run()
+		tmuxSendKeys(s, "C-u")
 		time.Sleep(50 * time.Millisecond)
 		// Send text in literal mode (-l) so special chars are handled
-		exec.Command("tmux", "send-keys", "-t", s, "-l", "continue").Run()
+		tmuxSendKeys(s, "-l", "continue")
 		// Debounce before Enter — prevents race where Enter arrives before paste
 		time.Sleep(100 * time.Millisecond)
 		// Send Enter as separate command (critical — combined send drops it)
-		if err := exec.Command("tmux", "send-keys", "-t", s, "Enter").Run(); err == nil {
+		if err := tmuxSendKeys(s, "Enter"); err == nil {
 			t.Logf("Nudged refinery session %s with 'continue'", s)
 		}
 	}
 }
 
-// killAllTestSessions kills all tmux sessions matching tr-* or gt-testrig-*
-// to prevent leaks between tests.
-func killAllTestSessions(t *testing.T) {
-	t.Helper()
-	listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-	out, err := listCmd.Output()
-	if err != nil {
-		return // no tmux server or no sessions
-	}
-	for _, s := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		if strings.HasPrefix(s, "tr-") || strings.HasPrefix(s, "gt-testrig-") {
-			_ = exec.Command("tmux", "kill-session", "-t", s).Run()
-			t.Logf("Killed session: %s", s)
-		}
-	}
-}
 
 // TestPolecatRefineryFlow exercises the complete polecat→refinery→main pipeline:
 // sling → polecat commits → gt done → MR bead created → refinery merges → file on main.
@@ -1299,10 +1112,7 @@ func TestPolecatRefineryFlow(t *testing.T) {
 	}
 	t.Logf("Default branch: %s", defaultBranch)
 
-	t.Cleanup(func() {
-		captureAllSessions(t, t.Name())
-		killAllTestSessions(t)
-	})
+	t.Cleanup(func() { cleanupTestSessions(t) })
 
 	// Step 3: Explicitly boot the rig (starts witness + refinery)
 	runGTCmd(t, gtBinary, hqPath, env, "rig", "boot", "testrig")
@@ -1317,15 +1127,15 @@ func TestPolecatRefineryFlow(t *testing.T) {
 		"Create a file named pipeline-test.txt containing exactly: pipeline-e2e-ok then git add and git commit it then run gt done")
 
 	// Step 6: Sling bead to rig — spawns polecat
-	sessionName := slingToRig(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
+	sr := slingAndWait(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
+	sessionName := sr.SessionName
 
 	// Step 7: Wait for agent ready
 	waitForReady(t, sessionName, 90*time.Second)
 
 	// Step 8: Poll for file committed to polecat branch
-	polecatName := strings.TrimPrefix(sessionName, "tr-")
-	worktree := polecatWorktree(t, hqPath, "testrig", polecatName)
-	t.Logf("Polecat %s worktree: %s", polecatName, worktree)
+	worktree := polecatWorktree(t, hqPath, "testrig", sr.PolecatName)
+	t.Logf("Polecat %s worktree: %s", sr.PolecatName, worktree)
 
 	targetFile := "pipeline-test.txt"
 	expectedContent := "pipeline-e2e-ok"
@@ -1336,7 +1146,7 @@ func TestPolecatRefineryFlow(t *testing.T) {
 
 	for time.Now().Before(commitDeadline) {
 		// Fail fast if session died before committing
-		if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
+		if !tmuxHasSession(sessionName) {
 			// Session gone — might have already done gt done. Check if file was committed.
 			gitShow := exec.Command("git", "show", "HEAD:"+targetFile)
 			gitShow.Dir = worktree
