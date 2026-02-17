@@ -1,25 +1,25 @@
 # E2E agent test model routing via LiteLLM proxy.
 #
-# Routes Claude model requests through OpenRouter.
+# Routes Claude model requests through OpenRouter to cheap models.
 # Tests must use --model sonnet or --model haiku (fake OAuth creds block opus).
 #
-# Claude Code 2.1.42 model IDs:
-#   --model sonnet → claude-sonnet-4-5-20250929    → Claude Sonnet 4.5 ($3/$15)
+# Claude Code 2.1.42+ model IDs:
+#   --model sonnet → claude-sonnet-4-5-20250929    → Gemini 2.5 Flash ($0.15/$0.60)
 #   --model haiku  → claude-haiku-4-5-20251001     → Gemini 2.0 Flash ($0.10/$0.40)
-#   fallback       → claude-sonnet-4-20250514      → Claude Sonnet 4.5
-#   fallback       → claude-3-5-sonnet-20241022    → Claude Sonnet 4.5
+#   fallback       → claude-sonnet-4-20250514      → Gemini 2.5 Flash
+#   fallback       → claude-3-5-sonnet-20241022    → Gemini 2.5 Flash
 #
 # Required: OPENROUTER_API_KEY
 
 model_list:
   - model_name: claude-sonnet-4-5-20250929
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4.5
+      model: openrouter/google/gemini-2.5-flash
       api_key: os.environ/OPENROUTER_API_KEY
       drop_params: true
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4.5
+      model: openrouter/google/gemini-2.5-flash
       api_key: os.environ/OPENROUTER_API_KEY
       drop_params: true
   - model_name: claude-haiku-4-5-20251001
@@ -29,7 +29,7 @@ model_list:
       drop_params: true
   - model_name: claude-3-5-sonnet-20241022
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4.5
+      model: openrouter/google/gemini-2.5-flash
       api_key: os.environ/OPENROUTER_API_KEY
       drop_params: true
 
