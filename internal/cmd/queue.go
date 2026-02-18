@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -349,24 +350,43 @@ func runQueueRun(cmd *cobra.Command, args []string) error {
 	return err
 }
 
-// listQueuedBeads returns all beads with the gt:queued label.
+// listQueuedBeads returns all beads with the gt:queued label across all rig DBs.
+// bd list is CWD-scoped, so we scan all rig directories to find queued beads.
 func listQueuedBeads(townRoot string) ([]queuedBeadInfo, error) {
-	// Use bd list with label filter to find queued beads
+	var result []queuedBeadInfo
+	seen := make(map[string]bool)
+
+	for _, dir := range beadsSearchDirs(townRoot) {
+		beads, err := listQueuedBeadsFrom(dir)
+		if err != nil {
+			continue // skip dirs that fail
+		}
+		for _, b := range beads {
+			if !seen[b.ID] {
+				seen[b.ID] = true
+				result = append(result, b)
+			}
+		}
+	}
+	return result, nil
+}
+
+// listQueuedBeadsFrom queries a single directory for beads with gt:queued label.
+func listQueuedBeadsFrom(dir string) ([]queuedBeadInfo, error) {
 	listCmd := exec.Command("bd", "list", "--label="+LabelQueued, "--json", "--limit=0")
-	listCmd.Dir = townRoot
+	listCmd.Dir = dir
 	var stdout strings.Builder
 	listCmd.Stdout = &stdout
 
 	if err := listCmd.Run(); err != nil {
-		// If bd list fails (e.g., no beads with this label), return empty
-		return []queuedBeadInfo{}, nil
+		return nil, err
 	}
 
 	var raw []struct {
-		ID     string   `json:"id"`
-		Title  string   `json:"title"`
-		Status string   `json:"status"`
-		Labels []string `json:"labels"`
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		Status      string `json:"status"`
+		Description string `json:"description"`
 	}
 	if err := json.Unmarshal([]byte(stdout.String()), &raw); err != nil {
 		return nil, fmt.Errorf("parsing queued beads: %w", err)
@@ -374,14 +394,39 @@ func listQueuedBeads(townRoot string) ([]queuedBeadInfo, error) {
 
 	result := make([]queuedBeadInfo, 0, len(raw))
 	for _, r := range raw {
+		targetRig := ""
+		if meta := ParseQueueMetadata(r.Description); meta != nil {
+			targetRig = meta.TargetRig
+		}
 		result = append(result, queuedBeadInfo{
 			ID:        r.ID,
 			Title:     r.Title,
 			Status:    r.Status,
-			TargetRig: getQueueRig(r.Labels),
+			TargetRig: targetRig,
 		})
 	}
 	return result, nil
+}
+
+// beadsSearchDirs returns directories to scan for queued beads:
+// the town root plus any rig directories that have a .beads/ subdirectory.
+func beadsSearchDirs(townRoot string) []string {
+	dirs := []string{townRoot}
+	entries, err := os.ReadDir(townRoot)
+	if err != nil {
+		return dirs
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == "mayor" || e.Name() == "settings" {
+			continue
+		}
+		rigDir := filepath.Join(townRoot, e.Name())
+		beadsDir := filepath.Join(rigDir, ".beads")
+		if _, err := os.Stat(beadsDir); err == nil {
+			dirs = append(dirs, rigDir)
+		}
+	}
+	return dirs
 }
 
 // countActivePolecats counts all running polecats across all rigs in the town.

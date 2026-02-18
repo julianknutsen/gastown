@@ -147,13 +147,32 @@ type readyQueuedBead struct {
 }
 
 // getReadyQueuedBeads queries for beads that are both queued and unblocked.
-// Uses `bd ready --label gt:queued --json` which returns only unblocked beads.
+// Scans all rig directories since bd ready is CWD-scoped.
 func getReadyQueuedBeads(townRoot string) ([]readyQueuedBead, error) {
+	var result []readyQueuedBead
+	seen := make(map[string]bool)
+
+	for _, dir := range beadsSearchDirs(townRoot) {
+		beads, err := getReadyQueuedBeadsFrom(dir)
+		if err != nil {
+			continue
+		}
+		for _, b := range beads {
+			if !seen[b.ID] {
+				seen[b.ID] = true
+				result = append(result, b)
+			}
+		}
+	}
+	return result, nil
+}
+
+// getReadyQueuedBeadsFrom queries a single directory for ready queued beads.
+func getReadyQueuedBeadsFrom(dir string) ([]readyQueuedBead, error) {
 	cmd := exec.Command("bd", "ready", "--label", LabelQueued, "--json", "-n", "100")
-	cmd.Dir = townRoot
+	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		// If no beads match, bd ready may exit non-zero
 		return nil, nil
 	}
 
@@ -169,10 +188,14 @@ func getReadyQueuedBeads(townRoot string) ([]readyQueuedBead, error) {
 
 	result := make([]readyQueuedBead, 0, len(raw))
 	for _, r := range raw {
+		targetRig := ""
+		if meta := ParseQueueMetadata(r.Description); meta != nil {
+			targetRig = meta.TargetRig
+		}
 		result = append(result, readyQueuedBead{
 			ID:          r.ID,
 			Title:       r.Title,
-			TargetRig:   getQueueRig(r.Labels),
+			TargetRig:   targetRig,
 			Description: r.Description,
 			Labels:      r.Labels,
 		})
@@ -187,9 +210,15 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 	// Parse queue metadata from description
 	meta := ParseQueueMetadata(b.Description)
 
-	// Remove queue labels (claim the bead)
+	// Resolve rig name: prefer pre-parsed value, fall back to metadata
+	rigName := b.TargetRig
+	if rigName == "" && meta != nil {
+		rigName = meta.TargetRig
+	}
+
+	// Remove queue label (claim the bead)
 	if err := dequeueBeadLabels(b.ID, townRoot); err != nil {
-		return fmt.Errorf("removing queue labels: %w", err)
+		return fmt.Errorf("removing queue label: %w", err)
 	}
 
 	// Strip queue metadata from description
@@ -203,7 +232,7 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 	// Reconstruct SlingParams from queue metadata
 	params := SlingParams{
 		BeadID:           b.ID,
-		RigName:          b.TargetRig,
+		RigName:          rigName,
 		FormulaFailFatal: true,  // Queue: rollback + requeue on failure
 		Force:            true,  // Always force at dispatch (validated at enqueue)
 		NoConvoy:         true,  // Convoy already created at enqueue
@@ -228,8 +257,8 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 	// Dispatch via unified executeSling
 	result, err := executeSling(params)
 	if err != nil {
-		// Re-queue on failure: re-add labels
-		requeueBead(b.ID, b.TargetRig, townRoot)
+		// Re-queue on failure: re-add label
+		requeueBead(b.ID, townRoot)
 		return fmt.Errorf("sling failed: %w", err)
 	}
 
@@ -239,7 +268,7 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 		polecatName = result.SpawnInfo.PolecatName
 	}
 	_ = events.LogFeed(events.TypeQueueDispatch, "daemon",
-		events.QueueDispatchPayload(b.ID, b.TargetRig, polecatName))
+		events.QueueDispatchPayload(b.ID, rigName, polecatName))
 
 	return nil
 }
@@ -252,12 +281,9 @@ func splitVars(vars string) []string {
 	return strings.Split(vars, ",")
 }
 
-// requeueBead re-adds queue labels to a bead after a dispatch failure.
-func requeueBead(beadID, rigName, townRoot string) {
-	rigLabel := LabelQueueRigPrefix + rigName
-	cmd := exec.Command("bd", "update", beadID,
-		"--add-label="+LabelQueued,
-		"--add-label="+rigLabel)
+// requeueBead re-adds the gt:queued label to a bead after a dispatch failure.
+func requeueBead(beadID, townRoot string) {
+	cmd := exec.Command("bd", "update", beadID, "--add-label="+LabelQueued)
 	cmd.Dir = townRoot
 	if err := cmd.Run(); err != nil {
 		fmt.Printf("  %s Could not re-queue %s: %v\n", style.Dim.Render("Warning:"), beadID, err)

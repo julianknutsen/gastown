@@ -33,8 +33,6 @@ type EnqueueOptions struct {
 const (
 	// LabelQueued marks a bead as queued for dispatch.
 	LabelQueued = "gt:queued"
-	// LabelQueueRigPrefix is the prefix for the target rig label.
-	LabelQueueRigPrefix = "gt:queue-rig:"
 )
 
 // enqueueBead queues a bead for deferred dispatch via the work queue.
@@ -90,7 +88,7 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 
 	if opts.DryRun {
 		fmt.Printf("Would queue %s → %s\n", beadID, rigName)
-		fmt.Printf("  Would add labels: %s, %s%s\n", LabelQueued, LabelQueueRigPrefix, rigName)
+		fmt.Printf("  Would add label: %s\n", LabelQueued)
 		fmt.Printf("  Would append queue metadata to description\n")
 		if !opts.NoConvoy {
 			fmt.Printf("  Would create auto-convoy\n")
@@ -98,11 +96,9 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		return nil
 	}
 
-	// Add labels: gt:queued + gt:queue-rig:<rigName>
-	rigLabel := LabelQueueRigPrefix + rigName
+	// Add queue label (rig is stored in description metadata)
 	labelCmd := exec.Command("bd", "update", beadID,
-		"--add-label="+LabelQueued,
-		"--add-label="+rigLabel)
+		"--add-label="+LabelQueued)
 	labelCmd.Dir = townRoot
 	var labelStderr bytes.Buffer
 	labelCmd.Stderr = &labelStderr
@@ -224,35 +220,11 @@ func runBatchEnqueue(beadIDs []string, rigName string) error {
 	return nil
 }
 
-// dequeueBeadLabels removes queue labels from a bead (claim for dispatch).
-// Called by the dispatcher when a bead is about to be dispatched.
+// dequeueBeadLabels removes the gt:queued label from a bead (claim for dispatch).
 func dequeueBeadLabels(beadID, townRoot string) error {
-	// First get the bead's labels to find the exact queue-rig label
-	info, err := getBeadInfo(beadID)
-	if err != nil {
-		return fmt.Errorf("getting bead info: %w", err)
-	}
-
-	args := []string{"update", beadID, "--remove-label=" + LabelQueued}
-	for _, label := range info.Labels {
-		if strings.HasPrefix(label, LabelQueueRigPrefix) {
-			args = append(args, "--remove-label="+label)
-		}
-	}
-
-	cmd := exec.Command("bd", args...)
+	cmd := exec.Command("bd", "update", beadID, "--remove-label="+LabelQueued)
 	cmd.Dir = townRoot
 	return cmd.Run()
-}
-
-// getQueueRig extracts the target rig name from a bead's queue labels.
-func getQueueRig(labels []string) string {
-	for _, label := range labels {
-		if strings.HasPrefix(label, LabelQueueRigPrefix) {
-			return strings.TrimPrefix(label, LabelQueueRigPrefix)
-		}
-	}
-	return ""
 }
 
 // hasQueuedLabel checks if a bead has the gt:queued label.
