@@ -274,6 +274,10 @@ func (d *Daemon) heartbeat(state *State) {
 	// This is a safety net - Deacon patrol also does this more frequently.
 	d.cleanupOrphanedProcesses()
 
+	// 13. Dispatch queued work (capacity-controlled polecat dispatch)
+	// Shells out to `gt queue run` to avoid circular import with cmd package.
+	d.dispatchQueuedWork()
+
 	// Update state
 	state.LastHeartbeat = time.Now()
 	state.HeartbeatCount++
@@ -984,6 +988,24 @@ Manual intervention may be required.`,
 	cmd.Dir = d.config.TownRoot
 	if err := cmd.Run(); err != nil {
 		d.logger.Printf("Warning: failed to notify witness of crashed polecat: %v", err)
+	}
+}
+
+// dispatchQueuedWork dispatches queued beads via `gt queue run`.
+// This shells out to the CLI to avoid circular imports between daemon and cmd packages.
+// The queue dispatch logic checks capacity (max polecats), paused state, and batch limits.
+func (d *Daemon) dispatchQueuedWork() {
+	cmd := exec.Command("gt", "queue", "run") //nolint:gosec // G204: args are constructed internally
+	cmd.Dir = d.config.TownRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		d.logger.Printf("Queue dispatch error: %v (output: %s)", err, strings.TrimSpace(string(out)))
+		return
+	}
+
+	output := strings.TrimSpace(string(out))
+	if output != "" {
+		d.logger.Printf("Queue dispatch: %s", output)
 	}
 }
 

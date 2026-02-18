@@ -341,9 +341,13 @@ func runQueueClear(cmd *cobra.Command, args []string) error {
 }
 
 func runQueueRun(cmd *cobra.Command, args []string) error {
-	// Placeholder - will be implemented in commit 5 (queue_dispatch.go)
-	fmt.Println("Queue dispatch not yet implemented. Use gt sling for immediate dispatch.")
-	return nil
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return err
+	}
+
+	_, err = dispatchQueuedWork(townRoot, queueRunBatch, queueRunMaxPol, queueRunDryRun)
+	return err
 }
 
 // listQueuedBeads returns all beads with the gt:queued label.
