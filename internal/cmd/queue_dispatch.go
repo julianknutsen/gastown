@@ -197,18 +197,23 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 		_ = descCmd.Run() // best effort
 	}
 
-	// Build SlingBeadOptions from queue metadata
-	opts := SlingBeadOptions{
-		NoConvoy: false,
-		TownRoot: townRoot,
-		BeadsDir: townRoot + "/.beads",
+	// Build SlingParams from queue metadata
+	params := SlingParams{
+		BeadID:           b.ID,
+		RigName:          b.TargetRig,
+		FormulaFailFatal: true,  // Queue: rollback + requeue on failure
+		Force:            true,  // Always force at dispatch (validated at enqueue)
+		NoConvoy:         true,  // Convoy created at enqueue
+		NoBoot:           true,  // Avoid lock contention in daemon
+		TownRoot:         townRoot,
+		BeadsDir:         townRoot + "/.beads",
 	}
 	if meta != nil {
-		opts.Args = meta.Args
+		params.Args = meta.Args
 	}
 
-	// Dispatch via shared sling function
-	spawnInfo, err := slingBeadToPolecat(b.ID, b.TargetRig, opts)
+	// Dispatch via unified executeSling
+	result, err := executeSling(params)
 	if err != nil {
 		// Re-queue on failure: re-add labels
 		requeueBead(b.ID, b.TargetRig, townRoot)
@@ -217,8 +222,8 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 
 	// Log dispatch event
 	polecatName := ""
-	if spawnInfo != nil {
-		polecatName = spawnInfo.PolecatName
+	if result != nil && result.SpawnInfo != nil {
+		polecatName = result.SpawnInfo.PolecatName
 	}
 	_ = events.LogFeed(events.TypeQueueDispatch, "daemon",
 		events.QueueDispatchPayload(b.ID, b.TargetRig, polecatName))
