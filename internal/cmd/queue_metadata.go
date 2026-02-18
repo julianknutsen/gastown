@@ -10,14 +10,20 @@ import (
 // Delimited by ---queue--- so it can be cleanly parsed without conflicting
 // with existing description content.
 type QueueMetadata struct {
-	TargetRig  string `json:"target_rig"`
-	Formula    string `json:"formula,omitempty"`
-	Args       string `json:"args,omitempty"`
-	Vars       string `json:"vars,omitempty"` // comma-separated key=value pairs
-	EnqueuedAt string `json:"enqueued_at"`
-	Merge      string `json:"merge,omitempty"`
-	Convoy     string `json:"convoy,omitempty"`
-	BaseBranch string `json:"base_branch,omitempty"`
+	TargetRig   string `json:"target_rig"`
+	Formula     string `json:"formula,omitempty"`
+	Args        string `json:"args,omitempty"`
+	Vars        string `json:"vars,omitempty"` // comma-separated key=value pairs
+	EnqueuedAt  string `json:"enqueued_at"`
+	Merge       string `json:"merge,omitempty"`
+	Convoy      string `json:"convoy,omitempty"`
+	BaseBranch  string `json:"base_branch,omitempty"`
+	NoMerge     bool   `json:"no_merge,omitempty"`
+	Account     string `json:"account,omitempty"`
+	Agent       string `json:"agent,omitempty"`
+	HookRawBead bool   `json:"hook_raw_bead,omitempty"`
+	NoBoot      bool   `json:"no_boot,omitempty"`
+	Owned       bool   `json:"owned,omitempty"`
 }
 
 const queueMetadataDelimiter = "---queue---"
@@ -50,6 +56,24 @@ func FormatQueueMetadata(m *QueueMetadata) string {
 	}
 	if m.BaseBranch != "" {
 		lines = append(lines, fmt.Sprintf("base_branch: %s", m.BaseBranch))
+	}
+	if m.NoMerge {
+		lines = append(lines, "no_merge: true")
+	}
+	if m.Account != "" {
+		lines = append(lines, fmt.Sprintf("account: %s", m.Account))
+	}
+	if m.Agent != "" {
+		lines = append(lines, fmt.Sprintf("agent: %s", m.Agent))
+	}
+	if m.HookRawBead {
+		lines = append(lines, "hook_raw_bead: true")
+	}
+	if m.NoBoot {
+		lines = append(lines, "no_boot: true")
+	}
+	if m.Owned {
+		lines = append(lines, "owned: true")
 	}
 
 	return strings.Join(lines, "\n")
@@ -100,6 +124,18 @@ func ParseQueueMetadata(description string) *QueueMetadata {
 			m.Convoy = val
 		case "base_branch":
 			m.BaseBranch = val
+		case "no_merge":
+			m.NoMerge = val == "true"
+		case "account":
+			m.Account = val
+		case "agent":
+			m.Agent = val
+		case "hook_raw_bead":
+			m.HookRawBead = val == "true"
+		case "no_boot":
+			m.NoBoot = val == "true"
+		case "owned":
+			m.Owned = val == "true"
 		}
 	}
 
