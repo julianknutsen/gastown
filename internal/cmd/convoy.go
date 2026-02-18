@@ -640,8 +640,9 @@ func runConvoyStranded(cmd *cobra.Command, args []string) error {
 func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 	var stranded []strandedConvoyInfo
 
-	// Get blocked issues (we need this to filter out blocked issues)
+	// Get blocked and queued issues for filtering
 	blockedIssues := getBlockedIssueIDs()
+	queuedIssues := getQueuedIssueIDs()
 
 	// List all open convoys
 	listArgs := []string{"list", "--type=convoy", "--status=open", "--json"}
@@ -669,10 +670,10 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 			continue
 		}
 
-		// Find ready issues (open, not blocked, no live assignee)
+		// Find ready issues (open, not blocked, not queued, no live assignee)
 		var readyIssues []string
 		for _, t := range tracked {
-			if isReadyIssue(t, blockedIssues) {
+			if isReadyIssue(t, blockedIssues, queuedIssues) {
 				readyIssues = append(readyIssues, t.ID)
 			}
 		}
@@ -717,12 +718,41 @@ func getBlockedIssueIDs() map[string]bool {
 	return blocked
 }
 
+// getQueuedIssueIDs returns a set of issue IDs that are queued for deferred dispatch.
+// Follows the same pattern as getBlockedIssueIDs.
+func getQueuedIssueIDs() map[string]bool {
+	queued := make(map[string]bool)
+
+	// Query beads with the gt:queued label
+	queuedCmd := exec.Command("bd", "list", "--label="+LabelQueued, "--json", "--limit=0")
+	var stdout bytes.Buffer
+	queuedCmd.Stdout = &stdout
+
+	if err := queuedCmd.Run(); err != nil {
+		return queued // Return empty set on error
+	}
+
+	var issues []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
+		return queued
+	}
+
+	for _, issue := range issues {
+		queued[issue.ID] = true
+	}
+
+	return queued
+}
+
 // isReadyIssue checks if an issue is ready for dispatch (stranded).
 // An issue is ready if:
 // - status = "open" (not in_progress, closed, hooked)
 // - not in blocked set
+// - not queued for deferred dispatch (gt:queued label)
 // - no assignee OR assignee session is dead
-func isReadyIssue(t trackedIssueInfo, blockedIssues map[string]bool) bool {
+func isReadyIssue(t trackedIssueInfo, blockedIssues, queuedIssues map[string]bool) bool {
 	// Must be open status (not in_progress, closed, hooked)
 	if t.Status != "open" {
 		return false
@@ -730,6 +760,12 @@ func isReadyIssue(t trackedIssueInfo, blockedIssues map[string]bool) bool {
 
 	// Must not be blocked
 	if blockedIssues[t.ID] {
+		return false
+	}
+
+	// Must not be queued — queued beads are intentionally waiting for
+	// capacity-controlled dispatch. The queue system owns their lifecycle.
+	if queuedIssues[t.ID] {
 		return false
 	}
 
