@@ -7,13 +7,14 @@ import (
 )
 
 // QueueMetadata holds queue dispatch parameters stored in a bead's description.
-// Delimited by ---queue--- so it can be cleanly parsed without conflicting
-// with existing description content.
+// Delimited by ---gt:queue:v1--- so it can be cleanly parsed without conflicting
+// with existing description content. The namespaced delimiter avoids collision
+// with user content that might contain generic markdown separators.
 type QueueMetadata struct {
 	TargetRig   string `json:"target_rig"`
 	Formula     string `json:"formula,omitempty"`
 	Args        string `json:"args,omitempty"`
-	Vars        string `json:"vars,omitempty"` // comma-separated key=value pairs
+	Vars        string `json:"vars,omitempty"` // newline-separated key=value pairs
 	EnqueuedAt  string `json:"enqueued_at"`
 	Merge       string `json:"merge,omitempty"`
 	Convoy      string `json:"convoy,omitempty"`
@@ -21,12 +22,13 @@ type QueueMetadata struct {
 	NoMerge     bool   `json:"no_merge,omitempty"`
 	Account     string `json:"account,omitempty"`
 	Agent       string `json:"agent,omitempty"`
-	HookRawBead bool   `json:"hook_raw_bead,omitempty"`
-	NoBoot      bool   `json:"no_boot,omitempty"`
-	Owned       bool   `json:"owned,omitempty"`
+	HookRawBead      bool   `json:"hook_raw_bead,omitempty"`
+	Owned            bool   `json:"owned,omitempty"`
+	DispatchFailures int    `json:"dispatch_failures,omitempty"`
+	LastFailure      string `json:"last_failure,omitempty"`
 }
 
-const queueMetadataDelimiter = "---queue---"
+const queueMetadataDelimiter = "---gt:queue:v1---"
 
 // FormatQueueMetadata formats metadata as key-value lines for bead description.
 func FormatQueueMetadata(m *QueueMetadata) string {
@@ -42,8 +44,13 @@ func FormatQueueMetadata(m *QueueMetadata) string {
 	if m.Args != "" {
 		lines = append(lines, fmt.Sprintf("args: %s", m.Args))
 	}
-	if m.Vars != "" {
-		lines = append(lines, fmt.Sprintf("vars: %s", m.Vars))
+	// Vars are stored as repeated "var:" lines to avoid lossy delimiters.
+	// Values may contain commas, so one line per var is the safe format.
+	for _, v := range strings.Split(m.Vars, "\n") {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			lines = append(lines, fmt.Sprintf("var: %s", v))
+		}
 	}
 	if m.EnqueuedAt != "" {
 		lines = append(lines, fmt.Sprintf("enqueued_at: %s", m.EnqueuedAt))
@@ -69,11 +76,14 @@ func FormatQueueMetadata(m *QueueMetadata) string {
 	if m.HookRawBead {
 		lines = append(lines, "hook_raw_bead: true")
 	}
-	if m.NoBoot {
-		lines = append(lines, "no_boot: true")
-	}
 	if m.Owned {
 		lines = append(lines, "owned: true")
+	}
+	if m.DispatchFailures > 0 {
+		lines = append(lines, fmt.Sprintf("dispatch_failures: %d", m.DispatchFailures))
+	}
+	if m.LastFailure != "" {
+		lines = append(lines, fmt.Sprintf("last_failure: %s", m.LastFailure))
 	}
 
 	return strings.Join(lines, "\n")
@@ -89,6 +99,7 @@ func ParseQueueMetadata(description string) *QueueMetadata {
 
 	section := description[idx+len(queueMetadataDelimiter):]
 	m := &QueueMetadata{}
+	var varLines []string
 
 	for _, line := range strings.Split(section, "\n") {
 		line = strings.TrimSpace(line)
@@ -114,8 +125,11 @@ func ParseQueueMetadata(description string) *QueueMetadata {
 			m.Formula = val
 		case "args":
 			m.Args = val
+		case "var":
+			varLines = append(varLines, val)
 		case "vars":
-			m.Vars = val
+			// Legacy: comma-separated format for backward compatibility
+			varLines = append(varLines, strings.Split(val, ",")...)
 		case "enqueued_at":
 			m.EnqueuedAt = val
 		case "merge":
@@ -133,10 +147,18 @@ func ParseQueueMetadata(description string) *QueueMetadata {
 		case "hook_raw_bead":
 			m.HookRawBead = val == "true"
 		case "no_boot":
-			m.NoBoot = val == "true"
+			// Legacy: ignored. Dispatch always sets NoBoot=true.
 		case "owned":
 			m.Owned = val == "true"
+		case "dispatch_failures":
+			fmt.Sscanf(val, "%d", &m.DispatchFailures)
+		case "last_failure":
+			m.LastFailure = val
 		}
+	}
+
+	if len(varLines) > 0 {
+		m.Vars = strings.Join(varLines, "\n")
 	}
 
 	return m

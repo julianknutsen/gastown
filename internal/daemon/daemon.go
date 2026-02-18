@@ -1733,11 +1733,17 @@ func (d *Daemon) pruneStaleBranches() {
 
 // dispatchQueuedWork shells out to `gt queue run` to dispatch queued beads.
 // This avoids circular import between the daemon and cmd packages.
+// Uses a 5m timeout to allow multi-bead dispatch with formula cooking and hook retries.
 func (d *Daemon) dispatchQueuedWork() {
-	cmd := exec.Command("gt", "queue", "run")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gt", "queue", "run")
 	cmd.Dir = d.config.TownRoot
+	cmd.Env = append(os.Environ(), "GT_DAEMON=1", "BD_DOLT_AUTO_COMMIT=off")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
+	if ctx.Err() == context.DeadlineExceeded {
+		d.logger.Printf("Queue dispatch timed out after 5m")
+	} else if err != nil {
 		d.logger.Printf("Queue dispatch failed: %v (output: %s)", err, string(out))
 	} else if len(out) > 0 {
 		d.logger.Printf("Queue dispatch: %s", string(out))

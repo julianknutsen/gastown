@@ -7,6 +7,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
+	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -114,6 +115,34 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		return result, fmt.Errorf("bead %s is deferred (use --force to override)", params.BeadID)
 	}
 
+	// Send LIFECYCLE:Shutdown to the witness when force-stealing a bead from a
+	// live polecat. Without this, the old polecat becomes a zombie — still running
+	// but unaware it lost its hook. Mirrors the same logic in runSling (sling.go).
+	if info.Status == "hooked" && params.Force && info.Assignee != "" {
+		assigneeParts := strings.Split(info.Assignee, "/")
+		if len(assigneeParts) >= 3 && assigneeParts[1] == "polecats" {
+			oldRigName := assigneeParts[0]
+			oldPolecatName := assigneeParts[2]
+			if townRoot != "" {
+				router := mail.NewRouter(townRoot)
+				shutdownMsg := &mail.Message{
+					From:     "queue-dispatch",
+					To:       fmt.Sprintf("%s/witness", oldRigName),
+					Subject:  fmt.Sprintf("LIFECYCLE:Shutdown %s", oldPolecatName),
+					Body:     fmt.Sprintf("Reason: work_reassigned\nRequestedBy: queue-dispatch\nBead: %s\nNewAssignee: %s", params.BeadID, params.RigName),
+					Type:     mail.TypeTask,
+					Priority: mail.PriorityHigh,
+				}
+				if err := router.Send(shutdownMsg); err != nil {
+					fmt.Printf("  %s Could not send shutdown to witness: %v\n", style.Dim.Render("Warning:"), err)
+				} else {
+					fmt.Printf("  %s Sent LIFECYCLE:Shutdown to %s/witness for %s\n", style.Bold.Render("→"), oldRigName, oldPolecatName)
+				}
+				router.WaitPendingNotifications()
+			}
+		}
+	}
+
 	// 2. Burn stale molecules (if formula and force)
 	if params.FormulaName != "" {
 		existingMolecules := collectExistingMolecules(info)
@@ -136,10 +165,14 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	spawnOpts := SlingSpawnOptions{
 		Force:      params.Force,
 		Account:    params.Account,
-		Create:     true, // Always create for rig targets
 		HookBead:   params.BeadID,
 		Agent:      params.Agent,
 		BaseBranch: params.BaseBranch,
+		// Create is always true for rig targets: executeSling only handles
+		// rig-targeted dispatch (batch sling + queue dispatch), where a fresh
+		// polecat must be spawned. The single-sling path (runSling) handles
+		// the --create flag for non-rig targets via resolveTarget.
+		Create: true,
 	}
 	spawnInfo, err := spawnPolecatForSling(params.RigName, spawnOpts)
 	if err != nil {

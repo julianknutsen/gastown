@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -309,7 +310,7 @@ func runQueueClear(cmd *cobra.Command, args []string) error {
 
 	if queueClearBead != "" {
 		// Clear specific bead
-		if err := dequeueBeadLabels(queueClearBead, townRoot); err != nil {
+		if err := dequeueBeadLabels(queueClearBead); err != nil {
 			return fmt.Errorf("clearing bead %s from queue: %w", queueClearBead, err)
 		}
 		fmt.Printf("%s Removed %s from queue\n", style.Bold.Render("✓"), queueClearBead)
@@ -329,7 +330,7 @@ func runQueueClear(cmd *cobra.Command, args []string) error {
 
 	cleared := 0
 	for _, b := range queued {
-		if err := dequeueBeadLabels(b.ID, townRoot); err != nil {
+		if err := dequeueBeadLabels(b.ID); err != nil {
 			fmt.Printf("  %s Could not clear %s: %v\n", style.Dim.Render("Warning:"), b.ID, err)
 			continue
 		}
@@ -346,27 +347,72 @@ func runQueueRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	_, err = dispatchQueuedWork(townRoot, queueRunBatch, queueRunMaxPol, queueRunDryRun)
+	_, err = dispatchQueuedWork(townRoot, detectActor(), queueRunBatch, queueRunMaxPol, queueRunDryRun)
 	return err
 }
 
 // listQueuedBeads returns all beads with the gt:queued label across all rig DBs.
 // bd list is CWD-scoped, so we scan all rig directories to find queued beads.
+// Populates Blocked by reconciling bd list (all queued) vs bd ready (unblocked).
+// Returns an error if ALL directories fail (bd unreachable).
 func listQueuedBeads(townRoot string) ([]queuedBeadInfo, error) {
 	var result []queuedBeadInfo
 	seen := make(map[string]bool)
 
-	for _, dir := range beadsSearchDirs(townRoot) {
+	dirs := beadsSearchDirs(townRoot)
+
+	// Collect ready (unblocked) bead IDs for blocked-status reconciliation.
+	// Also parses descriptions to skip circuit-broken beads consistently
+	// with dispatch filtering.
+	readyIDs := make(map[string]bool)
+	for _, dir := range dirs {
+		readyCmd := exec.Command("bd", "ready", "--label", LabelQueued, "--json", "--limit=0")
+		readyCmd.Dir = dir
+		readyOut, err := readyCmd.Output()
+		if err != nil {
+			continue
+		}
+		var readyBeads []struct {
+			ID          string `json:"id"`
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal(readyOut, &readyBeads); err == nil {
+			for _, b := range readyBeads {
+				// Skip circuit-broken beads from ready set
+				if meta := ParseQueueMetadata(b.Description); meta != nil && meta.DispatchFailures >= maxDispatchFailures {
+					continue
+				}
+				readyIDs[b.ID] = true
+			}
+		}
+	}
+
+	var lastErr error
+	failCount := 0
+	for _, dir := range dirs {
 		beads, err := listQueuedBeadsFrom(dir)
 		if err != nil {
-			continue // skip dirs that fail
+			failCount++
+			lastErr = err
+			continue
 		}
 		for _, b := range beads {
+			// Skip already-dispatched beads (hooked/closed). The gt:queued
+			// label stays as audit trail, but queue list shows only pending.
+			if b.Status == "hooked" || b.Status == "closed" {
+				continue
+			}
 			if !seen[b.ID] {
 				seen[b.ID] = true
+				b.Blocked = !readyIDs[b.ID]
 				result = append(result, b)
 			}
 		}
+	}
+
+	// If every directory failed, bd is likely unreachable — surface the error
+	if failCount == len(dirs) && failCount > 0 {
+		return nil, fmt.Errorf("all %d bead directories failed (last: %w)", failCount, lastErr)
 	}
 	return result, nil
 }
@@ -395,8 +441,14 @@ func listQueuedBeadsFrom(dir string) ([]queuedBeadInfo, error) {
 	result := make([]queuedBeadInfo, 0, len(raw))
 	for _, r := range raw {
 		targetRig := ""
-		if meta := ParseQueueMetadata(r.Description); meta != nil {
+		meta := ParseQueueMetadata(r.Description)
+		if meta != nil {
 			targetRig = meta.TargetRig
+			// Skip circuit-broken beads — they are permanently failed and
+			// should not appear as pending queue items.
+			if meta.DispatchFailures >= maxDispatchFailures {
+				continue
+			}
 		}
 		result = append(result, queuedBeadInfo{
 			ID:        r.ID,
@@ -430,9 +482,9 @@ func beadsSearchDirs(townRoot string) []string {
 }
 
 // countActivePolecats counts all running polecats across all rigs in the town.
+// Uses session.ParseSessionName for canonical role detection rather than string
+// heuristics, ensuring correct counting regardless of rig prefix or polecat name.
 func countActivePolecats() int {
-	// List polecat tmux sessions
-	// Convention: polecat sessions are named gt-<rig>-p-<name>
 	listCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
 	out, err := listCmd.Output()
 	if err != nil {
@@ -444,8 +496,11 @@ func countActivePolecats() int {
 		if line == "" {
 			continue
 		}
-		// Polecat sessions follow gt-<rig>-p-<name> convention
-		if strings.HasPrefix(line, "gt-") && strings.Contains(line, "-p-") {
+		identity, err := session.ParseSessionName(line)
+		if err != nil {
+			continue // Not a gt-managed session
+		}
+		if identity.Role == session.RolePolecat {
 			count++
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/style"
@@ -167,9 +168,15 @@ func getEpicChildren(epicID string) ([]epicChild, error) {
 	var stdout bytes.Buffer
 	depCmd.Stdout = &stdout
 
+	var stderr bytes.Buffer
+	depCmd.Stderr = &stderr
 	if err := depCmd.Run(); err != nil {
-		// No dependencies is not an error
-		return nil, nil
+		// bd dep list exits non-zero for both "no deps" and real errors.
+		// Distinguish by checking if stdout is empty (no deps) vs stderr has content (real error).
+		if stdout.Len() == 0 && stderr.Len() == 0 {
+			return nil, nil // No dependencies
+		}
+		return nil, fmt.Errorf("bd dep list %s: %w (stderr: %s)", epicID, err, strings.TrimSpace(stderr.String()))
 	}
 
 	var deps []struct {
