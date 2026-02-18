@@ -2,12 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -40,96 +36,31 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 	}
 	results := make([]slingResult, 0, len(beadIDs))
 
+	townRoot := filepath.Dir(townBeadsDir)
+
 	// Spawn a polecat for each bead and sling it
 	for i, beadID := range beadIDs {
 		fmt.Printf("\n[%d/%d] Slinging %s...\n", i+1, len(beadIDs), beadID)
 
-		// Check bead status
-		info, err := getBeadInfo(beadID)
-		if err != nil {
-			results = append(results, slingResult{beadID: beadID, success: false, errMsg: err.Error()})
-			fmt.Printf("  %s Could not get bead info: %v\n", style.Dim.Render("✗"), err)
-			continue
-		}
-
-		if info.Status == "pinned" && !slingForce {
-			results = append(results, slingResult{beadID: beadID, success: false, errMsg: "already pinned"})
-			fmt.Printf("  %s Already pinned (use --force to re-sling)\n", style.Dim.Render("✗"))
-			continue
-		}
-
-		// Spawn a fresh polecat
-		spawnOpts := SlingSpawnOptions{
+		spawnInfo, err := slingBeadToPolecat(beadID, rigName, SlingBeadOptions{
 			Force:    slingForce,
 			Account:  slingAccount,
 			Create:   slingCreate,
-			HookBead: beadID, // Set atomically at spawn time
 			Agent:    slingAgent,
-		}
-		spawnInfo, err := SpawnPolecatForSling(rigName, spawnOpts)
+			NoConvoy: slingNoConvoy,
+			Args:     slingArgs,
+			Subject:  slingSubject,
+			TownRoot: townRoot,
+			BeadsDir: townBeadsDir,
+		})
 		if err != nil {
-			results = append(results, slingResult{beadID: beadID, success: false, errMsg: err.Error()})
-			fmt.Printf("  %s Failed to spawn polecat: %v\n", style.Dim.Render("✗"), err)
+			polecatName := ""
+			if spawnInfo != nil {
+				polecatName = spawnInfo.PolecatName
+			}
+			results = append(results, slingResult{beadID: beadID, polecat: polecatName, success: false, errMsg: err.Error()})
+			fmt.Printf("  %s %v\n", style.Dim.Render("✗"), err)
 			continue
-		}
-
-		targetAgent := spawnInfo.AgentID()
-		hookWorkDir := spawnInfo.ClonePath
-
-		// Auto-convoy: check if issue is already tracked
-		if !slingNoConvoy {
-			existingConvoy := isTrackedByConvoy(beadID)
-			if existingConvoy == "" {
-				convoyID, err := createAutoConvoy(beadID, info.Title)
-				if err != nil {
-					fmt.Printf("  %s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
-				} else {
-					fmt.Printf("  %s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
-				}
-			} else {
-				fmt.Printf("  %s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
-			}
-		}
-
-		// Hook the bead. See: https://github.com/steveyegge/gastown/issues/148
-		townRoot := filepath.Dir(townBeadsDir)
-		hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
-		hookCmd.Dir = beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
-		hookCmd.Stderr = os.Stderr
-		if err := hookCmd.Run(); err != nil {
-			results = append(results, slingResult{beadID: beadID, polecat: spawnInfo.PolecatName, success: false, errMsg: "hook failed"})
-			fmt.Printf("  %s Failed to hook bead: %v\n", style.Dim.Render("✗"), err)
-			continue
-		}
-
-		fmt.Printf("  %s Work attached to %s\n", style.Bold.Render("✓"), spawnInfo.PolecatName)
-
-		// Log sling event
-		actor := detectActor()
-		_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadID, targetAgent))
-
-		// Update agent bead state
-		updateAgentHookBead(targetAgent, beadID, hookWorkDir, townBeadsDir)
-
-		// Auto-attach mol-polecat-work molecule to polecat agent bead
-		if err := attachPolecatWorkMolecule(targetAgent, hookWorkDir, townRoot); err != nil {
-			fmt.Printf("  %s Could not attach work molecule: %v\n", style.Dim.Render("Warning:"), err)
-		}
-
-		// Store args if provided
-		if slingArgs != "" {
-			if err := storeArgsInBead(beadID, slingArgs); err != nil {
-				fmt.Printf("  %s Could not store args: %v\n", style.Dim.Render("Warning:"), err)
-			}
-		}
-
-		// Nudge the polecat
-		if spawnInfo.Pane != "" {
-			if err := injectStartPrompt(spawnInfo.Pane, beadID, slingSubject, slingArgs); err != nil {
-				fmt.Printf("  %s Could not nudge (agent will discover via gt prime)\n", style.Dim.Render("○"))
-			} else {
-				fmt.Printf("  %s Start prompt sent\n", style.Bold.Render("▶"))
-			}
 		}
 
 		results = append(results, slingResult{beadID: beadID, polecat: spawnInfo.PolecatName, success: true})
