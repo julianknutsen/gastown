@@ -445,6 +445,10 @@ func (d *Daemon) heartbeat(state *State) {
 	// branches persist indefinitely. This cleans them up periodically.
 	d.pruneStaleBranches()
 
+	// 14. Dispatch queued work (capacity-controlled polecat dispatch).
+	// Shells out to `gt queue run` to avoid circular import between daemon and cmd.
+	d.dispatchQueuedWork()
+
 	// Update state
 	state.LastHeartbeat = time.Now()
 	state.HeartbeatCount++
@@ -1725,4 +1729,17 @@ func (d *Daemon) pruneStaleBranches() {
 
 	// Also prune in the town root itself (mayor clone)
 	pruneInDir(d.config.TownRoot, "town-root")
+}
+
+// dispatchQueuedWork shells out to `gt queue run` to dispatch queued beads.
+// This avoids circular import between the daemon and cmd packages.
+func (d *Daemon) dispatchQueuedWork() {
+	cmd := exec.Command("gt", "queue", "run")
+	cmd.Dir = d.config.TownRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		d.logger.Printf("Queue dispatch failed: %v (output: %s)", err, string(out))
+	} else if len(out) > 0 {
+		d.logger.Printf("Queue dispatch: %s", string(out))
+	}
 }
