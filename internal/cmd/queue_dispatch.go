@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -212,12 +213,20 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 	}
 
 	// Dispatch via shared sling function
-	_, err := slingBeadToPolecat(b.ID, b.TargetRig, opts)
+	spawnInfo, err := slingBeadToPolecat(b.ID, b.TargetRig, opts)
 	if err != nil {
 		// Re-queue on failure: re-add labels
 		requeueBead(b.ID, b.TargetRig, townRoot)
 		return fmt.Errorf("sling failed: %w", err)
 	}
+
+	// Log dispatch event
+	polecatName := ""
+	if spawnInfo != nil {
+		polecatName = spawnInfo.PolecatName
+	}
+	_ = events.LogFeed(events.TypeQueueDispatch, "daemon",
+		events.QueueDispatchPayload(b.ID, b.TargetRig, polecatName))
 
 	return nil
 }

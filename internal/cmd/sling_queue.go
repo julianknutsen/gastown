@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -143,6 +144,10 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 			fmt.Printf("%s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
 		}
 	}
+
+	// Log enqueue event
+	actor := detectActor()
+	_ = events.LogFeed(events.TypeQueueEnqueue, actor, events.QueueEnqueuePayload(beadID, rigName))
 
 	fmt.Printf("%s Queued %s → %s\n", style.Bold.Render("✓"), beadID, rigName)
 	return nil
