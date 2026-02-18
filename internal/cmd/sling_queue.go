@@ -138,9 +138,13 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 	meta.NoBoot = opts.NoBoot
 	meta.Owned = opts.Owned
 
+	// Strip any existing queue metadata before appending new metadata.
+	// This ensures idempotent re-enqueue (no duplicate ---queue--- blocks).
+	baseDesc := StripQueueMetadata(info.Description)
+
 	// Append queue metadata to bead description
 	metaBlock := FormatQueueMetadata(meta)
-	newDesc := info.Description
+	newDesc := baseDesc
 	if newDesc != "" {
 		newDesc += "\n"
 	}
@@ -149,8 +153,11 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 	descCmd := exec.Command("bd", "update", beadID, "--description="+newDesc)
 	descCmd.Dir = townRoot
 	if err := descCmd.Run(); err != nil {
-		// Best effort: labels are set, metadata is nice-to-have
-		fmt.Printf("%s Could not write queue metadata: %v\n", style.Dim.Render("Warning:"), err)
+		// Metadata is required for dispatch routing — roll back the label
+		rollbackCmd := exec.Command("bd", "update", beadID, "--remove-label="+LabelQueued)
+		rollbackCmd.Dir = townRoot
+		_ = rollbackCmd.Run() // best effort rollback
+		return fmt.Errorf("writing queue metadata: %w", err)
 	}
 
 	// Auto-convoy (unless --no-convoy)
@@ -193,8 +200,13 @@ func runBatchEnqueue(beadIDs []string, rigName string) error {
 
 	successCount := 0
 	for _, beadID := range beadIDs {
+		// Auto-apply mol-polecat-work formula unless --hook-raw-bead
+		formula := "mol-polecat-work"
+		if slingHookRawBead {
+			formula = ""
+		}
 		err := enqueueBead(beadID, rigName, EnqueueOptions{
-			Formula:     "mol-polecat-work",
+			Formula:     formula,
 			Args:        slingArgs,
 			Vars:        slingVars,
 			NoConvoy:    slingNoConvoy,

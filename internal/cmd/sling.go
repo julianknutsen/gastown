@@ -442,6 +442,12 @@ func runSling(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// TODO: Migrate single-sling rig dispatch to use executeSling().
+	// The inline logic below duplicates executeSling's 12-step flow. Batch sling
+	// and queue dispatch already use the unified path. Single-sling is deferred
+	// because it handles non-rig targets (dogs, mayor, crew, self-sling, nudge)
+	// that executeSling does not cover.
+	//
 	// Resolve target agent using shared dispatch logic.
 	// Note: args[1] == args[len(args)-1] here because batch mode (len(args) > 2
 	// with rig last arg) exits at line 234. The only remaining case is len(args) <= 2.

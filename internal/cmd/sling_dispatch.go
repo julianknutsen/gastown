@@ -51,8 +51,18 @@ type SlingResult struct {
 	AttachedMolecule string
 }
 
-// executeSling performs the unified per-bead sling execution.
-// All rig-targeted sling paths (single, batch, queue dispatch) call this function.
+// executeSling performs the unified per-bead polecat/rig dispatch.
+// Batch sling and queue dispatch call this function. The single-sling path
+// (runSling) retains its own implementation for now (handles dogs, mayor,
+// nudge, and other non-rig targets). See TODO in sling.go.
+//
+// Caller responsibilities (NOT handled by executeSling):
+//   - Cross-rig guard: callers must call checkCrossRigGuard() before executeSling
+//     to verify the bead's prefix matches the target rig. Batch sling does this
+//     pre-loop; queue dispatch uses Force=true (validated at enqueue time).
+//   - wakeRigAgents: callers must call wakeRigAgents() after the dispatch loop
+//     when NoBoot is false. Batch sling calls it post-loop; queue dispatch sets
+//     NoBoot=true to avoid lock contention in the daemon.
 //
 // Steps:
 //  1. Get bead info + status check
