@@ -95,6 +95,7 @@ var (
 	slingAccount  string // --account: Claude Code account handle to use
 	slingAgent    string // --agent: override runtime agent for this sling/spawn
 	slingNoConvoy bool   // --no-convoy: skip auto-convoy creation
+	slingQueue    bool   // --queue: defer dispatch via work queue instead of immediate sling
 )
 
 func init() {
@@ -111,6 +112,7 @@ func init() {
 	slingCmd.Flags().StringVar(&slingAccount, "account", "", "Claude Code account handle to use")
 	slingCmd.Flags().StringVar(&slingAgent, "agent", "", "Override agent/runtime for this sling (e.g., claude, gemini, codex, or custom alias)")
 	slingCmd.Flags().BoolVar(&slingNoConvoy, "no-convoy", false, "Skip auto-convoy creation for single-issue sling")
+	slingCmd.Flags().BoolVar(&slingQueue, "queue", false, "Queue for deferred dispatch instead of immediate sling")
 
 	rootCmd.AddCommand(slingCmd)
 }
@@ -140,8 +142,32 @@ func runSling(cmd *cobra.Command, args []string) error {
 	if len(args) > 2 {
 		lastArg := args[len(args)-1]
 		if rigName, isRig := IsRigName(lastArg); isRig {
+			// --queue: enqueue all beads for deferred dispatch
+			if slingQueue {
+				return runBatchEnqueue(args[:len(args)-1], rigName)
+			}
 			return runBatchSling(args[:len(args)-1], rigName, townBeadsDir)
 		}
+	}
+
+	// --queue: single bead enqueue for deferred dispatch
+	// Requires a rig target (last arg must be a rig name)
+	if slingQueue {
+		if len(args) < 2 {
+			return fmt.Errorf("--queue requires a rig target: gt sling <bead> <rig> --queue")
+		}
+		rigName, isRig := IsRigName(args[len(args)-1])
+		if !isRig {
+			return fmt.Errorf("--queue requires a rig target, got '%s'", args[len(args)-1])
+		}
+		beadID := args[0]
+		return enqueueBead(beadID, rigName, EnqueueOptions{
+			Args:     slingArgs,
+			Vars:     slingVars,
+			NoConvoy: slingNoConvoy,
+			DryRun:   slingDryRun,
+			Force:    slingForce,
+		})
 	}
 
 	// Determine mode based on flags and argument types

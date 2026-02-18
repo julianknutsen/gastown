@@ -18,9 +18,11 @@ import (
 
 // beadInfo holds status and assignee for a bead.
 type beadInfo struct {
-	Title    string `json:"title"`
-	Status   string `json:"status"`
-	Assignee string `json:"assignee"`
+	Title       string   `json:"title"`
+	Status      string   `json:"status"`
+	Assignee    string   `json:"assignee"`
+	Labels      []string `json:"labels,omitempty"`
+	Description string   `json:"description,omitempty"`
 }
 
 // verifyBeadExists checks that the bead exists using bd show.
