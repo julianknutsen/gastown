@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/config"
@@ -178,7 +180,8 @@ func getReadyQueuedBeads(townRoot string) ([]readyQueuedBead, error) {
 	return result, nil
 }
 
-// dispatchSingleBead dequeues and dispatches one bead via slingBeadToPolecat.
+// dispatchSingleBead dequeues and dispatches one bead via executeSling.
+// Reconstructs full SlingParams from queue metadata stored at enqueue time.
 // On failure after label removal, it re-adds the labels (put back in queue).
 func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 	// Parse queue metadata from description
@@ -197,19 +200,29 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 		_ = descCmd.Run() // best effort
 	}
 
-	// Build SlingParams from queue metadata
+	// Reconstruct SlingParams from queue metadata
 	params := SlingParams{
 		BeadID:           b.ID,
 		RigName:          b.TargetRig,
 		FormulaFailFatal: true,  // Queue: rollback + requeue on failure
 		Force:            true,  // Always force at dispatch (validated at enqueue)
-		NoConvoy:         true,  // Convoy created at enqueue
+		NoConvoy:         true,  // Convoy already created at enqueue
 		NoBoot:           true,  // Avoid lock contention in daemon
 		TownRoot:         townRoot,
-		BeadsDir:         townRoot + "/.beads",
+		BeadsDir:         filepath.Join(townRoot, ".beads"),
 	}
 	if meta != nil {
+		params.FormulaName = meta.Formula
 		params.Args = meta.Args
+		if meta.Vars != "" {
+			params.Vars = splitVars(meta.Vars)
+		}
+		params.Merge = meta.Merge
+		params.BaseBranch = meta.BaseBranch
+		params.NoMerge = meta.NoMerge
+		params.Account = meta.Account
+		params.Agent = meta.Agent
+		params.HookRawBead = meta.HookRawBead
 	}
 
 	// Dispatch via unified executeSling
@@ -229,6 +242,14 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 		events.QueueDispatchPayload(b.ID, b.TargetRig, polecatName))
 
 	return nil
+}
+
+// splitVars splits a comma-separated vars string into individual key=value pairs.
+func splitVars(vars string) []string {
+	if vars == "" {
+		return nil
+	}
+	return strings.Split(vars, ",")
 }
 
 // requeueBead re-adds queue labels to a bead after a dispatch failure.
