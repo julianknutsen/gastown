@@ -444,8 +444,8 @@ func countActivePolecats() int {
 		if line == "" {
 			continue
 		}
-		// Polecat sessions contain "-p-" in their name
-		if strings.Contains(line, "-p-") {
+		// Polecat sessions follow gt-<rig>-p-<name> convention
+		if strings.HasPrefix(line, "gt-") && strings.Contains(line, "-p-") {
 			count++
 		}
 	}

@@ -64,13 +64,16 @@ func dispatchQueuedWork(townRoot string, batchOverride, maxPolOverride int, dryR
 	// Count active polecats
 	activePolecats := countActivePolecats()
 
-	// Compute available capacity
-	capacity := maxPolecats - activePolecats
-	if capacity <= 0 {
-		if dryRun {
-			fmt.Printf("No capacity: %d/%d polecats active\n", activePolecats, maxPolecats)
+	// Compute available capacity (0 = unlimited)
+	capacity := 0
+	if maxPolecats > 0 {
+		capacity = maxPolecats - activePolecats
+		if capacity <= 0 {
+			if dryRun {
+				fmt.Printf("No capacity: %d/%d polecats active\n", activePolecats, maxPolecats)
+			}
+			return 0, nil
 		}
-		return 0, nil
 	}
 
 	// Query ready queued beads (unblocked + has gt:queued label)
@@ -86,10 +89,11 @@ func dispatchQueuedWork(townRoot string, batchOverride, maxPolOverride int, dryR
 		return 0, nil
 	}
 
-	// Dispatch up to the smallest of capacity, batchSize, and readyBeads count
-	toDispatch := capacity
-	if batchSize < toDispatch {
-		toDispatch = batchSize
+	// Dispatch up to the smallest of capacity, batchSize, and readyBeads count.
+	// When capacity is 0 (unlimited), only batchSize and readyBeads constrain dispatch.
+	toDispatch := batchSize
+	if capacity > 0 && capacity < toDispatch {
+		toDispatch = capacity
 	}
 	if len(readyBeads) < toDispatch {
 		toDispatch = len(readyBeads)
@@ -216,17 +220,11 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 		rigName = meta.TargetRig
 	}
 
-	// Remove queue label (claim the bead)
+	// Remove queue label (claim the bead for dispatch).
+	// The label is removed first to prevent concurrent dispatch from another
+	// heartbeat. If dispatch fails, we re-add the label (with metadata intact).
 	if err := dequeueBeadLabels(b.ID, townRoot); err != nil {
 		return fmt.Errorf("removing queue label: %w", err)
-	}
-
-	// Strip queue metadata from description
-	cleanDesc := StripQueueMetadata(b.Description)
-	if cleanDesc != b.Description {
-		descCmd := exec.Command("bd", "update", b.ID, "--description="+cleanDesc)
-		descCmd.Dir = townRoot
-		_ = descCmd.Run() // best effort
 	}
 
 	// Reconstruct SlingParams from queue metadata
@@ -257,9 +255,22 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 	// Dispatch via unified executeSling
 	result, err := executeSling(params)
 	if err != nil {
-		// Re-queue on failure: re-add label
+		// Re-queue on failure: re-add label. Metadata is still in the
+		// description (not stripped yet), so the next dispatch cycle can
+		// reconstruct full SlingParams.
 		requeueBead(b.ID, townRoot)
+		_ = events.LogFeed(events.TypeQueueDispatchFailed, "daemon",
+			events.QueueDispatchFailedPayload(b.ID, rigName, err.Error()))
 		return fmt.Errorf("sling failed: %w", err)
+	}
+
+	// Strip queue metadata from description AFTER successful dispatch.
+	// This ensures metadata survives requeue on failure.
+	cleanDesc := StripQueueMetadata(b.Description)
+	if cleanDesc != b.Description {
+		descCmd := exec.Command("bd", "update", b.ID, "--description="+cleanDesc)
+		descCmd.Dir = townRoot
+		_ = descCmd.Run() // best effort — bead is already dispatched
 	}
 
 	// Log dispatch event

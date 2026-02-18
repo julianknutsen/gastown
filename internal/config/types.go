@@ -195,8 +195,8 @@ type WorkQueueConfig struct {
 
 	// MaxPolecats is the max concurrent polecats across ALL rigs.
 	// Includes both queue-dispatched and directly-slung polecats.
-	// 0 = unlimited. Default: 10.
-	MaxPolecats int `json:"max_polecats,omitempty"`
+	// nil/absent = default (10). Explicit 0 = unlimited (no cap).
+	MaxPolecats *int `json:"max_polecats,omitempty"`
 
 	// BatchSize is the number of beads to dispatch per heartbeat tick.
 	// Limits spawn rate per 3-minute cycle. Default: 3.
@@ -209,20 +209,22 @@ type WorkQueueConfig struct {
 
 // DefaultWorkQueueConfig returns a WorkQueueConfig with sensible defaults.
 func DefaultWorkQueueConfig() *WorkQueueConfig {
+	defaultMax := 10
 	return &WorkQueueConfig{
 		Enabled:     false,
-		MaxPolecats: 10,
+		MaxPolecats: &defaultMax,
 		BatchSize:   3,
 		SpawnDelay:  "2s",
 	}
 }
 
 // GetMaxPolecats returns MaxPolecats or the default (10) if unset.
+// Returns 0 if explicitly set to 0 (unlimited).
 func (c *WorkQueueConfig) GetMaxPolecats() int {
-	if c == nil || c.MaxPolecats == 0 {
+	if c == nil || c.MaxPolecats == nil {
 		return 10
 	}
-	return c.MaxPolecats
+	return *c.MaxPolecats
 }
 
 // GetBatchSize returns BatchSize or the default (3) if unset.

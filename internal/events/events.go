@@ -70,8 +70,9 @@ const (
 	TypeMergeSkipped = "merge_skipped"
 
 	// Work queue events
-	TypeQueueEnqueue  = "queue_enqueue"  // Bead queued for deferred dispatch
-	TypeQueueDispatch = "queue_dispatch" // Bead dispatched from queue
+	TypeQueueEnqueue        = "queue_enqueue"         // Bead queued for deferred dispatch
+	TypeQueueDispatch       = "queue_dispatch"        // Bead dispatched from queue
+	TypeQueueDispatchFailed = "queue_dispatch_failed" // Bead dispatch failed (requeued)
 )
 
 // EventsFile is the name of the raw events log.
@@ -351,5 +352,14 @@ func QueueDispatchPayload(beadID, rig, polecat string) map[string]interface{} {
 		"bead":    beadID,
 		"rig":     rig,
 		"polecat": polecat,
+	}
+}
+
+// QueueDispatchFailedPayload creates a payload for queue dispatch failure events.
+func QueueDispatchFailedPayload(beadID, rig, errMsg string) map[string]interface{} {
+	return map[string]interface{}{
+		"bead":  beadID,
+		"rig":   rig,
+		"error": errMsg,
 	}
 }
