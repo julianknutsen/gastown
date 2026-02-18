@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -13,15 +14,20 @@ import (
 
 // EnqueueOptions holds options for enqueueing a bead.
 type EnqueueOptions struct {
-	Formula    string   // Formula to apply at dispatch time (e.g., "mol-polecat-work")
-	Args       string   // Natural language args for executor
-	Vars       []string // Formula variables (key=value)
-	Merge      string   // Merge strategy: direct/mr/local
-	BaseBranch string   // Override base branch for polecat worktree
-	NoConvoy   bool     // Skip auto-convoy creation
-	Owned      bool     // Mark auto-convoy as caller-managed lifecycle
-	DryRun     bool     // Show what would be done without acting
-	Force      bool     // Force enqueue even if bead is hooked/in_progress
+	Formula     string   // Formula to apply at dispatch time (e.g., "mol-polecat-work")
+	Args        string   // Natural language args for executor
+	Vars        []string // Formula variables (key=value)
+	Merge       string   // Merge strategy: direct/mr/local
+	BaseBranch  string   // Override base branch for polecat worktree
+	NoConvoy    bool     // Skip auto-convoy creation
+	Owned       bool     // Mark auto-convoy as caller-managed lifecycle
+	DryRun      bool     // Show what would be done without acting
+	Force       bool     // Force enqueue even if bead is hooked/in_progress
+	NoMerge     bool     // Skip merge queue on completion
+	Account     string   // Claude Code account handle
+	Agent       string   // Agent override (e.g., "gemini", "codex")
+	HookRawBead bool     // Hook raw bead without default formula
+	NoBoot      bool     // Skip rig boot after polecat spawn
 }
 
 const (
@@ -69,6 +75,19 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		return fmt.Errorf("bead %s is already %s to %s\nUse --force to override", beadID, info.Status, info.Assignee)
 	}
 
+	// Enqueue-time formula validation: verify formula exists and can be cooked.
+	// This catches missing formulas and bad protos early, before the daemon tries
+	// to dispatch and silently requeues in an infinite loop.
+	if opts.Formula != "" {
+		if err := verifyFormulaExists(opts.Formula); err != nil {
+			return fmt.Errorf("formula %q not found: %w", opts.Formula, err)
+		}
+		workDir := beads.ResolveHookDir(townRoot, beadID, "")
+		if err := CookFormula(opts.Formula, workDir, townRoot); err != nil {
+			return fmt.Errorf("formula %q failed to cook: %w", opts.Formula, err)
+		}
+	}
+
 	if opts.DryRun {
 		fmt.Printf("Would queue %s → %s\n", beadID, rigName)
 		fmt.Printf("  Would add labels: %s, %s%s\n", LabelQueued, LabelQueueRigPrefix, rigName)
@@ -112,6 +131,16 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 	if opts.BaseBranch != "" {
 		meta.BaseBranch = opts.BaseBranch
 	}
+	meta.NoMerge = opts.NoMerge
+	if opts.Account != "" {
+		meta.Account = opts.Account
+	}
+	if opts.Agent != "" {
+		meta.Agent = opts.Agent
+	}
+	meta.HookRawBead = opts.HookRawBead
+	meta.NoBoot = opts.NoBoot
+	meta.Owned = opts.Owned
 
 	// Append queue metadata to bead description
 	metaBlock := FormatQueueMetadata(meta)
@@ -169,13 +198,20 @@ func runBatchEnqueue(beadIDs []string, rigName string) error {
 	successCount := 0
 	for _, beadID := range beadIDs {
 		err := enqueueBead(beadID, rigName, EnqueueOptions{
-			Args:     slingArgs,
-			Vars:     slingVars,
-			NoConvoy: slingNoConvoy,
-			Owned:    slingOwned,
-			Merge:    slingMerge,
-			DryRun:   false,
-			Force:    slingForce,
+			Formula:     "mol-polecat-work",
+			Args:        slingArgs,
+			Vars:        slingVars,
+			NoConvoy:    slingNoConvoy,
+			Owned:       slingOwned,
+			Merge:       slingMerge,
+			BaseBranch:  slingBaseBranch,
+			DryRun:      false,
+			Force:       slingForce,
+			NoMerge:     slingNoMerge,
+			Account:     slingAccount,
+			Agent:       slingAgent,
+			HookRawBead: slingHookRawBead,
+			NoBoot:      slingNoBoot,
 		})
 		if err != nil {
 			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), beadID, err)

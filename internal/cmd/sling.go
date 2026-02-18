@@ -251,6 +251,33 @@ func runSling(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Queue routing: formula-on-bead + queue
+	// gt sling mol-review --on gt-abc gastown --queue
+	if slingQueue && slingOnTarget != "" && len(args) >= 2 {
+		rigName, isRig := IsRigName(args[len(args)-1])
+		if !isRig {
+			return fmt.Errorf("--queue requires a rig target (got %q)", args[len(args)-1])
+		}
+		formulaName := args[0]
+		beadID := slingOnTarget
+		return enqueueBead(beadID, rigName, EnqueueOptions{
+			Formula:     formulaName,
+			Args:        slingArgs,
+			Vars:        slingVars,
+			Merge:       slingMerge,
+			BaseBranch:  slingBaseBranch,
+			NoConvoy:    slingNoConvoy,
+			Owned:       slingOwned,
+			DryRun:      slingDryRun,
+			Force:       slingForce,
+			NoMerge:     slingNoMerge,
+			Account:     slingAccount,
+			Agent:       slingAgent,
+			HookRawBead: slingHookRawBead,
+			NoBoot:      slingNoBoot,
+		})
+	}
+
 	// Queue routing for single bead: gt sling gt-abc gastown --queue
 	if slingQueue && len(args) == 2 {
 		rigName, isRig := IsRigName(args[1])
@@ -258,15 +285,26 @@ func runSling(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("--queue requires a rig target (got %q)", args[1])
 		}
 		beadID := args[0]
+		// Auto-apply mol-polecat-work formula unless --hook-raw-bead
+		formula := ""
+		if !slingHookRawBead {
+			formula = "mol-polecat-work"
+		}
 		return enqueueBead(beadID, rigName, EnqueueOptions{
-			Args:       slingArgs,
-			Vars:       slingVars,
-			Merge:      slingMerge,
-			BaseBranch: slingBaseBranch,
-			NoConvoy:   slingNoConvoy,
-			Owned:      slingOwned,
-			DryRun:     slingDryRun,
-			Force:      slingForce,
+			Formula:     formula,
+			Args:        slingArgs,
+			Vars:        slingVars,
+			Merge:       slingMerge,
+			BaseBranch:  slingBaseBranch,
+			NoConvoy:    slingNoConvoy,
+			Owned:       slingOwned,
+			DryRun:      slingDryRun,
+			Force:       slingForce,
+			NoMerge:     slingNoMerge,
+			Account:     slingAccount,
+			Agent:       slingAgent,
+			HookRawBead: slingHookRawBead,
+			NoBoot:      slingNoBoot,
 		})
 	}
 
@@ -298,6 +336,9 @@ func runSling(cmd *cobra.Command, args []string) error {
 			// Not a verified bead - try as standalone formula
 			if err := verifyFormulaExists(firstArg); err == nil {
 				// Standalone formula mode: gt sling <formula> [target]
+				if slingQueue {
+					return fmt.Errorf("standalone formula cannot be queued (use --on <bead>)")
+				}
 				return runSlingFormula(args)
 			}
 			// Not a formula either - check if it looks like a bead ID (routing issue workaround).
