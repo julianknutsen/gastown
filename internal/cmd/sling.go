@@ -274,15 +274,21 @@ func runSling(cmd *cobra.Command, args []string) error {
 			Account:     slingAccount,
 			Agent:       slingAgent,
 			HookRawBead: slingHookRawBead,
-			NoBoot:      slingNoBoot,
 		})
 	}
 
 	// Queue routing for single bead: gt sling gt-abc gastown --queue
+	// Guard: standalone formulas cannot be queued — catch before enqueueBead
 	if slingQueue && len(args) == 2 {
 		rigName, isRig := IsRigName(args[1])
 		if !isRig {
 			return fmt.Errorf("--queue requires a rig target (got %q)", args[1])
+		}
+		// If the first arg is a formula (not a bead), reject early
+		if verifyBeadExists(args[0]) != nil {
+			if verifyFormulaExists(args[0]) == nil {
+				return fmt.Errorf("standalone formula cannot be queued (use --on <bead>)")
+			}
 		}
 		beadID := args[0]
 		// Auto-apply mol-polecat-work formula unless --hook-raw-bead
@@ -304,8 +310,13 @@ func runSling(cmd *cobra.Command, args []string) error {
 			Account:     slingAccount,
 			Agent:       slingAgent,
 			HookRawBead: slingHookRawBead,
-			NoBoot:      slingNoBoot,
 		})
+	}
+
+	// Catch-all: --queue requires a rig target. If we reach here, no queue
+	// routing matched — the user likely forgot the rig argument.
+	if slingQueue {
+		return fmt.Errorf("--queue requires a rig target (e.g., gt sling %s <rig> --queue)", args[0])
 	}
 
 	// Determine mode based on flags and argument types

@@ -3,22 +3,46 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/style"
 )
+
+// maxDispatchFailures is the maximum number of consecutive dispatch failures
+// before a bead is marked as gt:dispatch-failed and removed from the queue.
+// Prevents permanently-failing beads from causing infinite retry loops.
+const maxDispatchFailures = 3
 
 // dispatchQueuedWork is the main dispatch loop for the work queue.
 // Called by both `gt queue run` and the daemon heartbeat (via `gt queue run`).
 //
 // It checks capacity, queries ready beads, and dispatches up to batchSize beads.
 // Returns the number of beads dispatched and any error.
-func dispatchQueuedWork(townRoot string, batchOverride, maxPolOverride int, dryRun bool) (int, error) {
+func dispatchQueuedWork(townRoot, actor string, batchOverride, maxPolOverride int, dryRun bool) (int, error) {
+	// Acquire exclusive lock to prevent concurrent dispatch from overlapping
+	// daemon heartbeats. Without this, two `gt queue run` processes could race
+	// on `bd ready --label gt:queued` and double-dispatch the same bead.
+	runtimeDir := filepath.Join(townRoot, ".runtime")
+	_ = os.MkdirAll(runtimeDir, 0755)
+	lockFile := filepath.Join(runtimeDir, "queue-dispatch.lock")
+	fileLock := flock.New(lockFile)
+	locked, err := fileLock.TryLock()
+	if err != nil {
+		return 0, fmt.Errorf("acquiring dispatch lock: %w", err)
+	}
+	if !locked {
+		// Another dispatch is already running — skip silently
+		return 0, nil
+	}
+	defer func() { _ = fileLock.Unlock() }()
+
 	// Load queue state
 	queueState, err := LoadQueueState(townRoot)
 	if err != nil {
@@ -45,9 +69,13 @@ func dispatchQueuedWork(townRoot string, batchOverride, maxPolOverride int, dryR
 	}
 
 	if !queueCfg.Enabled && !dryRun {
-		fmt.Printf("%s Queue dispatch is not enabled in town settings\n", style.Dim.Render("○"))
-		fmt.Println("  Enable with: gt config set queue.enabled true")
-		return 0, nil
+		// queue.enabled gates daemon auto-dispatch only. Manual `gt queue run`
+		// always works so operators can dispatch without enabling the daemon loop.
+		if isDaemonDispatch() {
+			return 0, nil
+		}
+		fmt.Printf("%s Queue auto-dispatch is not enabled (manual dispatch proceeding)\n", style.Dim.Render("○"))
+		fmt.Println("  Enable daemon dispatch with: gt config set queue.enabled true")
 	}
 
 	// Determine limits
@@ -113,15 +141,19 @@ func dispatchQueuedWork(townRoot string, batchOverride, maxPolOverride int, dryR
 		style.Bold.Render("▶"), toDispatch, capacity, maxPolecats, len(readyBeads))
 
 	dispatched := 0
+	successfulRigs := make(map[string]bool)
 	for i := 0; i < toDispatch; i++ {
 		b := readyBeads[i]
 		fmt.Printf("\n[%d/%d] Dispatching %s → %s...\n", i+1, toDispatch, b.ID, b.TargetRig)
 
-		if err := dispatchSingleBead(b, townRoot); err != nil {
+		if err := dispatchSingleBead(b, townRoot, actor); err != nil {
 			fmt.Printf("  %s Failed: %v\n", style.Dim.Render("✗"), err)
 			continue
 		}
 		dispatched++
+		if b.TargetRig != "" {
+			successfulRigs[b.TargetRig] = true
+		}
 
 		// Inter-spawn delay to avoid Dolt lock contention
 		if i < toDispatch-1 && spawnDelay > 0 {
@@ -129,11 +161,25 @@ func dispatchQueuedWork(townRoot string, batchOverride, maxPolOverride int, dryR
 		}
 	}
 
-	// Update runtime state
+	// Wake rig agents for each unique rig that had successful dispatches.
+	// Dispatch runs with NoBoot=true to avoid lock contention, but polecats
+	// need the witness awake to monitor them. Mirrors sling_batch.go post-loop.
+	for rig := range successfulRigs {
+		wakeRigAgents(rig)
+	}
+
+	// Update runtime state with fresh read to avoid clobbering concurrent pause.
+	// Between our initial load and now, a user may have run `gt queue pause`.
+	// Re-reading ensures we preserve the current pause state.
 	if dispatched > 0 {
-		queueState.RecordDispatch(dispatched)
-		if err := SaveQueueState(townRoot, queueState); err != nil {
-			fmt.Printf("%s Could not save queue state: %v\n", style.Dim.Render("Warning:"), err)
+		freshState, err := LoadQueueState(townRoot)
+		if err != nil {
+			fmt.Printf("%s Could not reload queue state: %v\n", style.Dim.Render("Warning:"), err)
+		} else {
+			freshState.RecordDispatch(dispatched)
+			if err := SaveQueueState(townRoot, freshState); err != nil {
+				fmt.Printf("%s Could not save queue state: %v\n", style.Dim.Render("Warning:"), err)
+			}
 		}
 	}
 
@@ -152,13 +198,22 @@ type readyQueuedBead struct {
 
 // getReadyQueuedBeads queries for beads that are both queued and unblocked.
 // Scans all rig directories since bd ready is CWD-scoped.
+// Returns an error if ALL directories fail (bd unreachable), distinguishing
+// from a legitimately empty queue.
 func getReadyQueuedBeads(townRoot string) ([]readyQueuedBead, error) {
 	var result []readyQueuedBead
 	seen := make(map[string]bool)
 
-	for _, dir := range beadsSearchDirs(townRoot) {
+	dirs := beadsSearchDirs(townRoot)
+	var lastErr error
+	failCount := 0
+
+	for _, dir := range dirs {
 		beads, err := getReadyQueuedBeadsFrom(dir)
 		if err != nil {
+			failCount++
+			lastErr = err
+			fmt.Printf("%s bd ready failed in %s: %v\n", style.Dim.Render("Warning:"), dir, err)
 			continue
 		}
 		for _, b := range beads {
@@ -168,16 +223,21 @@ func getReadyQueuedBeads(townRoot string) ([]readyQueuedBead, error) {
 			}
 		}
 	}
+
+	// If every directory failed, bd is likely unreachable — surface the error
+	if failCount == len(dirs) && failCount > 0 {
+		return nil, fmt.Errorf("all %d bead directories failed (last: %w)", failCount, lastErr)
+	}
 	return result, nil
 }
 
 // getReadyQueuedBeadsFrom queries a single directory for ready queued beads.
 func getReadyQueuedBeadsFrom(dir string) ([]readyQueuedBead, error) {
-	cmd := exec.Command("bd", "ready", "--label", LabelQueued, "--json", "-n", "100")
+	cmd := exec.Command("bd", "ready", "--label", LabelQueued, "--json", "--limit=0")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("bd ready failed in %s: %w", dir, err)
 	}
 
 	var raw []struct {
@@ -193,8 +253,13 @@ func getReadyQueuedBeadsFrom(dir string) ([]readyQueuedBead, error) {
 	result := make([]readyQueuedBead, 0, len(raw))
 	for _, r := range raw {
 		targetRig := ""
-		if meta := ParseQueueMetadata(r.Description); meta != nil {
+		meta := ParseQueueMetadata(r.Description)
+		if meta != nil {
 			targetRig = meta.TargetRig
+			// Circuit breaker: skip beads that have exceeded max dispatch failures
+			if meta.DispatchFailures >= maxDispatchFailures {
+				continue
+			}
 		}
 		result = append(result, readyQueuedBead{
 			ID:          r.ID,
@@ -207,24 +272,33 @@ func getReadyQueuedBeadsFrom(dir string) ([]readyQueuedBead, error) {
 	return result, nil
 }
 
-// dispatchSingleBead dequeues and dispatches one bead via executeSling.
+// dispatchSingleBead dispatches one queued bead via executeSling.
 // Reconstructs full SlingParams from queue metadata stored at enqueue time.
-// On failure after label removal, it re-adds the labels (put back in queue).
-func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
+//
+// The gt:queued label is intentionally NOT removed. Once executeSling hooks
+// the bead, its status changes to "hooked" and bd ready won't return it —
+// the flock prevents concurrent dispatch. Keeping the label provides an audit
+// trail showing the bead was queue-dispatched. The label is only removed
+// explicitly via `gt queue clear`.
+func dispatchSingleBead(b readyQueuedBead, townRoot, actor string) error {
 	// Parse queue metadata from description
 	meta := ParseQueueMetadata(b.Description)
 
-	// Resolve rig name: prefer pre-parsed value, fall back to metadata
-	rigName := b.TargetRig
-	if rigName == "" && meta != nil {
-		rigName = meta.TargetRig
+	// Validate metadata exists — beads without queue metadata (e.g., manually
+	// labeled gt:queued) cannot be dispatched. Quarantine immediately rather
+	// than wasting circuit breaker retries on guaranteed failures.
+	if meta == nil || meta.TargetRig == "" {
+		quarantineErr := fmt.Errorf("missing queue metadata or target_rig")
+		failCmd := exec.Command("bd", "update", b.ID, "--add-label=gt:dispatch-failed")
+		failCmd.Dir = resolveBeadDir(b.ID)
+		_ = failCmd.Run() // best effort
+		return quarantineErr
 	}
 
-	// Remove queue label (claim the bead for dispatch).
-	// The label is removed first to prevent concurrent dispatch from another
-	// heartbeat. If dispatch fails, we re-add the label (with metadata intact).
-	if err := dequeueBeadLabels(b.ID, townRoot); err != nil {
-		return fmt.Errorf("removing queue label: %w", err)
+	// Resolve rig name: prefer pre-parsed value, fall back to metadata
+	rigName := b.TargetRig
+	if rigName == "" {
+		rigName = meta.TargetRig
 	}
 
 	// Reconstruct SlingParams from queue metadata
@@ -255,21 +329,20 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 	// Dispatch via unified executeSling
 	result, err := executeSling(params)
 	if err != nil {
-		// Re-queue on failure: re-add label. Metadata is still in the
-		// description (not stripped yet), so the next dispatch cycle can
-		// reconstruct full SlingParams.
-		requeueBead(b.ID, townRoot)
-		_ = events.LogFeed(events.TypeQueueDispatchFailed, "daemon",
+		_ = events.LogFeed(events.TypeQueueDispatchFailed, actor,
 			events.QueueDispatchFailedPayload(b.ID, rigName, err.Error()))
+		// Record failure in queue metadata for circuit breaker
+		recordDispatchFailure(b, err)
 		return fmt.Errorf("sling failed: %w", err)
 	}
 
-	// Strip queue metadata from description AFTER successful dispatch.
-	// This ensures metadata survives requeue on failure.
+	// Strip queue metadata from description after successful dispatch.
+	// The gt:queued label stays for audit, but metadata is no longer needed.
+	// Uses resolveBeadDir for CWD so rig-scoped beads are found correctly.
 	cleanDesc := StripQueueMetadata(b.Description)
 	if cleanDesc != b.Description {
 		descCmd := exec.Command("bd", "update", b.ID, "--description="+cleanDesc)
-		descCmd.Dir = townRoot
+		descCmd.Dir = resolveBeadDir(b.ID)
 		_ = descCmd.Run() // best effort — bead is already dispatched
 	}
 
@@ -278,25 +351,66 @@ func dispatchSingleBead(b readyQueuedBead, townRoot string) error {
 	if result != nil && result.SpawnInfo != nil {
 		polecatName = result.SpawnInfo.PolecatName
 	}
-	_ = events.LogFeed(events.TypeQueueDispatch, "daemon",
+	_ = events.LogFeed(events.TypeQueueDispatch, actor,
 		events.QueueDispatchPayload(b.ID, rigName, polecatName))
 
 	return nil
 }
 
-// splitVars splits a comma-separated vars string into individual key=value pairs.
+// isDaemonDispatch returns true when dispatch is triggered by the daemon heartbeat.
+// The daemon sets GT_DAEMON=1 in the subprocess environment to distinguish
+// automatic dispatch from manual `gt queue run`.
+func isDaemonDispatch() bool {
+	return os.Getenv("GT_DAEMON") == "1"
+}
+
+// recordDispatchFailure increments the dispatch failure counter in the bead's
+// queue metadata. When the counter reaches maxDispatchFailures, adds the
+// gt:dispatch-failed label so the bead is surfaced in queue status.
+// Best-effort: the bead already failed, so metadata update failure is logged.
+func recordDispatchFailure(b readyQueuedBead, dispatchErr error) {
+	meta := ParseQueueMetadata(b.Description)
+	if meta == nil {
+		meta = &QueueMetadata{}
+	}
+	meta.DispatchFailures++
+	meta.LastFailure = dispatchErr.Error()
+
+	// Update description with incremented failure count
+	baseDesc := StripQueueMetadata(b.Description)
+	metaBlock := FormatQueueMetadata(meta)
+	newDesc := baseDesc
+	if newDesc != "" {
+		newDesc += "\n"
+	}
+	newDesc += metaBlock
+
+	beadDir := resolveBeadDir(b.ID)
+	descCmd := exec.Command("bd", "update", b.ID, "--description="+newDesc)
+	descCmd.Dir = beadDir
+	_ = descCmd.Run() // best effort
+
+	if meta.DispatchFailures >= maxDispatchFailures {
+		// Mark as permanently failed — visible in queue status
+		failCmd := exec.Command("bd", "update", b.ID, "--add-label=gt:dispatch-failed")
+		failCmd.Dir = beadDir
+		_ = failCmd.Run() // best effort
+		fmt.Printf("  %s Bead %s failed %d times, marked gt:dispatch-failed\n",
+			style.Warning.Render("⚠"), b.ID, meta.DispatchFailures)
+	}
+}
+
+// splitVars splits a newline-separated vars string into individual key=value pairs.
 func splitVars(vars string) []string {
 	if vars == "" {
 		return nil
 	}
-	return strings.Split(vars, ",")
-}
-
-// requeueBead re-adds the gt:queued label to a bead after a dispatch failure.
-func requeueBead(beadID, townRoot string) {
-	cmd := exec.Command("bd", "update", beadID, "--add-label="+LabelQueued)
-	cmd.Dir = townRoot
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("  %s Could not re-queue %s: %v\n", style.Dim.Render("Warning:"), beadID, err)
+	var result []string
+	for _, line := range strings.Split(vars, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			result = append(result, line)
+		}
 	}
+	return result
 }

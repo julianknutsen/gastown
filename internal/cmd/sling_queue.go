@@ -27,7 +27,6 @@ type EnqueueOptions struct {
 	Account     string   // Claude Code account handle
 	Agent       string   // Agent override (e.g., "gemini", "codex")
 	HookRawBead bool     // Hook raw bead without default formula
-	NoBoot      bool     // Skip rig boot after polecat spawn
 }
 
 const (
@@ -54,6 +53,15 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		return fmt.Errorf("'%s' is not a known rig", rigName)
 	}
 
+	// Cross-rig guard: prevent queuing beads to the wrong rig.
+	// Polecats are worktree-scoped — a bead from Rig A dispatched in Rig B
+	// creates a broken polecat. Skip when Force is set (user override).
+	if !opts.Force {
+		if err := checkCrossRigGuard(beadID, rigName+"/polecats/_", townRoot); err != nil {
+			return err
+		}
+	}
+
 	// Get bead info for status/label checks
 	info, err := getBeadInfo(beadID)
 	if err != nil {
@@ -73,16 +81,10 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		return fmt.Errorf("bead %s is already %s to %s\nUse --force to override", beadID, info.Status, info.Assignee)
 	}
 
-	// Enqueue-time formula validation: verify formula exists and can be cooked.
-	// This catches missing formulas and bad protos early, before the daemon tries
-	// to dispatch and silently requeues in an infinite loop.
+	// Validate formula exists (lightweight check, no side effects for dry-run)
 	if opts.Formula != "" {
 		if err := verifyFormulaExists(opts.Formula); err != nil {
 			return fmt.Errorf("formula %q not found: %w", opts.Formula, err)
-		}
-		workDir := beads.ResolveHookDir(townRoot, beadID, "")
-		if err := CookFormula(opts.Formula, workDir, townRoot); err != nil {
-			return fmt.Errorf("formula %q failed to cook: %w", opts.Formula, err)
 		}
 	}
 
@@ -96,10 +98,22 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		return nil
 	}
 
-	// Add queue label (rig is stored in description metadata)
+	// Cook formula after dry-run check to avoid side effects (bd cook writes
+	// artifacts) when only previewing. Catches bad protos early before the
+	// daemon tries to dispatch and silently requeues in an infinite loop.
+	if opts.Formula != "" {
+		workDir := beads.ResolveHookDir(townRoot, beadID, "")
+		if err := CookFormula(opts.Formula, workDir, townRoot); err != nil {
+			return fmt.Errorf("formula %q failed to cook: %w", opts.Formula, err)
+		}
+	}
+
+	// Add queue label (rig is stored in description metadata).
+	// Uses resolveBeadDir so rig-scoped beads hit the correct .beads/ DB.
+	beadDir := resolveBeadDir(beadID)
 	labelCmd := exec.Command("bd", "update", beadID,
 		"--add-label="+LabelQueued)
-	labelCmd.Dir = townRoot
+	labelCmd.Dir = beadDir
 	var labelStderr bytes.Buffer
 	labelCmd.Stderr = &labelStderr
 	if err := labelCmd.Run(); err != nil {
@@ -119,7 +133,7 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		meta.Args = opts.Args
 	}
 	if len(opts.Vars) > 0 {
-		meta.Vars = strings.Join(opts.Vars, ",")
+		meta.Vars = strings.Join(opts.Vars, "\n")
 	}
 	if opts.Merge != "" {
 		meta.Merge = opts.Merge
@@ -135,7 +149,9 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		meta.Agent = opts.Agent
 	}
 	meta.HookRawBead = opts.HookRawBead
-	meta.NoBoot = opts.NoBoot
+	// NoBoot is intentionally NOT stored in queue metadata. Dispatch always
+	// sets NoBoot=true to avoid lock contention in the daemon dispatch loop.
+	// Storing it would be dead code that creates false contract signaling.
 	meta.Owned = opts.Owned
 
 	// Strip any existing queue metadata before appending new metadata.
@@ -151,11 +167,11 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 	newDesc += metaBlock
 
 	descCmd := exec.Command("bd", "update", beadID, "--description="+newDesc)
-	descCmd.Dir = townRoot
+	descCmd.Dir = beadDir
 	if err := descCmd.Run(); err != nil {
 		// Metadata is required for dispatch routing — roll back the label
 		rollbackCmd := exec.Command("bd", "update", beadID, "--remove-label="+LabelQueued)
-		rollbackCmd.Dir = townRoot
+		rollbackCmd.Dir = beadDir
 		_ = rollbackCmd.Run() // best effort rollback
 		return fmt.Errorf("writing queue metadata: %w", err)
 	}
@@ -169,8 +185,19 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 				fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
 			} else {
 				fmt.Printf("%s Created convoy %s\n", style.Bold.Render("→"), convoyID)
-				// Store convoy in metadata for dispatch
+				// Re-persist metadata with convoy ID so dispatch can see it
 				meta.Convoy = convoyID
+				updatedBlock := FormatQueueMetadata(meta)
+				updatedDesc := baseDesc
+				if updatedDesc != "" {
+					updatedDesc += "\n"
+				}
+				updatedDesc += updatedBlock
+				convoyDescCmd := exec.Command("bd", "update", beadID, "--description="+updatedDesc)
+				convoyDescCmd.Dir = beadDir
+				if err := convoyDescCmd.Run(); err != nil {
+					fmt.Printf("%s Could not update metadata with convoy: %v\n", style.Dim.Render("Warning:"), err)
+				}
 			}
 		} else {
 			fmt.Printf("%s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
@@ -219,7 +246,6 @@ func runBatchEnqueue(beadIDs []string, rigName string) error {
 			Account:     slingAccount,
 			Agent:       slingAgent,
 			HookRawBead: slingHookRawBead,
-			NoBoot:      slingNoBoot,
 		})
 		if err != nil {
 			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), beadID, err)
@@ -233,9 +259,10 @@ func runBatchEnqueue(beadIDs []string, rigName string) error {
 }
 
 // dequeueBeadLabels removes the gt:queued label from a bead (claim for dispatch).
-func dequeueBeadLabels(beadID, townRoot string) error {
+// Uses resolveBeadDir for CWD so rig-scoped beads are found correctly.
+func dequeueBeadLabels(beadID string) error {
 	cmd := exec.Command("bd", "update", beadID, "--remove-label="+LabelQueued)
-	cmd.Dir = townRoot
+	cmd.Dir = resolveBeadDir(beadID)
 	return cmd.Run()
 }
 
