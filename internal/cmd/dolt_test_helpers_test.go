@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"database/sql"
 	"fmt"
 	"net"
 	"os"
@@ -14,8 +13,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	_ "github.com/go-sql-driver/mysql"
 )
 
 const doltTestPort = "3307"
@@ -282,75 +279,114 @@ func cleanupDoltServer() {
 	os.Remove(pidFilePath)
 }
 
-// cleanStaleBeadsDatabases drops all beads_* databases from the shared Dolt
-// test server. Other integration tests (e.g., beads_db_init_test.go) may leave
-// stale databases on the server. When bd subsequently opens ANY database, its
-// migration sweep iterates all server databases — hitting a broken stale DB
-// causes unrelated tests to fail with "database not found" errors.
+// doltRestartOnce ensures the server restart happens at most once per binary.
+var (
+	doltRestartOnce sync.Once
+	doltRestartErr  error
+)
+
+// cleanStaleBeadsDatabases restarts the Dolt server with a fresh data-dir to
+// eliminate phantom database references left by earlier tests (e.g.,
+// beads_db_init_test.go). Dolt's in-memory catalog can retain references to
+// databases that are invisible to SHOW DATABASES but still cause "database not
+// found" errors during migration sweeps. A server restart is the only reliable
+// way to clear this state.
 //
-// Call this before creating fresh test databases to ensure a clean server state.
-// Safe to call when no stale databases exist (DROP IF EXISTS is a no-op).
+// The restart happens once per test binary invocation (sync.Once). Subsequent
+// calls are no-ops. The PID file and lock file are updated so cleanupDoltServer
+// (called from TestMain) can still shut down the replacement server.
 func cleanStaleBeadsDatabases(t *testing.T) {
 	t.Helper()
-
-	// Two-phase cleanup:
-	// 1. SQL-level: DROP DATABASE for databases visible to SHOW DATABASES
-	// 2. Filesystem-level: remove beads_* directories from the dolt data-dir
-	//    for corrupted databases that SHOW DATABASES doesn't list but dolt's
-	//    internal scanner still finds (causing "database not found" errors
-	//    during migration sweeps).
-
-	// Phase 1: SQL cleanup via Go MySQL driver (avoids dolt CLI flag fragility).
-	dsn := fmt.Sprintf("root:@tcp(127.0.0.1:%s)/", doltTestPort)
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		t.Logf("cleanStaleBeadsDatabases: connect failed (non-fatal): %v", err)
-	} else {
-		defer db.Close()
-		rows, err := db.Query("SHOW DATABASES")
-		if err != nil {
-			t.Logf("cleanStaleBeadsDatabases: SHOW DATABASES failed (non-fatal): %v", err)
-		} else {
-			defer rows.Close()
-			for rows.Next() {
-				var dbName string
-				if err := rows.Scan(&dbName); err != nil {
-					continue
-				}
-				if strings.HasPrefix(dbName, "beads_") {
-					if _, err := db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName)); err != nil {
-						t.Logf("cleanStaleBeadsDatabases: DROP %s failed (non-fatal): %v", dbName, err)
-					}
-				}
-			}
-		}
+	doltRestartOnce.Do(func() {
+		doltRestartErr = restartDoltServer()
+	})
+	if doltRestartErr != nil {
+		t.Fatalf("dolt server restart failed: %v", doltRestartErr)
 	}
+}
 
-	// Phase 2: Filesystem cleanup for corrupted databases not visible via SQL.
-	// The dolt server's data-dir is stored in the PID file.
+// restartDoltServer kills the current Dolt server and starts a fresh one with
+// a new data-dir. Returns nil on success.
+func restartDoltServer() error {
+	// Read PID file to find current server.
 	data, err := os.ReadFile(pidFilePath)
 	if err != nil {
-		return // No PID file — can't find data-dir
+		// No PID file — external server or never started by us.
+		// Can't restart what we don't own. Skip.
+		return nil
 	}
 	lines := strings.SplitN(string(data), "\n", 3)
 	if len(lines) < 2 {
-		return
+		return nil
 	}
-	dataDir := strings.TrimSpace(lines[1])
-	if dataDir == "" {
-		return
+	pid, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil || pid <= 0 {
+		return nil
+	}
+	oldDataDir := strings.TrimSpace(lines[1])
+
+	// Kill the current server.
+	proc, err := os.FindProcess(pid)
+	if err == nil {
+		_ = proc.Kill()
+		_, _ = proc.Wait()
 	}
 
-	entries, err := os.ReadDir(dataDir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "beads_") {
-			dirPath := dataDir + "/" + e.Name()
-			if err := os.RemoveAll(dirPath); err != nil {
-				t.Logf("cleanStaleBeadsDatabases: remove %s failed (non-fatal): %v", dirPath, err)
-			}
+	// Wait for port to become free.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if !portReady(500 * time.Millisecond) {
+			break
 		}
+		time.Sleep(200 * time.Millisecond)
 	}
+	if portReady(500 * time.Millisecond) {
+		return fmt.Errorf("port %s still in use after killing server", doltTestPort)
+	}
+
+	// Clean up old data dir.
+	if oldDataDir != "" {
+		os.RemoveAll(oldDataDir)
+	}
+
+	// Start fresh server with new data-dir.
+	newDataDir, err := os.MkdirTemp("", "dolt-test-server-*")
+	if err != nil {
+		return fmt.Errorf("creating fresh data-dir: %w", err)
+	}
+
+	cmd := exec.Command("dolt", "sql-server",
+		"--port", doltTestPort,
+		"--data-dir", newDataDir,
+	)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		os.RemoveAll(newDataDir)
+		return fmt.Errorf("starting fresh dolt server: %w", err)
+	}
+
+	// Update PID file for cleanupDoltServer.
+	pidContent := fmt.Sprintf("%d\n%s\n", cmd.Process.Pid, newDataDir)
+	if err := os.WriteFile(pidFilePath, []byte(pidContent), 0666); err != nil {
+		cmd.Process.Kill()
+		os.RemoveAll(newDataDir)
+		return fmt.Errorf("writing PID file: %w", err)
+	}
+
+	// Reap in background.
+	go func() { cmd.Wait() }()
+
+	// Wait for server to accept connections.
+	deadline = time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if portReady(time.Second) {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	cmd.Process.Kill()
+	os.RemoveAll(newDataDir)
+	os.Remove(pidFilePath)
+	return fmt.Errorf("fresh dolt server did not become ready within 30s")
 }
