@@ -325,20 +325,25 @@ func restartDoltServer() error {
 	}
 	oldDataDir := strings.TrimSpace(lines[1])
 
-	// Kill the current server.
-	proc, err := os.FindProcess(pid)
-	if err == nil {
-		_ = proc.Kill()
-		_, _ = proc.Wait()
-	}
+	// Kill the current server. Use syscall.Kill directly to avoid racing
+	// with the reap goroutine from startDoltServer (which holds cmd.Wait).
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+
+	// Give the kernel a moment to deliver the signal and release the socket.
+	time.Sleep(time.Second)
+
+	// Fallback: kill anything listening on the test port. This handles cases
+	// where the PID file is stale or the process forked children.
+	_ = exec.Command("bash", "-c",
+		fmt.Sprintf("fuser -k %s/tcp 2>/dev/null || true", doltTestPort)).Run()
 
 	// Wait for port to become free.
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if !portReady(500 * time.Millisecond) {
 			break
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
 	if portReady(500 * time.Millisecond) {
 		return fmt.Errorf("port %s still in use after killing server", doltTestPort)
