@@ -7,26 +7,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// writeJSONFile marshals v as indented JSON and writes to path, creating parent dirs.
-func writeJSONFile(t *testing.T, path string, v any) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatalf("mkdir for %s: %v", path, err)
-	}
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal JSON for %s: %v", path, err)
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
+// writeJSONFile is provided by queue_test_helpers_test.go (no build tag).
 
 // readJSONFile reads and unmarshals a JSON file into dest.
 func readJSONFile(t *testing.T, path string, dest any) {

@@ -272,7 +272,7 @@ func setupAgentTestTown(t *testing.T, gtBinary, model string, opts ...agentTestO
 // createTestBead creates a bead in the beads database resolved from workDir.
 // Use the rig directory (not hqPath) so beads end up in the rig's beads DB,
 // which is where findAgentWork() searches from the polecat worktree.
-func createTestBead(t *testing.T, workDir string, env []string, beadID, title string) {
+func createE2ETestBead(t *testing.T, workDir string, env []string, beadID, title string) {
 	t.Helper()
 	cmd := exec.Command("bd", "create", title, "--id="+beadID, "--force")
 	cmd.Dir = workDir
@@ -321,7 +321,7 @@ func TestAgentSpawnAndReady(t *testing.T) {
 	// Create a test bead in the rig's beads DB (not HQ — polecat resolves from rig)
 	rigPath := filepath.Join(hqPath, "testrig")
 	beadID := "tr-test1"
-	createTestBead(t, rigPath, env, beadID, "Test agent spawn task")
+	createE2ETestBead(t, rigPath, env, beadID, "Test agent spawn task")
 
 	// Sling bead to rig — auto-spawns a polecat with Claude Code
 	sr := slingAndWait(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
@@ -447,7 +447,7 @@ func TestAgentSlingTextChange(t *testing.T) {
 	// The model sees this as the Title in "gt prime --hook" output.
 	rigPath := filepath.Join(hqPath, "testrig")
 	beadID := "tr-sling1"
-	createTestBead(t, rigPath, env, beadID,
+	createE2ETestBead(t, rigPath, env, beadID,
 		"Create and commit a file named test-output.txt containing exactly: e2e-agent-test-ok")
 
 	// Sling to rig — auto-spawns polecat, sends beacon with "Run gt prime --hook"
@@ -584,7 +584,7 @@ func TestAgentFormulaWork(t *testing.T) {
 	// Create bead in rig's beads DB with simple instructions the model can execute
 	rigPath := filepath.Join(hqPath, "testrig")
 	beadID := "tr-formula1"
-	createTestBead(t, rigPath, env, beadID,
+	createE2ETestBead(t, rigPath, env, beadID,
 		"Create and commit a file named formula-test.txt containing exactly: formula-e2e-ok")
 
 	// Sling with formula — returns wisp ID for progress tracking
@@ -742,7 +742,7 @@ func TestHookVisibility(t *testing.T) {
 
 	rigPath := filepath.Join(hqPath, "testrig")
 	beadID := "tr-hook1"
-	createTestBead(t, rigPath, env, beadID, "Test hook visibility")
+	createE2ETestBead(t, rigPath, env, beadID, "Test hook visibility")
 
 	// Sling and extract polecat name from output (raw bead, no formula needed for diagnostic)
 	slingCmd := exec.Command(gtBinary, "sling", beadID, "testrig", "--hook-raw-bead")
@@ -885,7 +885,7 @@ func TestAgentDone(t *testing.T) {
 	// Create bead in rig's beads DB and sling it
 	rigPath := filepath.Join(hqPath, "testrig")
 	beadID := "tr-test2"
-	createTestBead(t, rigPath, env, beadID, "Test agent done task")
+	createE2ETestBead(t, rigPath, env, beadID, "Test agent done task")
 	sr := slingAndWait(t, gtBinary, hqPath, env, beadID, "testrig", "tr")
 
 	// Wait for agent to be ready before nuking
@@ -1125,7 +1125,7 @@ func TestPolecatRefineryFlow(t *testing.T) {
 	// Step 5: Create bead with instructions to create a file and run gt done
 	rigPath := filepath.Join(hqPath, "testrig")
 	beadID := "tr-refinery1"
-	createTestBead(t, rigPath, env, beadID,
+	createE2ETestBead(t, rigPath, env, beadID,
 		"Create a file named pipeline-test.txt containing exactly: pipeline-e2e-ok then git add and git commit it then run gt done")
 
 	// Step 6: Sling bead to rig — spawns polecat
