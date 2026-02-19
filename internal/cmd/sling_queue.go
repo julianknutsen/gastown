@@ -229,13 +229,13 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 
 // runBatchEnqueue enqueues multiple beads for deferred dispatch.
 // Called from sling when --queue is set with multiple beads and a rig target.
-func runBatchEnqueue(beadIDs []string, rigName string) error {
+func runBatchEnqueue(beadIDs []string, rigName string) {
 	if slingDryRun {
 		fmt.Printf("%s Would queue %d beads to rig '%s':\n", style.Bold.Render("📋"), len(beadIDs), rigName)
 		for _, beadID := range beadIDs {
 			fmt.Printf("  Would queue: %s → %s\n", beadID, rigName)
 		}
-		return nil
+		return
 	}
 
 	fmt.Printf("%s Queuing %d beads to rig '%s'...\n", style.Bold.Render("📋"), len(beadIDs), rigName)
@@ -271,7 +271,6 @@ func runBatchEnqueue(beadIDs []string, rigName string) error {
 	}
 
 	fmt.Printf("\n%s Queued %d/%d beads\n", style.Bold.Render("📊"), successCount, len(beadIDs))
-	return nil
 }
 
 // dequeueBeadLabels removes the gt:queued label and strips queue metadata from

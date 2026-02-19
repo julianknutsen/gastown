@@ -245,7 +245,8 @@ func runSling(cmd *cobra.Command, args []string) error {
 		lastArg := args[len(args)-1]
 		if rigName, isRig := IsRigName(lastArg); isRig {
 			if slingQueue {
-				return runBatchEnqueue(args[:len(args)-1], rigName)
+				runBatchEnqueue(args[:len(args)-1], rigName)
+				return nil
 			}
 			return runBatchSling(args[:len(args)-1], rigName, townBeadsDir)
 		}

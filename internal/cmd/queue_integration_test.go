@@ -33,28 +33,16 @@ var queueTestCounter atomic.Int32
 
 // initBeadsDBForServer initializes a beads DB in server mode. Requires a Dolt
 // sql-server to be running on port 3307 (see requireDoltServer).
-//
-// bd init --server creates the .beads/ dir and registers the database with the
-// running server, but has a known issue where the issue_prefix config isn't
-// persisted. We work around this by explicitly setting the prefix after init.
 func initBeadsDBForServer(t *testing.T, dir, prefix string) {
 	t.Helper()
 
-	// Step 1: bd init --server creates .beads/ dir and registers DB with the server.
 	cmd := exec.Command("bd", "init", "--server", "--server-port", doltTestPort, "--prefix", prefix, "--quiet")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bd init --server failed in %s: %v\n%s", dir, err, out)
 	}
 
-	// Step 2: Set issue_prefix (workaround for bd init --server not persisting it).
-	cmd = exec.Command("bd", "config", "set", "issue_prefix", prefix)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("bd config set issue_prefix failed in %s: %v\n%s", dir, err, out)
-	}
-
-	// Step 3: Create empty issues.jsonl to prevent bd auto-export from corrupting
+	// Create empty issues.jsonl to prevent bd auto-export from corrupting
 	// routes.jsonl (same as initBeadsDBWithPrefix does).
 	issuesPath := filepath.Join(dir, ".beads", "issues.jsonl")
 	if err := os.WriteFile(issuesPath, []byte(""), 0644); err != nil {
