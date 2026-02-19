@@ -288,12 +288,16 @@ var (
 	doltRestartErr  error
 )
 
-// cleanStaleBeadsDatabases restarts the Dolt server with a fresh data-dir to
-// eliminate phantom database references left by earlier tests (e.g.,
-// beads_db_init_test.go). Dolt's in-memory catalog can retain references to
-// databases that are invisible to SHOW DATABASES but still cause "database not
-// found" errors during migration sweeps. A server restart is the only reliable
-// way to clear this state.
+// cleanStaleBeadsDatabases restarts the Dolt server to eliminate phantom
+// database references left by earlier tests (e.g., beads_db_init_test.go).
+// Dolt's in-memory catalog can retain references to databases that are invisible
+// to SHOW DATABASES but still cause "database not found" errors during migration
+// sweeps. A server restart is the only reliable way to clear this state.
+//
+// The restart reuses the same data-dir (after removing beads_* database
+// subdirectories) rather than creating a fresh one. A fresh data-dir causes
+// bd init --server to fail because Dolt sql-server doesn't fully initialize
+// schema creation infrastructure on an empty directory.
 //
 // The restart happens once per test binary invocation (sync.Once). Subsequent
 // calls are no-ops. The PID file and lock file are updated so cleanupDoltServer
@@ -308,8 +312,10 @@ func cleanStaleBeadsDatabases(t *testing.T) {
 	}
 }
 
-// restartDoltServer kills the current Dolt server and starts a fresh one with
-// a new data-dir. Returns nil on success.
+// restartDoltServer kills the current Dolt server, removes stale beads_*
+// database directories from the data-dir, and restarts the server. By reusing
+// the same data-dir (minus the stale databases), the restarted server retains
+// its initialization state while the in-memory catalog is rebuilt clean.
 func restartDoltServer() error {
 	// Read PID file to find current server.
 	data, err := os.ReadFile(pidFilePath)
@@ -326,7 +332,7 @@ func restartDoltServer() error {
 	if err != nil || pid <= 0 {
 		return nil
 	}
-	oldDataDir := strings.TrimSpace(lines[1])
+	dataDir := strings.TrimSpace(lines[1])
 
 	// Kill the current server. Use syscall.Kill directly to avoid racing
 	// with the reap goroutine from startDoltServer (which holds cmd.Wait).
@@ -352,33 +358,36 @@ func restartDoltServer() error {
 		return fmt.Errorf("port %s still in use after killing server", doltTestPort)
 	}
 
-	// Clean up old data dir.
-	if oldDataDir != "" {
-		os.RemoveAll(oldDataDir)
+	// Remove stale beads_* database directories from the data-dir.
+	// This clears phantom references when the server rebuilds its catalog
+	// from disk on restart.
+	var removed []string
+	if dataDir != "" {
+		entries, _ := os.ReadDir(dataDir)
+		for _, e := range entries {
+			if e.IsDir() && strings.HasPrefix(e.Name(), "beads_") {
+				os.RemoveAll(dataDir + "/" + e.Name())
+				removed = append(removed, e.Name())
+			}
+		}
 	}
+	fmt.Fprintf(os.Stderr, "[restartDoltServer] removed %d stale databases from %s: %v\n", len(removed), dataDir, removed)
 
-	// Start fresh server with new data-dir.
-	newDataDir, err := os.MkdirTemp("", "dolt-test-server-*")
-	if err != nil {
-		return fmt.Errorf("creating fresh data-dir: %w", err)
-	}
-
+	// Restart the server with the SAME data-dir (now cleaned).
 	cmd := exec.Command("dolt", "sql-server",
 		"--port", doltTestPort,
-		"--data-dir", newDataDir,
+		"--data-dir", dataDir,
 	)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		os.RemoveAll(newDataDir)
-		return fmt.Errorf("starting fresh dolt server: %w", err)
+		return fmt.Errorf("restarting dolt server: %w", err)
 	}
 
 	// Update PID file for cleanupDoltServer.
-	pidContent := fmt.Sprintf("%d\n%s\n", cmd.Process.Pid, newDataDir)
+	pidContent := fmt.Sprintf("%d\n%s\n", cmd.Process.Pid, dataDir)
 	if err := os.WriteFile(pidFilePath, []byte(pidContent), 0666); err != nil {
 		cmd.Process.Kill()
-		os.RemoveAll(newDataDir)
 		return fmt.Errorf("writing PID file: %w", err)
 	}
 
@@ -395,21 +404,18 @@ func restartDoltServer() error {
 	}
 	if !portReady(time.Second) {
 		cmd.Process.Kill()
-		os.RemoveAll(newDataDir)
 		os.Remove(pidFilePath)
-		return fmt.Errorf("fresh dolt server did not become ready within 30s")
+		return fmt.Errorf("restarted dolt server did not become ready within 30s")
 	}
 
 	// Verify SQL readiness — TCP accept doesn't guarantee the MySQL protocol
-	// layer is ready. Without this, bd init --server can connect but get
-	// incomplete results, producing a config without issue_prefix.
+	// layer is ready.
 	if err := waitForSQLReady(10 * time.Second); err != nil {
 		cmd.Process.Kill()
-		os.RemoveAll(newDataDir)
 		os.Remove(pidFilePath)
-		return fmt.Errorf("fresh server not SQL-ready: %w", err)
+		return fmt.Errorf("restarted server not SQL-ready: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "[restartDoltServer] fresh server ready (pid=%d, data-dir=%s)\n", cmd.Process.Pid, newDataDir)
+	fmt.Fprintf(os.Stderr, "[restartDoltServer] server ready (pid=%d, data-dir=%s)\n", cmd.Process.Pid, dataDir)
 	return nil
 }
 
