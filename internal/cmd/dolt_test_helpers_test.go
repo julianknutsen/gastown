@@ -291,13 +291,15 @@ func cleanStaleBeadsDatabases(t *testing.T) {
 	t.Helper()
 
 	// Query all databases on the server.
-	// --password "" prevents dolt from prompting for a password on stdin,
+	// --password= (with equals and no value) tells dolt to use an empty
+	// password without prompting. Using "--password", "" as separate args
+	// causes dolt to interpret --password as "prompt mode" (MySQL convention),
 	// which fails in CI with "inappropriate ioctl for device" (no TTY).
 	cmd := exec.Command("dolt",
 		"--host", "127.0.0.1",
 		"--port", doltTestPort,
 		"--user", "root",
-		"--password", "",
+		"--password=",
 		"--no-tls",
 		"sql", "-q", "SHOW DATABASES", "-r", "csv")
 	out, err := cmd.CombinedOutput()
@@ -318,7 +320,7 @@ func cleanStaleBeadsDatabases(t *testing.T) {
 			"--host", "127.0.0.1",
 			"--port", doltTestPort,
 			"--user", "root",
-			"--password", "",
+			"--password=",
 			"--no-tls",
 			"sql", "-q", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
 		if dropOut, dropErr := dropCmd.CombinedOutput(); dropErr != nil {
