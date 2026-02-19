@@ -346,12 +346,21 @@ func dispatchSingleBead(b readyQueuedBead, townRoot, actor string) error {
 	// Post-dispatch cleanup: strip queue metadata and swap labels.
 	// Replace gt:queued with gt:queue-dispatched to prevent label conflation
 	// (reopened beads with gt:queued would be mistaken for actively queued).
+	//
+	// IMPORTANT: Re-read the bead description rather than using the stale
+	// b.Description snapshot. executeSling's storeFieldsInBead (step 10) does
+	// a fresh read-modify-write that adds attachment fields (dispatched_by,
+	// args, attached_molecule, no_merge, mode). Using the pre-dispatch
+	// snapshot would clobber those fields.
 	beadDir := resolveBeadDir(b.ID)
-	cleanDesc := StripQueueMetadata(b.Description)
-	if cleanDesc != b.Description {
-		descCmd := exec.Command("bd", "update", b.ID, "--description="+cleanDesc)
-		descCmd.Dir = beadDir
-		_ = descCmd.Run() // best effort — bead is already dispatched
+	freshInfo, err := getBeadInfo(b.ID)
+	if err == nil {
+		cleanDesc := StripQueueMetadata(freshInfo.Description)
+		if cleanDesc != freshInfo.Description {
+			descCmd := exec.Command("bd", "update", b.ID, "--description="+cleanDesc)
+			descCmd.Dir = beadDir
+			_ = descCmd.Run() // best effort — bead is already dispatched
+		}
 	}
 	swapCmd := exec.Command("bd", "update", b.ID,
 		"--remove-label="+LabelQueued, "--add-label=gt:queue-dispatched")

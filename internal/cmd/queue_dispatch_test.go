@@ -149,6 +149,58 @@ func TestStripQueueMetadata_DelimiterInUserContent(t *testing.T) {
 	}
 }
 
+// TestStripQueueMetadataPreservesAttachmentFields verifies that stripping queue
+// metadata from a fresh bead description does not clobber attachment fields
+// (dispatched_by, args, attached_molecule, no_merge, mode) that were written
+// by storeFieldsInBead during executeSling. This is a regression test for the
+// stale description clobbering bug where dispatchSingleBead used the pre-dispatch
+// snapshot b.Description instead of re-reading the current description.
+func TestStripQueueMetadataPreservesAttachmentFields(t *testing.T) {
+	// Simulate pre-dispatch description (queue metadata appended at enqueue time)
+	preDispatchDesc := "Fix login timeout\n" +
+		"---gt:queue:v1---\n" +
+		"target_rig: gastown\n" +
+		"formula: mol-polecat-work\n" +
+		"args: patch release\n" +
+		"mode: ralph\n" +
+		"enqueued_at: 2026-02-19T10:00:00Z"
+
+	// Simulate post-dispatch description (storeFieldsInBead added attachment fields)
+	// In real code, storeFieldsInBead does a read-modify-write that appends to
+	// the description. The queue metadata block is still present.
+	postDispatchDesc := "Fix login timeout\n" +
+		"dispatched_by: mayor/\n" +
+		"args: patch release\n" +
+		"attached_molecule: gt-mol-abc\n" +
+		"no_merge: true\n" +
+		"mode: ralph\n" +
+		"---gt:queue:v1---\n" +
+		"target_rig: gastown\n" +
+		"formula: mol-polecat-work\n" +
+		"args: patch release\n" +
+		"mode: ralph\n" +
+		"enqueued_at: 2026-02-19T10:00:00Z"
+
+	// BUG (pre-fix): using stale pre-dispatch description would strip metadata
+	// but also lose all attachment fields that were added after enqueue.
+	staleResult := StripQueueMetadata(preDispatchDesc)
+	if staleResult != "Fix login timeout" {
+		t.Errorf("stale strip: got %q, want %q", staleResult, "Fix login timeout")
+	}
+
+	// FIX: using fresh post-dispatch description preserves attachment fields
+	freshResult := StripQueueMetadata(postDispatchDesc)
+	expectedFresh := "Fix login timeout\n" +
+		"dispatched_by: mayor/\n" +
+		"args: patch release\n" +
+		"attached_molecule: gt-mol-abc\n" +
+		"no_merge: true\n" +
+		"mode: ralph"
+	if freshResult != expectedFresh {
+		t.Errorf("fresh strip:\ngot:  %q\nwant: %q", freshResult, expectedFresh)
+	}
+}
+
 func TestCapacityDisplayFormat(t *testing.T) {
 	// Verify the capacity display string logic
 	tests := []struct {
