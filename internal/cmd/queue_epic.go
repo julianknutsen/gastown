@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -18,9 +19,12 @@ var (
 )
 
 var queueEpicCmd = &cobra.Command{
-	Use:   "epic <epic-id> <rig>",
+	Use:   "epic <epic-id>",
 	Short: "Queue all open children of an epic for deferred dispatch",
 	Long: `Queue all open child issues of an epic for capacity-controlled dispatch.
+
+Each child's target rig is auto-resolved from its bead ID prefix. Town-root
+beads (hq-*) are skipped since they are not dispatchable work.
 
 ALL open children are queued, including blocked ones. Blocked beads wait
 in the queue and automatically dispatch when their blockers resolve.
@@ -28,9 +32,9 @@ in the queue and automatically dispatch when their blockers resolve.
 Children that are already queued, closed, or assigned are skipped.
 
 Examples:
-  gt queue epic gt-epic-123 gastown           # Queue all open children
-  gt queue epic gt-epic-123 gastown --dry-run # Preview what would be queued`,
-	Args: cobra.ExactArgs(2),
+  gt queue epic gt-epic-123           # Queue all open children (auto-resolve rigs)
+  gt queue epic gt-epic-123 --dry-run # Preview what would be queued`,
+	Args: cobra.ExactArgs(1),
 	RunE: runQueueEpic,
 }
 
@@ -43,16 +47,10 @@ func init() {
 
 func runQueueEpic(cmd *cobra.Command, args []string) error {
 	epicID := args[0]
-	rigName := args[1]
 
-	_, err := workspace.FindFromCwdOrError()
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return err
-	}
-
-	// Validate rig exists
-	if _, isRig := IsRigName(rigName); !isRig {
-		return fmt.Errorf("'%s' is not a known rig", rigName)
 	}
 
 	// Validate epic exists
@@ -73,13 +71,15 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 
 	// Filter to queueable children
 	type queueCandidate struct {
-		ID    string
-		Title string
+		ID      string
+		Title   string
+		RigName string
 	}
 	var candidates []queueCandidate
 	skippedClosed := 0
 	skippedAssigned := 0
 	skippedQueued := 0
+	skippedNoRig := 0
 
 	for _, c := range children {
 		// Skip closed issues
@@ -100,37 +100,48 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		candidates = append(candidates, queueCandidate{ID: c.ID, Title: c.Title})
+		// Resolve rig from bead prefix
+		rigName := resolveRigForBead(townRoot, c.ID)
+		if rigName == "" {
+			skippedNoRig++
+			prefix := beads.ExtractPrefix(c.ID)
+			fmt.Printf("  %s %s: cannot resolve rig from prefix %q (town-root or unknown)\n",
+				style.Dim.Render("○"), c.ID, prefix)
+			continue
+		}
+
+		candidates = append(candidates, queueCandidate{ID: c.ID, Title: c.Title, RigName: rigName})
 	}
 
 	if len(candidates) == 0 {
 		fmt.Printf("No children to queue from epic %s", epicID)
-		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 {
-			fmt.Printf(" (%d closed, %d assigned, %d already queued)", skippedClosed, skippedAssigned, skippedQueued)
+		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
+			fmt.Printf(" (%d closed, %d assigned, %d already queued, %d no rig)",
+				skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
 		}
 		fmt.Println()
 		return nil
 	}
 
 	if queueEpicDryRun {
-		fmt.Printf("%s Would queue %d child(ren) from epic %s → %s:\n",
-			style.Bold.Render("📋"), len(candidates), epicID, rigName)
+		fmt.Printf("%s Would queue %d child(ren) from epic %s:\n",
+			style.Bold.Render("📋"), len(candidates), epicID)
 		for _, c := range candidates {
-			fmt.Printf("  Would queue: %s (%s)\n", c.ID, c.Title)
+			fmt.Printf("  Would queue: %s → %s (%s)\n", c.ID, c.RigName, c.Title)
 		}
-		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 {
-			fmt.Printf("\nSkipped: %d closed, %d assigned, %d already queued\n",
-				skippedClosed, skippedAssigned, skippedQueued)
+		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
+			fmt.Printf("\nSkipped: %d closed, %d assigned, %d already queued, %d no rig\n",
+				skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
 		}
 		return nil
 	}
 
-	fmt.Printf("%s Queuing %d child(ren) from epic %s → %s...\n",
-		style.Bold.Render("📋"), len(candidates), epicID, rigName)
+	fmt.Printf("%s Queuing %d child(ren) from epic %s...\n",
+		style.Bold.Render("📋"), len(candidates), epicID)
 
 	successCount := 0
 	for _, c := range candidates {
-		err := enqueueBead(c.ID, rigName, EnqueueOptions{
+		err := enqueueBead(c.ID, c.RigName, EnqueueOptions{
 			Formula: "mol-polecat-work",
 			Force:   queueEpicForce,
 		})
@@ -143,9 +154,9 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\n%s Queued %d/%d child(ren) from epic %s\n",
 		style.Bold.Render("📊"), successCount, len(candidates), epicID)
-	if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 {
-		fmt.Printf("  Skipped: %d closed, %d assigned, %d already queued\n",
-			skippedClosed, skippedAssigned, skippedQueued)
+	if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
+		fmt.Printf("  Skipped: %d closed, %d assigned, %d already queued, %d no rig\n",
+			skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
 	}
 
 	return nil

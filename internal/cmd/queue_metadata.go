@@ -25,6 +25,7 @@ type QueueMetadata struct {
 	Agent       string `json:"agent,omitempty"`
 	HookRawBead      bool   `json:"hook_raw_bead,omitempty"`
 	Owned            bool   `json:"owned,omitempty"`
+	Mode             string `json:"mode,omitempty"`
 	DispatchFailures int    `json:"dispatch_failures,omitempty"`
 	LastFailure      string `json:"last_failure,omitempty"`
 }
@@ -79,6 +80,9 @@ func FormatQueueMetadata(m *QueueMetadata) string {
 	}
 	if m.Owned {
 		lines = append(lines, "owned: true")
+	}
+	if m.Mode != "" {
+		lines = append(lines, fmt.Sprintf("mode: %s", m.Mode))
 	}
 	if m.DispatchFailures > 0 {
 		lines = append(lines, fmt.Sprintf("dispatch_failures: %d", m.DispatchFailures))
@@ -151,6 +155,8 @@ func ParseQueueMetadata(description string) *QueueMetadata {
 			// Legacy: ignored. Dispatch always sets NoBoot=true.
 		case "owned":
 			m.Owned = val == "true"
+		case "mode":
+			m.Mode = val
 		case "dispatch_failures":
 			if n, err := strconv.Atoi(val); err == nil {
 				m.DispatchFailures = n
