@@ -390,7 +390,15 @@ func isDaemonDispatch() bool {
 // gt:dispatch-failed label so the bead is surfaced in queue status.
 // Best-effort: the bead already failed, so metadata update failure is logged.
 func recordDispatchFailure(b readyQueuedBead, dispatchErr error) {
-	meta := ParseQueueMetadata(b.Description)
+	// Re-read fresh description — executeSling's storeFieldsInBead (step 10)
+	// may have updated the description with attachment fields before the
+	// failure. Using the stale b.Description snapshot would clobber those.
+	currentDesc := b.Description
+	if freshInfo, err := getBeadInfo(b.ID); err == nil {
+		currentDesc = freshInfo.Description
+	}
+
+	meta := ParseQueueMetadata(currentDesc)
 	if meta == nil {
 		meta = &QueueMetadata{}
 	}
@@ -398,7 +406,7 @@ func recordDispatchFailure(b readyQueuedBead, dispatchErr error) {
 	meta.LastFailure = dispatchErr.Error()
 
 	// Update description with incremented failure count
-	baseDesc := StripQueueMetadata(b.Description)
+	baseDesc := StripQueueMetadata(currentDesc)
 	metaBlock := FormatQueueMetadata(meta)
 	newDesc := baseDesc
 	if newDesc != "" {
