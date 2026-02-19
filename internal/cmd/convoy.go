@@ -1967,13 +1967,13 @@ func applyFreshIssueDetails(dep *trackedDependency, details *issueDetails) {
 	if dep.IssueType == "" {
 		dep.IssueType = details.IssueType
 	}
-	// Always refresh labels — bd dep list may return stale labels from
-	// dependency records, but bd show returns current bead labels. This
-	// ensures isReadyIssue sees accurate queue labels (gt:queued,
-	// gt:queue-dispatched) for cross-rig beads.
-	if len(details.Labels) > 0 {
-		dep.Labels = details.Labels
-	}
+	// Always refresh labels unconditionally — bd dep list may return stale
+	// labels from dependency records, but bd show returns current bead labels.
+	// This ensures isReadyIssue sees accurate queue labels (gt:queued,
+	// gt:queue-dispatched) for cross-rig beads. Assigning even when fresh
+	// labels are empty clears stale queue labels that would otherwise
+	// suppress stranded issue detection.
+	dep.Labels = details.Labels
 }
 
 // getTrackedIssues uses bd dep list to get issues tracked by a convoy.

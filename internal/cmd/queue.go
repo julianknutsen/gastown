@@ -317,21 +317,24 @@ func runQueueClear(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Clear all queued beads
-	queued, err := listQueuedBeads(townRoot)
+	// Clear all queued beads — use raw label query without status or
+	// circuit-breaker filtering. listQueuedBeads filters out hooked/closed
+	// beads (dispatched beads that retain gt:queued as audit trail), but
+	// clear-all must remove ALL queue labels to match the CLI contract.
+	ids, err := listAllQueueLabeledBeadIDs(townRoot)
 	if err != nil {
 		return fmt.Errorf("listing queued beads: %w", err)
 	}
 
-	if len(queued) == 0 {
+	if len(ids) == 0 {
 		fmt.Println("Queue is already empty.")
 		return nil
 	}
 
 	cleared := 0
-	for _, b := range queued {
-		if err := dequeueBeadLabels(b.ID); err != nil {
-			fmt.Printf("  %s Could not clear %s: %v\n", style.Dim.Render("Warning:"), b.ID, err)
+	for _, id := range ids {
+		if err := dequeueBeadLabels(id); err != nil {
+			fmt.Printf("  %s Could not clear %s: %v\n", style.Dim.Render("Warning:"), id, err)
 			continue
 		}
 		cleared++
@@ -458,6 +461,47 @@ func listQueuedBeadsFrom(dir string) ([]queuedBeadInfo, error) {
 		})
 	}
 	return result, nil
+}
+
+// listAllQueueLabeledBeadIDs returns the IDs of ALL beads with the gt:queued
+// label across all rig DBs, without status or circuit-breaker filtering.
+// Used by clear-all to ensure no hidden queue labels survive.
+func listAllQueueLabeledBeadIDs(townRoot string) ([]string, error) {
+	var ids []string
+	seen := make(map[string]bool)
+
+	var lastErr error
+	failCount := 0
+	for _, dir := range beadsSearchDirs(townRoot) {
+		listCmd := exec.Command("bd", "list", "--label="+LabelQueued, "--json", "--limit=0")
+		listCmd.Dir = dir
+		var stdout strings.Builder
+		listCmd.Stdout = &stdout
+		if err := listCmd.Run(); err != nil {
+			failCount++
+			lastErr = err
+			continue
+		}
+		var raw []struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(stdout.String()), &raw); err != nil {
+			failCount++
+			lastErr = err
+			continue
+		}
+		for _, r := range raw {
+			if !seen[r.ID] {
+				seen[r.ID] = true
+				ids = append(ids, r.ID)
+			}
+		}
+	}
+
+	if failCount > 0 && len(ids) == 0 {
+		return nil, fmt.Errorf("all directories failed (last: %w)", lastErr)
+	}
+	return ids, nil
 }
 
 // beadsSearchDirs returns directories to scan for queued beads:
