@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"fmt"
 	"net"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 const doltTestPort = "3307"
@@ -290,40 +293,38 @@ func cleanupDoltServer() {
 func cleanStaleBeadsDatabases(t *testing.T) {
 	t.Helper()
 
-	// Query all databases on the server.
-	// Dolt CLI flag placement: --host/--port/--user/--password are global flags
-	// (before the subcommand), --no-tls is a sql subcommand flag (after "sql").
-	// --password= (equals with no value) sends empty password without prompting.
-	cmd := exec.Command("dolt",
-		"--host", "127.0.0.1",
-		"--port", doltTestPort,
-		"--user", "root",
-		"--password=",
-		"sql", "--no-tls",
-		"-q", "SHOW DATABASES", "-r", "csv")
-	out, err := cmd.CombinedOutput()
+	// Connect via Go MySQL driver instead of dolt CLI to avoid flag-parsing
+	// fragility across dolt versions (--password prompting, --no-tls placement,
+	// global vs subcommand flag scoping all vary by version).
+	dsn := fmt.Sprintf("root:@tcp(127.0.0.1:%s)/", doltTestPort)
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		t.Logf("cleanStaleBeadsDatabases: SHOW DATABASES failed (non-fatal): %v\n%s", err, out)
+		t.Logf("cleanStaleBeadsDatabases: connect failed (non-fatal): %v", err)
 		return
 	}
+	defer db.Close()
 
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		dbName := strings.TrimSpace(line)
-		if dbName == "" || dbName == "Database" || dbName == "information_schema" {
+	rows, err := db.Query("SHOW DATABASES")
+	if err != nil {
+		t.Logf("cleanStaleBeadsDatabases: SHOW DATABASES failed (non-fatal): %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var toDrop []string
+	for rows.Next() {
+		var dbName string
+		if err := rows.Scan(&dbName); err != nil {
 			continue
 		}
-		if !strings.HasPrefix(dbName, "beads_") {
-			continue
+		if strings.HasPrefix(dbName, "beads_") {
+			toDrop = append(toDrop, dbName)
 		}
-		dropCmd := exec.Command("dolt",
-			"--host", "127.0.0.1",
-			"--port", doltTestPort,
-			"--user", "root",
-			"--password=",
-			"sql", "--no-tls",
-			"-q", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
-		if dropOut, dropErr := dropCmd.CombinedOutput(); dropErr != nil {
-			t.Logf("cleanStaleBeadsDatabases: DROP %s failed (non-fatal): %v\n%s", dbName, dropErr, dropOut)
+	}
+
+	for _, dbName := range toDrop {
+		if _, err := db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName)); err != nil {
+			t.Logf("cleanStaleBeadsDatabases: DROP %s failed (non-fatal): %v", dbName, err)
 		}
 	}
 }
