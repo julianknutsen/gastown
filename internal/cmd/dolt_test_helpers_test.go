@@ -334,12 +334,24 @@ func restartDoltServer() error {
 	}
 	dataDir := strings.TrimSpace(lines[1])
 
-	// Kill the current server. Use syscall.Kill directly to avoid racing
-	// with the reap goroutine from startDoltServer (which holds cmd.Wait).
-	_ = syscall.Kill(pid, syscall.SIGKILL)
+	// Gracefully stop the server with SIGTERM first, then SIGKILL as fallback.
+	// SIGKILL can corrupt the data-dir (locks, WAL), causing the restarted
+	// server to malfunction (bd init --server fails to create schema).
+	_ = syscall.Kill(pid, syscall.SIGTERM)
 
-	// Give the kernel a moment to deliver the signal and release the socket.
-	time.Sleep(time.Second)
+	// Wait up to 5 seconds for graceful shutdown.
+	termDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(termDeadline) {
+		if !portReady(500 * time.Millisecond) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	// Force kill if still alive.
+	if portReady(500 * time.Millisecond) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		time.Sleep(time.Second)
+	}
 
 	// Fallback: kill anything listening on the test port. This handles cases
 	// where the PID file is stale or the process forked children.
