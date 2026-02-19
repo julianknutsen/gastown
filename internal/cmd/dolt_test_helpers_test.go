@@ -358,6 +358,16 @@ func restartDoltServer() error {
 		return fmt.Errorf("port %s still in use after killing server", doltTestPort)
 	}
 
+	// Log data-dir contents before cleanup for diagnostics.
+	if dataDir != "" {
+		entries, _ := os.ReadDir(dataDir)
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		fmt.Fprintf(os.Stderr, "[restartDoltServer] data-dir contents before cleanup: %v\n", names)
+	}
+
 	// Remove stale beads_* database directories from the data-dir.
 	// This clears phantom references when the server rebuilds its catalog
 	// from disk on restart.
@@ -371,7 +381,7 @@ func restartDoltServer() error {
 			}
 		}
 	}
-	fmt.Fprintf(os.Stderr, "[restartDoltServer] removed %d stale databases from %s: %v\n", len(removed), dataDir, removed)
+	fmt.Fprintf(os.Stderr, "[restartDoltServer] removed %d stale databases: %v\n", len(removed), removed)
 
 	// Restart the server with the SAME data-dir (now cleaned).
 	cmd := exec.Command("dolt", "sql-server",
@@ -419,24 +429,38 @@ func restartDoltServer() error {
 	return nil
 }
 
-// waitForSQLReady polls the Dolt server until it responds to a SQL query.
+// waitForSQLReady polls the Dolt server until it responds to SQL queries
+// and can perform schema operations (CREATE/DROP DATABASE).
 func waitForSQLReady(timeout time.Duration) error {
+	dsn := "root:@tcp(127.0.0.1:" + doltTestPort + ")/"
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:"+doltTestPort+")/")
+		db, err := sql.Open("mysql", dsn)
 		if err != nil {
 			lastErr = err
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 		err = db.Ping()
-		db.Close()
-		if err == nil {
-			return nil
+		if err != nil {
+			db.Close()
+			lastErr = err
+			time.Sleep(500 * time.Millisecond)
+			continue
 		}
-		lastErr = err
-		time.Sleep(500 * time.Millisecond)
+		// Verify schema operations work (CREATE DATABASE requires full init).
+		_, err = db.Exec("CREATE DATABASE `__readiness_check`")
+		if err != nil {
+			db.Close()
+			lastErr = fmt.Errorf("CREATE DATABASE failed: %w", err)
+			fmt.Fprintf(os.Stderr, "[waitForSQLReady] CREATE DATABASE failed: %v\n", err)
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		db.Exec("DROP DATABASE `__readiness_check`")
+		db.Close()
+		return nil
 	}
 	return fmt.Errorf("timeout after %v: %w", timeout, lastErr)
 }
