@@ -278,3 +278,47 @@ func cleanupDoltServer() {
 	}
 	os.Remove(pidFilePath)
 }
+
+// cleanStaleBeadsDatabases drops all beads_* databases from the shared Dolt
+// test server. Other integration tests (e.g., beads_db_init_test.go) may leave
+// stale databases on the server. When bd subsequently opens ANY database, its
+// migration sweep iterates all server databases — hitting a broken stale DB
+// causes unrelated tests to fail with "database not found" errors.
+//
+// Call this before creating fresh test databases to ensure a clean server state.
+// Safe to call when no stale databases exist (DROP IF EXISTS is a no-op).
+func cleanStaleBeadsDatabases(t *testing.T) {
+	t.Helper()
+
+	// Query all databases on the server.
+	cmd := exec.Command("dolt",
+		"--host", "127.0.0.1",
+		"--port", doltTestPort,
+		"--user", "root",
+		"--no-tls",
+		"sql", "-q", "SHOW DATABASES", "-r", "csv")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("cleanStaleBeadsDatabases: SHOW DATABASES failed (non-fatal): %v\n%s", err, out)
+		return
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		dbName := strings.TrimSpace(line)
+		if dbName == "" || dbName == "Database" || dbName == "information_schema" {
+			continue
+		}
+		if !strings.HasPrefix(dbName, "beads_") {
+			continue
+		}
+		dropCmd := exec.Command("dolt",
+			"--host", "127.0.0.1",
+			"--port", doltTestPort,
+			"--user", "root",
+			"--no-tls",
+			"sql", "-q", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
+		if dropOut, dropErr := dropCmd.CombinedOutput(); dropErr != nil {
+			t.Logf("cleanStaleBeadsDatabases: DROP %s failed (non-fatal): %v\n%s", dbName, dropErr, dropOut)
+		}
+	}
+}

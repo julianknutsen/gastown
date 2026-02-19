@@ -63,6 +63,7 @@ func setupQueueIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary string, 
 	}
 
 	requireDoltServer(t)
+	cleanStaleBeadsDatabases(t)
 	gtBinary = buildGT(t)
 
 	tmpDir, err := filepath.EvalSymlinks(t.TempDir())
@@ -411,6 +412,7 @@ func setupMultiRigQueueTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBinary 
 	}
 
 	requireDoltServer(t)
+	cleanStaleBeadsDatabases(t)
 	gtBinary = buildGT(t)
 
 	tmpDir, err := filepath.EvalSymlinks(t.TempDir())
