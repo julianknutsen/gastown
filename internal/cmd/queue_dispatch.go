@@ -118,18 +118,17 @@ func dispatchQueuedWork(townRoot, actor string, batchOverride, maxPolOverride in
 	}
 
 	// Dispatch up to the smallest of capacity, batchSize, and readyBeads count.
-	// When capacity is 0 (unlimited), only batchSize and readyBeads constrain dispatch.
-	toDispatch := batchSize
-	if capacity > 0 && capacity < toDispatch {
-		toDispatch = capacity
-	}
-	if len(readyBeads) < toDispatch {
-		toDispatch = len(readyBeads)
+	toDispatch := computeDispatchCount(capacity, batchSize, len(readyBeads))
+
+	// Format capacity string for display
+	capStr := "unlimited"
+	if maxPolecats > 0 {
+		capStr = fmt.Sprintf("%d free of %d", capacity, maxPolecats)
 	}
 
 	if dryRun {
-		fmt.Printf("%s Would dispatch %d bead(s) (capacity: %d/%d, batch: %d, ready: %d)\n",
-			style.Bold.Render("📋"), toDispatch, activePolecats, maxPolecats, batchSize, len(readyBeads))
+		fmt.Printf("%s Would dispatch %d bead(s) (capacity: %s, batch: %d, ready: %d)\n",
+			style.Bold.Render("📋"), toDispatch, capStr, batchSize, len(readyBeads))
 		for i := 0; i < toDispatch; i++ {
 			b := readyBeads[i]
 			fmt.Printf("  Would dispatch: %s → %s\n", b.ID, b.TargetRig)
@@ -137,8 +136,8 @@ func dispatchQueuedWork(townRoot, actor string, batchOverride, maxPolOverride in
 		return 0, nil
 	}
 
-	fmt.Printf("%s Dispatching %d bead(s) (capacity: %d free of %d, ready: %d)\n",
-		style.Bold.Render("▶"), toDispatch, capacity, maxPolecats, len(readyBeads))
+	fmt.Printf("%s Dispatching %d bead(s) (capacity: %s, ready: %d)\n",
+		style.Bold.Render("▶"), toDispatch, capStr, len(readyBeads))
 
 	dispatched := 0
 	successfulRigs := make(map[string]bool)
@@ -275,11 +274,9 @@ func getReadyQueuedBeadsFrom(dir string) ([]readyQueuedBead, error) {
 // dispatchSingleBead dispatches one queued bead via executeSling.
 // Reconstructs full SlingParams from queue metadata stored at enqueue time.
 //
-// The gt:queued label is intentionally NOT removed. Once executeSling hooks
-// the bead, its status changes to "hooked" and bd ready won't return it —
-// the flock prevents concurrent dispatch. Keeping the label provides an audit
-// trail showing the bead was queue-dispatched. The label is only removed
-// explicitly via `gt queue clear`.
+// On success, gt:queued is removed and gt:queue-dispatched is added as audit
+// trail. This prevents label conflation: previously-dispatched beads that are
+// reopened won't be mistaken for actively-queued beads by dispatch or convoy.
 func dispatchSingleBead(b readyQueuedBead, townRoot, actor string) error {
 	// Parse queue metadata from description
 	meta := ParseQueueMetadata(b.Description)
@@ -289,8 +286,11 @@ func dispatchSingleBead(b readyQueuedBead, townRoot, actor string) error {
 	// than wasting circuit breaker retries on guaranteed failures.
 	if meta == nil || meta.TargetRig == "" {
 		quarantineErr := fmt.Errorf("missing queue metadata or target_rig")
-		failCmd := exec.Command("bd", "update", b.ID, "--add-label=gt:dispatch-failed")
-		failCmd.Dir = resolveBeadDir(b.ID)
+		beadDir := resolveBeadDir(b.ID)
+		// Add dispatch-failed label AND remove gt:queued so bd ready won't
+		// return this bead again (no metadata = no circuit breaker to check).
+		failCmd := exec.Command("bd", "update", b.ID, "--add-label=gt:dispatch-failed", "--remove-label="+LabelQueued)
+		failCmd.Dir = beadDir
 		_ = failCmd.Run() // best effort
 		return quarantineErr
 	}
@@ -301,12 +301,18 @@ func dispatchSingleBead(b readyQueuedBead, townRoot, actor string) error {
 		rigName = meta.TargetRig
 	}
 
-	// Reconstruct SlingParams from queue metadata
+	// Reconstruct SlingParams from queue metadata.
+	// Force is NOT set: if the bead became hooked between bd ready and now
+	// (e.g., manual gt sling raced), executeSling returns "already hooked"
+	// and we skip it rather than force-stealing. This is safe because:
+	// - flock prevents queue-vs-queue races
+	// - manual sling hooked it intentionally
+	// - next cycle, bd ready won't return the hooked bead
 	params := SlingParams{
 		BeadID:           b.ID,
 		RigName:          rigName,
 		FormulaFailFatal: true,  // Queue: rollback + requeue on failure
-		Force:            true,  // Always force at dispatch (validated at enqueue)
+		CallerContext:    "queue-dispatch",
 		NoConvoy:         true,  // Convoy already created at enqueue
 		NoBoot:           true,  // Avoid lock contention in daemon
 		TownRoot:         townRoot,
@@ -336,15 +342,20 @@ func dispatchSingleBead(b readyQueuedBead, townRoot, actor string) error {
 		return fmt.Errorf("sling failed: %w", err)
 	}
 
-	// Strip queue metadata from description after successful dispatch.
-	// The gt:queued label stays for audit, but metadata is no longer needed.
-	// Uses resolveBeadDir for CWD so rig-scoped beads are found correctly.
+	// Post-dispatch cleanup: strip queue metadata and swap labels.
+	// Replace gt:queued with gt:queue-dispatched to prevent label conflation
+	// (reopened beads with gt:queued would be mistaken for actively queued).
+	beadDir := resolveBeadDir(b.ID)
 	cleanDesc := StripQueueMetadata(b.Description)
 	if cleanDesc != b.Description {
 		descCmd := exec.Command("bd", "update", b.ID, "--description="+cleanDesc)
-		descCmd.Dir = resolveBeadDir(b.ID)
+		descCmd.Dir = beadDir
 		_ = descCmd.Run() // best effort — bead is already dispatched
 	}
+	swapCmd := exec.Command("bd", "update", b.ID,
+		"--remove-label="+LabelQueued, "--add-label=gt:queue-dispatched")
+	swapCmd.Dir = beadDir
+	_ = swapCmd.Run() // best effort — bead is already dispatched
 
 	// Log dispatch event
 	polecatName := ""
@@ -391,13 +402,30 @@ func recordDispatchFailure(b readyQueuedBead, dispatchErr error) {
 	_ = descCmd.Run() // best effort
 
 	if meta.DispatchFailures >= maxDispatchFailures {
-		// Mark as permanently failed — visible in queue status
-		failCmd := exec.Command("bd", "update", b.ID, "--add-label=gt:dispatch-failed")
+		// Mark as permanently failed and remove gt:queued so the bead doesn't
+		// linger invisibly (filtered from queue views but still labeled).
+		failCmd := exec.Command("bd", "update", b.ID,
+			"--add-label=gt:dispatch-failed", "--remove-label="+LabelQueued)
 		failCmd.Dir = beadDir
 		_ = failCmd.Run() // best effort
 		fmt.Printf("  %s Bead %s failed %d times, marked gt:dispatch-failed\n",
 			style.Warning.Render("⚠"), b.ID, meta.DispatchFailures)
 	}
+}
+
+// computeDispatchCount returns how many beads to dispatch given:
+// - capacity: available polecat slots (0 = unlimited)
+// - batchSize: max beads per dispatch cycle
+// - readyCount: number of ready queued beads
+func computeDispatchCount(capacity, batchSize, readyCount int) int {
+	toDispatch := batchSize
+	if capacity > 0 && capacity < toDispatch {
+		toDispatch = capacity
+	}
+	if readyCount < toDispatch {
+		toDispatch = readyCount
+	}
+	return toDispatch
 }
 
 // splitVars splits a newline-separated vars string into individual key=value pairs.

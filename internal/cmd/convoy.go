@@ -1307,9 +1307,15 @@ func isReadyIssue(t trackedIssueInfo) bool {
 		return false
 	}
 
-	// Queued beads are not stranded — they're waiting for dispatch capacity
+	// Queued beads are not stranded — they're waiting for dispatch capacity.
+	// Dispatched beads are only suppressed if they have an assignee (active
+	// polecat). If a dispatched bead is later reopened/unassigned, it should
+	// surface as stranded so it can be re-queued or manually handled.
 	for _, l := range t.Labels {
 		if l == LabelQueued {
+			return false
+		}
+		if l == "gt:queue-dispatched" && t.Assignee != "" {
 			return false
 		}
 	}

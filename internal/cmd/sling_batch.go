@@ -113,6 +113,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			NoBoot:           slingNoBoot,
 			SkipCook:         formulaCooked,
 			FormulaFailFatal: false, // Batch: warn + hook raw on formula failure
+			CallerContext:    "batch-sling",
 			TownRoot:         townRoot,
 			BeadsDir:         townBeadsDir,
 		}

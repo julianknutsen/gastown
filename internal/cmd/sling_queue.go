@@ -38,9 +38,9 @@ const (
 // It adds labels, writes queue metadata to the description, and creates
 // an auto-convoy. Does NOT spawn a polecat or hook the bead.
 func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
-	townRoot, err := workspace.FindFromCwd()
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
-		return fmt.Errorf("finding town root: %w", err)
+		return err
 	}
 
 	// Validate bead exists
@@ -68,12 +68,19 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		return fmt.Errorf("checking bead status: %w", err)
 	}
 
-	// Idempotency: skip if already queued
+	// Idempotency: skip if bead is actively queued (open + gt:queued label).
+	// Dispatched beads retain gt:queued as audit trail but are hooked/closed,
+	// so they should be re-queueable without --force.
+	hasQueuedLabel := false
 	for _, label := range info.Labels {
 		if label == LabelQueued {
-			fmt.Printf("%s Bead %s is already queued, no-op\n", style.Dim.Render("○"), beadID)
-			return nil
+			hasQueuedLabel = true
+			break
 		}
+	}
+	if hasQueuedLabel && info.Status == "open" {
+		fmt.Printf("%s Bead %s is already queued, no-op\n", style.Dim.Render("○"), beadID)
+		return nil
 	}
 
 	// Check status: error if hooked/in_progress (unless --force)
@@ -106,22 +113,6 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		if err := CookFormula(opts.Formula, workDir, townRoot); err != nil {
 			return fmt.Errorf("formula %q failed to cook: %w", opts.Formula, err)
 		}
-	}
-
-	// Add queue label (rig is stored in description metadata).
-	// Uses resolveBeadDir so rig-scoped beads hit the correct .beads/ DB.
-	beadDir := resolveBeadDir(beadID)
-	labelCmd := exec.Command("bd", "update", beadID,
-		"--add-label="+LabelQueued)
-	labelCmd.Dir = beadDir
-	var labelStderr bytes.Buffer
-	labelCmd.Stderr = &labelStderr
-	if err := labelCmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(labelStderr.String())
-		if errMsg != "" {
-			return fmt.Errorf("adding queue labels: %s", errMsg)
-		}
-		return fmt.Errorf("adding queue labels: %w", err)
 	}
 
 	// Build queue metadata
@@ -166,14 +157,34 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 	}
 	newDesc += metaBlock
 
+	// Write metadata FIRST, then add label. Metadata without the label is
+	// inert (dispatch queries bd ready --label gt:queued, so unlabeled beads
+	// are invisible). The label is the atomic "commit" of the enqueue.
+	// This prevents a race where dispatch fires between label-add and
+	// metadata-write, sees meta==nil, and irreversibly quarantines the bead.
+	beadDir := resolveBeadDir(beadID)
 	descCmd := exec.Command("bd", "update", beadID, "--description="+newDesc)
 	descCmd.Dir = beadDir
 	if err := descCmd.Run(); err != nil {
-		// Metadata is required for dispatch routing — roll back the label
-		rollbackCmd := exec.Command("bd", "update", beadID, "--remove-label="+LabelQueued)
+		return fmt.Errorf("writing queue metadata: %w", err)
+	}
+
+	// Add queue label (the activation signal for dispatch).
+	labelCmd := exec.Command("bd", "update", beadID,
+		"--add-label="+LabelQueued)
+	labelCmd.Dir = beadDir
+	var labelStderr bytes.Buffer
+	labelCmd.Stderr = &labelStderr
+	if err := labelCmd.Run(); err != nil {
+		// Roll back metadata — strip it so the bead doesn't have orphaned queue data.
+		rollbackCmd := exec.Command("bd", "update", beadID, "--description="+baseDesc)
 		rollbackCmd.Dir = beadDir
 		_ = rollbackCmd.Run() // best effort rollback
-		return fmt.Errorf("writing queue metadata: %w", err)
+		errMsg := strings.TrimSpace(labelStderr.String())
+		if errMsg != "" {
+			return fmt.Errorf("adding queue label: %s", errMsg)
+		}
+		return fmt.Errorf("adding queue label: %w", err)
 	}
 
 	// Auto-convoy (unless --no-convoy)

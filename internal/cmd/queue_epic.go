@@ -131,7 +131,8 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 	successCount := 0
 	for _, c := range candidates {
 		err := enqueueBead(c.ID, rigName, EnqueueOptions{
-			Force: queueEpicForce,
+			Formula: "mol-polecat-work",
+			Force:   queueEpicForce,
 		})
 		if err != nil {
 			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), c.ID, err)

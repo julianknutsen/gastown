@@ -701,7 +701,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if townSettings.Queue == nil {
 			townSettings.Queue = config.DefaultWorkQueueConfig()
 		}
-		townSettings.Queue.BatchSize = n
+		townSettings.Queue.BatchSize = &n
 
 	case "queue.spawn_delay":
 		// Validate it parses as a duration

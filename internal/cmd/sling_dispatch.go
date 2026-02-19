@@ -38,6 +38,7 @@ type SlingParams struct {
 	// Execution behavior (set by caller, not serialized to queue)
 	SkipCook         bool   // Batch optimization: formula already cooked
 	FormulaFailFatal bool   // true=rollback+error (single/queue), false=hook raw bead (batch)
+	CallerContext    string // Identifies the caller for shutdown messages (e.g., "queue-dispatch", "batch-sling")
 	TownRoot         string
 	BeadsDir         string
 }
@@ -60,7 +61,8 @@ type SlingResult struct {
 // Caller responsibilities (NOT handled by executeSling):
 //   - Cross-rig guard: callers must call checkCrossRigGuard() before executeSling
 //     to verify the bead's prefix matches the target rig. Batch sling does this
-//     pre-loop; queue dispatch uses Force=true (validated at enqueue time).
+//     pre-loop; queue dispatch skips the guard because the bead prefix was
+//     validated at enqueue time and is immutable.
 //   - wakeRigAgents: callers must call wakeRigAgents() after the dispatch loop
 //     when NoBoot is false. Batch sling calls it post-loop; queue dispatch sets
 //     NoBoot=true to avoid lock contention in the daemon.
@@ -124,12 +126,16 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 			oldRigName := assigneeParts[0]
 			oldPolecatName := assigneeParts[2]
 			if townRoot != "" {
+				callerCtx := params.CallerContext
+				if callerCtx == "" {
+					callerCtx = "sling"
+				}
 				router := mail.NewRouter(townRoot)
 				shutdownMsg := &mail.Message{
-					From:     "queue-dispatch",
+					From:     callerCtx,
 					To:       fmt.Sprintf("%s/witness", oldRigName),
 					Subject:  fmt.Sprintf("LIFECYCLE:Shutdown %s", oldPolecatName),
-					Body:     fmt.Sprintf("Reason: work_reassigned\nRequestedBy: queue-dispatch\nBead: %s\nNewAssignee: %s", params.BeadID, params.RigName),
+					Body:     fmt.Sprintf("Reason: work_reassigned\nRequestedBy: %s\nBead: %s\nNewAssignee: %s", callerCtx, params.BeadID, params.RigName),
 					Type:     mail.TypeTask,
 					Priority: mail.PriorityHigh,
 				}

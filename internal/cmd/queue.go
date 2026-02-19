@@ -462,8 +462,11 @@ func listQueuedBeadsFrom(dir string) ([]queuedBeadInfo, error) {
 
 // beadsSearchDirs returns directories to scan for queued beads:
 // the town root plus any rig directories that have a .beads/ subdirectory.
+// Also checks <rig>/mayor/rig which is the canonical beads location for
+// some rig configurations (bd routes beads commands there via redirect).
 func beadsSearchDirs(townRoot string) []string {
 	dirs := []string{townRoot}
+	seen := map[string]bool{townRoot: true}
 	entries, err := os.ReadDir(townRoot)
 	if err != nil {
 		return dirs
@@ -473,9 +476,18 @@ func beadsSearchDirs(townRoot string) []string {
 			continue
 		}
 		rigDir := filepath.Join(townRoot, e.Name())
+		// Check <rig>/.beads (standard location)
 		beadsDir := filepath.Join(rigDir, ".beads")
-		if _, err := os.Stat(beadsDir); err == nil {
+		if _, err := os.Stat(beadsDir); err == nil && !seen[rigDir] {
 			dirs = append(dirs, rigDir)
+			seen[rigDir] = true
+		}
+		// Check <rig>/mayor/rig (canonical redirect location)
+		mayorRigDir := filepath.Join(rigDir, "mayor", "rig")
+		mayorBeadsDir := filepath.Join(mayorRigDir, ".beads")
+		if _, err := os.Stat(mayorBeadsDir); err == nil && !seen[mayorRigDir] {
+			dirs = append(dirs, mayorRigDir)
+			seen[mayorRigDir] = true
 		}
 	}
 	return dirs

@@ -42,12 +42,15 @@ func LoadQueueState(townRoot string) (*QueueState, error) {
 	return &state, nil
 }
 
-// SaveQueueState writes the queue runtime state to disk.
+// SaveQueueState writes the queue runtime state to disk atomically.
+// Uses write-to-temp + rename to prevent corruption from concurrent writers
+// (e.g., dispatch RecordDispatch racing with gt queue pause).
 func SaveQueueState(townRoot string, state *QueueState) error {
 	path := queueStateFile(townRoot)
+	dir := filepath.Dir(path)
 
 	// Ensure .runtime directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
@@ -55,7 +58,27 @@ func SaveQueueState(townRoot string, state *QueueState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644) //nolint:gosec // G306: state file, not secret
+
+	// Atomic write: temp file + rename
+	tmp, err := os.CreateTemp(dir, ".queue-state-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath) // clean up on rename failure
+		return err
+	}
+	return nil
 }
 
 // SetPaused marks the queue as paused by the given actor.
