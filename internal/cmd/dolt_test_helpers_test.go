@@ -291,17 +291,17 @@ func cleanStaleBeadsDatabases(t *testing.T) {
 	t.Helper()
 
 	// Query all databases on the server.
-	// --password= (with equals and no value) tells dolt to use an empty
-	// password without prompting. Using "--password", "" as separate args
-	// causes dolt to interpret --password as "prompt mode" (MySQL convention),
-	// which fails in CI with "inappropriate ioctl for device" (no TTY).
-	cmd := exec.Command("dolt",
+	// Connection flags must come AFTER the "sql" subcommand (dolt uses cobra;
+	// subcommand flags aren't recognized before the subcommand name).
+	// --password= (equals with no value) sends empty password without prompting.
+	// --no-tls prevents TLS negotiation with the plaintext test server.
+	cmd := exec.Command("dolt", "sql",
 		"--host", "127.0.0.1",
 		"--port", doltTestPort,
 		"--user", "root",
 		"--password=",
 		"--no-tls",
-		"sql", "-q", "SHOW DATABASES", "-r", "csv")
+		"-q", "SHOW DATABASES", "-r", "csv")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Logf("cleanStaleBeadsDatabases: SHOW DATABASES failed (non-fatal): %v\n%s", err, out)
@@ -316,13 +316,13 @@ func cleanStaleBeadsDatabases(t *testing.T) {
 		if !strings.HasPrefix(dbName, "beads_") {
 			continue
 		}
-		dropCmd := exec.Command("dolt",
+		dropCmd := exec.Command("dolt", "sql",
 			"--host", "127.0.0.1",
 			"--port", doltTestPort,
 			"--user", "root",
 			"--password=",
 			"--no-tls",
-			"sql", "-q", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
+			"-q", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
 		if dropOut, dropErr := dropCmd.CombinedOutput(); dropErr != nil {
 			t.Logf("cleanStaleBeadsDatabases: DROP %s failed (non-fatal): %v\n%s", dbName, dropErr, dropOut)
 		}
