@@ -293,38 +293,64 @@ func cleanupDoltServer() {
 func cleanStaleBeadsDatabases(t *testing.T) {
 	t.Helper()
 
-	// Connect via Go MySQL driver instead of dolt CLI to avoid flag-parsing
-	// fragility across dolt versions (--password prompting, --no-tls placement,
-	// global vs subcommand flag scoping all vary by version).
+	// Two-phase cleanup:
+	// 1. SQL-level: DROP DATABASE for databases visible to SHOW DATABASES
+	// 2. Filesystem-level: remove beads_* directories from the dolt data-dir
+	//    for corrupted databases that SHOW DATABASES doesn't list but dolt's
+	//    internal scanner still finds (causing "database not found" errors
+	//    during migration sweeps).
+
+	// Phase 1: SQL cleanup via Go MySQL driver (avoids dolt CLI flag fragility).
 	dsn := fmt.Sprintf("root:@tcp(127.0.0.1:%s)/", doltTestPort)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		t.Logf("cleanStaleBeadsDatabases: connect failed (non-fatal): %v", err)
-		return
+	} else {
+		defer db.Close()
+		rows, err := db.Query("SHOW DATABASES")
+		if err != nil {
+			t.Logf("cleanStaleBeadsDatabases: SHOW DATABASES failed (non-fatal): %v", err)
+		} else {
+			defer rows.Close()
+			for rows.Next() {
+				var dbName string
+				if err := rows.Scan(&dbName); err != nil {
+					continue
+				}
+				if strings.HasPrefix(dbName, "beads_") {
+					if _, err := db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName)); err != nil {
+						t.Logf("cleanStaleBeadsDatabases: DROP %s failed (non-fatal): %v", dbName, err)
+					}
+				}
+			}
+		}
 	}
-	defer db.Close()
 
-	rows, err := db.Query("SHOW DATABASES")
+	// Phase 2: Filesystem cleanup for corrupted databases not visible via SQL.
+	// The dolt server's data-dir is stored in the PID file.
+	data, err := os.ReadFile(pidFilePath)
 	if err != nil {
-		t.Logf("cleanStaleBeadsDatabases: SHOW DATABASES failed (non-fatal): %v", err)
+		return // No PID file — can't find data-dir
+	}
+	lines := strings.SplitN(string(data), "\n", 3)
+	if len(lines) < 2 {
 		return
 	}
-	defer rows.Close()
-
-	var toDrop []string
-	for rows.Next() {
-		var dbName string
-		if err := rows.Scan(&dbName); err != nil {
-			continue
-		}
-		if strings.HasPrefix(dbName, "beads_") {
-			toDrop = append(toDrop, dbName)
-		}
+	dataDir := strings.TrimSpace(lines[1])
+	if dataDir == "" {
+		return
 	}
 
-	for _, dbName := range toDrop {
-		if _, err := db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName)); err != nil {
-			t.Logf("cleanStaleBeadsDatabases: DROP %s failed (non-fatal): %v", dbName, err)
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "beads_") {
+			dirPath := dataDir + "/" + e.Name()
+			if err := os.RemoveAll(dirPath); err != nil {
+				t.Logf("cleanStaleBeadsDatabases: remove %s failed (non-fatal): %v", dirPath, err)
+			}
 		}
 	}
 }
