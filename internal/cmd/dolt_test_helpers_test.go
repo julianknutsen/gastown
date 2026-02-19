@@ -291,16 +291,15 @@ func cleanStaleBeadsDatabases(t *testing.T) {
 	t.Helper()
 
 	// Query all databases on the server.
-	// Connection flags must come AFTER the "sql" subcommand (dolt uses cobra;
-	// subcommand flags aren't recognized before the subcommand name).
+	// Dolt CLI flag placement: --host/--port/--user/--password are global flags
+	// (before the subcommand), --no-tls is a sql subcommand flag (after "sql").
 	// --password= (equals with no value) sends empty password without prompting.
-	// --no-tls prevents TLS negotiation with the plaintext test server.
-	cmd := exec.Command("dolt", "sql",
+	cmd := exec.Command("dolt",
 		"--host", "127.0.0.1",
 		"--port", doltTestPort,
 		"--user", "root",
 		"--password=",
-		"--no-tls",
+		"sql", "--no-tls",
 		"-q", "SHOW DATABASES", "-r", "csv")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -316,12 +315,12 @@ func cleanStaleBeadsDatabases(t *testing.T) {
 		if !strings.HasPrefix(dbName, "beads_") {
 			continue
 		}
-		dropCmd := exec.Command("dolt", "sql",
+		dropCmd := exec.Command("dolt",
 			"--host", "127.0.0.1",
 			"--port", doltTestPort,
 			"--user", "root",
 			"--password=",
-			"--no-tls",
+			"sql", "--no-tls",
 			"-q", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
 		if dropOut, dropErr := dropCmd.CombinedOutput(); dropErr != nil {
 			t.Logf("cleanStaleBeadsDatabases: DROP %s failed (non-fatal): %v\n%s", dbName, dropErr, dropOut)
