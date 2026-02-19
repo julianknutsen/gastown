@@ -36,11 +36,24 @@ var queueTestCounter atomic.Int32
 func initBeadsDBForServer(t *testing.T, dir, prefix string) {
 	t.Helper()
 
-	cmd := exec.Command("bd", "init", "--server", "--server-port", doltTestPort, "--prefix", prefix, "--quiet")
+	cmd := exec.Command("bd", "init", "--server", "--server-port", doltTestPort, "--prefix", prefix)
 	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	t.Logf("bd init --server --prefix %s in %s: exit=%v\n%s", prefix, dir, err, out)
+	if err != nil {
 		t.Fatalf("bd init --server failed in %s: %v\n%s", dir, err, out)
 	}
+
+	// Verify config was created with issue_prefix.
+	configPath := filepath.Join(dir, ".beads", "config.yaml")
+	configData, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatalf("bd init --server succeeded but config missing at %s: %v", configPath, readErr)
+	}
+	if !strings.Contains(string(configData), "issue_prefix") {
+		t.Fatalf("bd init --server succeeded but config lacks issue_prefix:\n%s", configData)
+	}
+	t.Logf("config.yaml verified: %s", configPath)
 
 	// Create empty issues.jsonl to prevent bd auto-export from corrupting
 	// routes.jsonl (same as initBeadsDBWithPrefix does).

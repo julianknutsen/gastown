@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"fmt"
 	"net"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 const doltTestPort = "3307"
@@ -382,16 +385,52 @@ func restartDoltServer() error {
 	// Reap in background.
 	go func() { cmd.Wait() }()
 
-	// Wait for server to accept connections.
+	// Wait for server to accept TCP connections.
 	deadline = time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if portReady(time.Second) {
-			return nil
+			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	cmd.Process.Kill()
-	os.RemoveAll(newDataDir)
-	os.Remove(pidFilePath)
-	return fmt.Errorf("fresh dolt server did not become ready within 30s")
+	if !portReady(time.Second) {
+		cmd.Process.Kill()
+		os.RemoveAll(newDataDir)
+		os.Remove(pidFilePath)
+		return fmt.Errorf("fresh dolt server did not become ready within 30s")
+	}
+
+	// Verify SQL readiness — TCP accept doesn't guarantee the MySQL protocol
+	// layer is ready. Without this, bd init --server can connect but get
+	// incomplete results, producing a config without issue_prefix.
+	if err := waitForSQLReady(10 * time.Second); err != nil {
+		cmd.Process.Kill()
+		os.RemoveAll(newDataDir)
+		os.Remove(pidFilePath)
+		return fmt.Errorf("fresh server not SQL-ready: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[restartDoltServer] fresh server ready (pid=%d, data-dir=%s)\n", cmd.Process.Pid, newDataDir)
+	return nil
+}
+
+// waitForSQLReady polls the Dolt server until it responds to a SQL query.
+func waitForSQLReady(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:"+doltTestPort+")/")
+		if err != nil {
+			lastErr = err
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		err = db.Ping()
+		db.Close()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout after %v: %w", timeout, lastErr)
 }
