@@ -325,7 +325,13 @@ func dropStaleBeadsDatabases() error {
 
 	var dropped []string
 
-	// Strategy 1: Drop all visible beads_* databases.
+	// Strategy 1: Drop ALL non-system databases. Tests from beads_db_init_test.go
+	// create databases like "hq", "beads_reinit-prefix", etc. that can interfere
+	// with queue test initialization.
+	systemDBs := map[string]bool{
+		"information_schema": true,
+		"mysql":              true,
+	}
 	rows, err := db.Query("SHOW DATABASES")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] SHOW DATABASES failed: %v\n", err)
@@ -337,7 +343,7 @@ func dropStaleBeadsDatabases() error {
 				continue
 			}
 			allDBs = append(allDBs, name)
-			if strings.HasPrefix(name, "beads_") {
+			if !systemDBs[name] {
 				if _, err := db.Exec("DROP DATABASE IF EXISTS `" + name + "`"); err != nil {
 					fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] DROP %s failed: %v\n", name, err)
 				} else {
@@ -371,17 +377,20 @@ func dropStaleBeadsDatabases() error {
 		fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] purge failed: %v\n", err)
 	}
 
-	// Strategy 4: Remove beads_* directories from the server's data-dir.
+	// Strategy 4: Remove non-system database directories from the server's data-dir.
 	// This handles cases where the catalog is rebuilt from disk on next access.
-	data, _ := os.ReadFile(pidFilePath)
-	if data != nil {
-		lines := strings.SplitN(string(data), "\n", 3)
+	systemDirs := map[string]bool{
+		".dolt": true, ".doltcfg": true, "config.yaml": true,
+	}
+	pidData, _ := os.ReadFile(pidFilePath)
+	if pidData != nil {
+		lines := strings.SplitN(string(pidData), "\n", 3)
 		if len(lines) >= 2 {
 			dataDir := strings.TrimSpace(lines[1])
 			if dataDir != "" {
 				entries, _ := os.ReadDir(dataDir)
 				for _, e := range entries {
-					if e.IsDir() && strings.HasPrefix(e.Name(), "beads_") {
+					if e.IsDir() && !systemDirs[e.Name()] {
 						os.RemoveAll(dataDir + "/" + e.Name())
 						dropped = append(dropped, e.Name()+"(disk)")
 					}
