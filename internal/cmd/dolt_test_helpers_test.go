@@ -282,197 +282,114 @@ func cleanupDoltServer() {
 	os.Remove(pidFilePath)
 }
 
-// doltRestartOnce ensures the server restart happens at most once per binary.
+// doltCleanupOnce ensures database cleanup happens at most once per binary.
 var (
-	doltRestartOnce sync.Once
-	doltRestartErr  error
+	doltCleanupOnce sync.Once
+	doltCleanupErr  error
 )
 
-// cleanStaleBeadsDatabases restarts the Dolt server to eliminate phantom
-// database references left by earlier tests (e.g., beads_db_init_test.go).
-// Dolt's in-memory catalog can retain references to databases that are invisible
-// to SHOW DATABASES but still cause "database not found" errors during migration
-// sweeps. A server restart is the only reliable way to clear this state.
+// cleanStaleBeadsDatabases drops stale beads_* databases left by earlier tests
+// (e.g., beads_db_init_test.go) from the running Dolt server. This prevents
+// phantom catalog entries from causing "database not found" errors during
+// bd init --server migration sweeps in queue tests.
 //
-// The restart reuses the same data-dir (after removing beads_* database
-// subdirectories) rather than creating a fresh one. A fresh data-dir causes
-// bd init --server to fail because Dolt sql-server doesn't fully initialize
-// schema creation infrastructure on an empty directory.
-//
-// The restart happens once per test binary invocation (sync.Once). Subsequent
-// calls are no-ops. The PID file and lock file are updated so cleanupDoltServer
-// (called from TestMain) can still shut down the replacement server.
+// Uses SQL-level cleanup (DROP DATABASE) rather than server restart, because
+// restarting the Dolt server causes bd init --server to fail at creating
+// database schema (tables).
 func cleanStaleBeadsDatabases(t *testing.T) {
 	t.Helper()
-	doltRestartOnce.Do(func() {
-		doltRestartErr = restartDoltServer()
+	doltCleanupOnce.Do(func() {
+		doltCleanupErr = dropStaleBeadsDatabases()
 	})
-	if doltRestartErr != nil {
-		t.Fatalf("dolt server restart failed: %v", doltRestartErr)
+	if doltCleanupErr != nil {
+		t.Fatalf("stale database cleanup failed: %v", doltCleanupErr)
 	}
 }
 
-// restartDoltServer kills the current Dolt server, removes stale beads_*
-// database directories from the data-dir, and restarts the server. By reusing
-// the same data-dir (minus the stale databases), the restarted server retains
-// its initialization state while the in-memory catalog is rebuilt clean.
-func restartDoltServer() error {
-	// Read PID file to find current server.
-	data, err := os.ReadFile(pidFilePath)
+// dropStaleBeadsDatabases connects to the Dolt server and drops all beads_*
+// databases that were created by earlier tests. Uses three strategies:
+//  1. SHOW DATABASES → DROP any visible beads_* databases
+//  2. DROP known phantom database names from beads_db_init_test.go
+//  3. Physical cleanup of beads_* directories from the server's data-dir
+func dropStaleBeadsDatabases() error {
+	dsn := "root:@tcp(127.0.0.1:" + doltTestPort + ")/"
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		// No PID file — external server or never started by us.
-		// Can't restart what we don't own. Skip.
-		return nil
+		return fmt.Errorf("connecting to dolt server: %w", err)
 	}
-	lines := strings.SplitN(string(data), "\n", 3)
-	if len(lines) < 2 {
-		return nil
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(lines[0]))
-	if err != nil || pid <= 0 {
-		return nil
-	}
-	dataDir := strings.TrimSpace(lines[1])
+	defer db.Close()
 
-	// Gracefully stop the server with SIGTERM first, then SIGKILL as fallback.
-	// SIGKILL can corrupt the data-dir (locks, WAL), causing the restarted
-	// server to malfunction (bd init --server fails to create schema).
-	_ = syscall.Kill(pid, syscall.SIGTERM)
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("pinging dolt server: %w", err)
+	}
 
-	// Wait up to 5 seconds for graceful shutdown.
-	termDeadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(termDeadline) {
-		if !portReady(500 * time.Millisecond) {
-			break
+	var dropped []string
+
+	// Strategy 1: Drop all visible beads_* databases.
+	rows, err := db.Query("SHOW DATABASES")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] SHOW DATABASES failed: %v\n", err)
+	} else {
+		var allDBs []string
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				continue
+			}
+			allDBs = append(allDBs, name)
+			if strings.HasPrefix(name, "beads_") {
+				if _, err := db.Exec("DROP DATABASE IF EXISTS `" + name + "`"); err != nil {
+					fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] DROP %s failed: %v\n", name, err)
+				} else {
+					dropped = append(dropped, name)
+				}
+			}
 		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	// Force kill if still alive.
-	if portReady(500 * time.Millisecond) {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
-		time.Sleep(time.Second)
+		rows.Close()
+		fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] visible databases: %v\n", allDBs)
 	}
 
-	// Fallback: kill anything listening on the test port. This handles cases
-	// where the PID file is stale or the process forked children.
-	_ = exec.Command("bash", "-c",
-		fmt.Sprintf("fuser -k %s/tcp 2>/dev/null || true", doltTestPort)).Run()
-
-	// Wait for port to become free.
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		if !portReady(500 * time.Millisecond) {
-			break
+	// Strategy 2: Try to DROP known phantom database names from beads_db_init_test.go.
+	// These may be invisible to SHOW DATABASES but still in Dolt's in-memory catalog.
+	knownPrefixes := []string{
+		"existing-prefix", "empty-prefix", "real-prefix",
+		"original-prefix", "reinit-prefix",
+		"myrig", "emptyrig", "mismatchrig", "testrig", "reinitrig",
+		"prefix-test", "no-issues-test", "mismatch-test", "derived-test", "reinit-test",
+	}
+	for _, pfx := range knownPrefixes {
+		name := "beads_" + pfx
+		if _, err := db.Exec("DROP DATABASE IF EXISTS `" + name + "`"); err != nil {
+			fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] DROP phantom %s: %v\n", name, err)
+		} else {
+			dropped = append(dropped, name+"(phantom)")
 		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if portReady(500 * time.Millisecond) {
-		return fmt.Errorf("port %s still in use after killing server", doltTestPort)
 	}
 
-	// Log data-dir contents before cleanup for diagnostics.
-	if dataDir != "" {
-		entries, _ := os.ReadDir(dataDir)
-		var names []string
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		fmt.Fprintf(os.Stderr, "[restartDoltServer] data-dir contents before cleanup: %v\n", names)
+	// Strategy 3: Purge dropped databases from Dolt's catalog.
+	if _, err := db.Exec("CALL dolt_purge_dropped_databases()"); err != nil {
+		fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] purge failed: %v\n", err)
 	}
 
-	// Remove stale beads_* database directories from the data-dir.
-	// This clears phantom references when the server rebuilds its catalog
-	// from disk on restart.
-	var removed []string
-	if dataDir != "" {
-		entries, _ := os.ReadDir(dataDir)
-		for _, e := range entries {
-			if e.IsDir() && strings.HasPrefix(e.Name(), "beads_") {
-				os.RemoveAll(dataDir + "/" + e.Name())
-				removed = append(removed, e.Name())
+	// Strategy 4: Remove beads_* directories from the server's data-dir.
+	// This handles cases where the catalog is rebuilt from disk on next access.
+	data, _ := os.ReadFile(pidFilePath)
+	if data != nil {
+		lines := strings.SplitN(string(data), "\n", 3)
+		if len(lines) >= 2 {
+			dataDir := strings.TrimSpace(lines[1])
+			if dataDir != "" {
+				entries, _ := os.ReadDir(dataDir)
+				for _, e := range entries {
+					if e.IsDir() && strings.HasPrefix(e.Name(), "beads_") {
+						os.RemoveAll(dataDir + "/" + e.Name())
+						dropped = append(dropped, e.Name()+"(disk)")
+					}
+				}
 			}
 		}
 	}
-	fmt.Fprintf(os.Stderr, "[restartDoltServer] removed %d stale databases: %v\n", len(removed), removed)
 
-	// Restart the server with the SAME data-dir (now cleaned).
-	cmd := exec.Command("dolt", "sql-server",
-		"--port", doltTestPort,
-		"--data-dir", dataDir,
-	)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("restarting dolt server: %w", err)
-	}
-
-	// Update PID file for cleanupDoltServer.
-	pidContent := fmt.Sprintf("%d\n%s\n", cmd.Process.Pid, dataDir)
-	if err := os.WriteFile(pidFilePath, []byte(pidContent), 0666); err != nil {
-		cmd.Process.Kill()
-		return fmt.Errorf("writing PID file: %w", err)
-	}
-
-	// Reap in background.
-	go func() { cmd.Wait() }()
-
-	// Wait for server to accept TCP connections.
-	deadline = time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if portReady(time.Second) {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if !portReady(time.Second) {
-		cmd.Process.Kill()
-		os.Remove(pidFilePath)
-		return fmt.Errorf("restarted dolt server did not become ready within 30s")
-	}
-
-	// Verify SQL readiness — TCP accept doesn't guarantee the MySQL protocol
-	// layer is ready.
-	if err := waitForSQLReady(10 * time.Second); err != nil {
-		cmd.Process.Kill()
-		os.Remove(pidFilePath)
-		return fmt.Errorf("restarted server not SQL-ready: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "[restartDoltServer] server ready (pid=%d, data-dir=%s)\n", cmd.Process.Pid, dataDir)
+	fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] cleaned: %v\n", dropped)
 	return nil
-}
-
-// waitForSQLReady polls the Dolt server until it responds to SQL queries
-// and can perform schema operations (CREATE/DROP DATABASE).
-func waitForSQLReady(timeout time.Duration) error {
-	dsn := "root:@tcp(127.0.0.1:" + doltTestPort + ")/"
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		db, err := sql.Open("mysql", dsn)
-		if err != nil {
-			lastErr = err
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-		err = db.Ping()
-		if err != nil {
-			db.Close()
-			lastErr = err
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-		// Verify schema operations work (CREATE DATABASE requires full init).
-		_, err = db.Exec("CREATE DATABASE `__readiness_check`")
-		if err != nil {
-			db.Close()
-			lastErr = fmt.Errorf("CREATE DATABASE failed: %w", err)
-			fmt.Fprintf(os.Stderr, "[waitForSQLReady] CREATE DATABASE failed: %v\n", err)
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-		db.Exec("DROP DATABASE `__readiness_check`")
-		db.Close()
-		return nil
-	}
-	return fmt.Errorf("timeout after %v: %w", timeout, lastErr)
 }
