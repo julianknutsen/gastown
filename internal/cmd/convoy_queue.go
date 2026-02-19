@@ -135,6 +135,7 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 	successCount := 0
 	for _, c := range candidates {
 		err := enqueueBead(c.ID, rigName, EnqueueOptions{
+			Formula:  "mol-polecat-work",
 			NoConvoy: true, // Already tracked by this convoy
 			Force:    convoyQueueForce,
 		})

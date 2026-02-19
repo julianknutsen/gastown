@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -151,7 +152,12 @@ func ParseQueueMetadata(description string) *QueueMetadata {
 		case "owned":
 			m.Owned = val == "true"
 		case "dispatch_failures":
-			fmt.Sscanf(val, "%d", &m.DispatchFailures)
+			if n, err := strconv.Atoi(val); err == nil {
+				m.DispatchFailures = n
+			}
+			// On parse error, DispatchFailures stays 0. The gt:dispatch-failed
+			// label (added when counter hits max) acts as an independent guard
+			// since quarantine also removes gt:queued.
 		case "last_failure":
 			m.LastFailure = val
 		}

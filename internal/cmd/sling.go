@@ -347,9 +347,8 @@ func runSling(cmd *cobra.Command, args []string) error {
 			// Not a verified bead - try as standalone formula
 			if err := verifyFormulaExists(firstArg); err == nil {
 				// Standalone formula mode: gt sling <formula> [target]
-				if slingQueue {
-					return fmt.Errorf("standalone formula cannot be queued (use --on <bead>)")
-				}
+				// Note: --queue is already caught by the catch-all guard above,
+				// so no slingQueue check needed here.
 				return runSlingFormula(args)
 			}
 			// Not a formula either - check if it looks like a bead ID (routing issue workaround).

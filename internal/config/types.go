@@ -199,8 +199,9 @@ type WorkQueueConfig struct {
 	MaxPolecats *int `json:"max_polecats,omitempty"`
 
 	// BatchSize is the number of beads to dispatch per heartbeat tick.
-	// Limits spawn rate per 3-minute cycle. Default: 3.
-	BatchSize int `json:"batch_size,omitempty"`
+	// Limits spawn rate per 3-minute cycle.
+	// nil/absent = default (3). Explicit 0 is rejected by config setter.
+	BatchSize *int `json:"batch_size,omitempty"`
 
 	// SpawnDelay is the delay between spawns to prevent Dolt lock contention.
 	// Default: "2s".
@@ -210,10 +211,11 @@ type WorkQueueConfig struct {
 // DefaultWorkQueueConfig returns a WorkQueueConfig with sensible defaults.
 func DefaultWorkQueueConfig() *WorkQueueConfig {
 	defaultMax := 10
+	defaultBatch := 3
 	return &WorkQueueConfig{
 		Enabled:     false,
 		MaxPolecats: &defaultMax,
-		BatchSize:   3,
+		BatchSize:   &defaultBatch,
 		SpawnDelay:  "2s",
 	}
 }
@@ -229,10 +231,10 @@ func (c *WorkQueueConfig) GetMaxPolecats() int {
 
 // GetBatchSize returns BatchSize or the default (3) if unset.
 func (c *WorkQueueConfig) GetBatchSize() int {
-	if c == nil || c.BatchSize == 0 {
+	if c == nil || c.BatchSize == nil {
 		return 3
 	}
-	return c.BatchSize
+	return *c.BatchSize
 }
 
 // GetSpawnDelay returns SpawnDelay as a duration, defaulting to 2s.
