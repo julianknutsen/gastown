@@ -36,8 +36,8 @@ dispatch when their blockers resolve.
 Queue work:
   gt sling gt-abc gastown --queue         # Queue single bead
   gt sling gt-abc gt-def gastown --queue  # Queue batch
-  gt convoy queue hq-cv-abc gastown       # Queue convoy's issues
-  gt queue epic gt-epic-123 gastown       # Queue epic's children
+  gt convoy queue hq-cv-abc               # Queue convoy's issues (auto-resolve rigs)
+  gt queue epic gt-epic-123               # Queue epic's children (auto-resolve rigs)
 
 Manage queue:
   gt queue status                         # Show queue state
