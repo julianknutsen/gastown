@@ -27,6 +27,7 @@ type EnqueueOptions struct {
 	Account     string   // Claude Code account handle
 	Agent       string   // Agent override (e.g., "gemini", "codex")
 	HookRawBead bool     // Hook raw bead without default formula
+	Ralph       bool     // Ralph Wiggum loop mode
 }
 
 const (
@@ -140,6 +141,9 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		meta.Agent = opts.Agent
 	}
 	meta.HookRawBead = opts.HookRawBead
+	if opts.Ralph {
+		meta.Mode = "ralph"
+	}
 	// NoBoot is intentionally NOT stored in queue metadata. Dispatch always
 	// sets NoBoot=true to avoid lock contention in the daemon dispatch loop.
 	// Storing it would be dead code that creates false contract signaling.
@@ -257,6 +261,7 @@ func runBatchEnqueue(beadIDs []string, rigName string) error {
 			Account:     slingAccount,
 			Agent:       slingAgent,
 			HookRawBead: slingHookRawBead,
+			Ralph:       slingRalph,
 		})
 		if err != nil {
 			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), beadID, err)
@@ -269,12 +274,41 @@ func runBatchEnqueue(beadIDs []string, rigName string) error {
 	return nil
 }
 
-// dequeueBeadLabels removes the gt:queued label from a bead (claim for dispatch).
-// Uses resolveBeadDir for CWD so rig-scoped beads are found correctly.
+// dequeueBeadLabels removes the gt:queued label and strips queue metadata from
+// a bead. If metadata stripping fails (e.g., getBeadInfo error), falls back to
+// label-only removal to avoid blocking queue clear operations.
 func dequeueBeadLabels(beadID string) error {
+	beadDir := resolveBeadDir(beadID)
+
+	// Try to strip queue metadata from description.
+	// Best-effort: if we can't read the bead, still remove the label.
+	info, err := getBeadInfo(beadID)
+	if err == nil {
+		stripped := StripQueueMetadata(info.Description)
+		if stripped != info.Description {
+			// Combine metadata strip + label removal in a single bd update
+			cmd := exec.Command("bd", "update", beadID,
+				"--description="+stripped,
+				"--remove-label="+LabelQueued)
+			cmd.Dir = beadDir
+			return cmd.Run()
+		}
+	}
+
+	// Fallback: label-only removal (no metadata to strip, or couldn't read bead)
 	cmd := exec.Command("bd", "update", beadID, "--remove-label="+LabelQueued)
-	cmd.Dir = resolveBeadDir(beadID)
+	cmd.Dir = beadDir
 	return cmd.Run()
+}
+
+// resolveRigForBead determines the rig that owns a bead from its ID prefix.
+// Returns empty string for town-root beads or unknown prefixes.
+func resolveRigForBead(townRoot, beadID string) string {
+	prefix := beads.ExtractPrefix(beadID)
+	if prefix == "" {
+		return ""
+	}
+	return beads.GetRigNameForPrefix(townRoot, prefix)
 }
 
 // hasQueuedLabel checks if a bead has the gt:queued label.

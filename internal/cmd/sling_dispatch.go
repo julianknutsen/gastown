@@ -34,6 +34,7 @@ type SlingParams struct {
 	Force      bool     // --force
 	HookRawBead bool    // --hook-raw-bead
 	NoBoot     bool     // --no-boot
+	Mode       string   // --ralph: "" (normal) or "ralph"
 
 	// Execution behavior (set by caller, not serialized to queue)
 	SkipCook         bool   // Batch optimization: formula already cooked
@@ -271,16 +272,22 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	// 9. Update agent hook_bead state
 	updateAgentHookBead(targetAgent, beadToHook, hookWorkDir, beadsDir)
 
-	// 10. Store fields in bead (dispatcher, args, attached_molecule, no_merge)
+	// 10. Store fields in bead (dispatcher, args, attached_molecule, no_merge, mode)
 	fieldUpdates := beadFieldUpdates{
 		Dispatcher:       actor,
 		Args:             params.Args,
 		AttachedMolecule: attachedMoleculeID,
 		NoMerge:          params.NoMerge,
+		Mode:             params.Mode,
 	}
 	// Use beadToHook for the update target (may differ from beadID when formula-on-bead)
 	if err := storeFieldsInBead(beadToHook, fieldUpdates); err != nil {
 		fmt.Printf("  %s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), err)
+	}
+
+	// Update agent bead mode (for stuck detector to identify ralphcats)
+	if params.Mode != "" {
+		updateAgentMode(targetAgent, params.Mode, hookWorkDir, beadsDir)
 	}
 
 	// 11. Create Dolt branch AFTER all sling writes are complete.

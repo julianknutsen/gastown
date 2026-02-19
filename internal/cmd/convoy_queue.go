@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -15,9 +16,12 @@ var (
 )
 
 var convoyQueueCmd = &cobra.Command{
-	Use:   "queue <convoy-id> <rig>",
+	Use:   "queue <convoy-id>",
 	Short: "Queue all open tracked issues for deferred dispatch",
 	Long: `Queue all open issues tracked by a convoy for capacity-controlled dispatch.
+
+Each issue's target rig is auto-resolved from its bead ID prefix. Town-root
+beads (hq-*) are skipped since they are not dispatchable work.
 
 ALL open issues are queued, including blocked ones. Blocked beads wait in
 the queue and automatically dispatch when their blockers resolve (bd ready
@@ -26,9 +30,9 @@ filters them at dispatch time).
 Issues that are already queued, closed, or assigned are skipped.
 
 Examples:
-  gt convoy queue hq-cv-abc gastown           # Queue all open issues to gastown
-  gt convoy queue hq-cv-abc gastown --dry-run # Preview what would be queued`,
-	Args: cobra.ExactArgs(2),
+  gt convoy queue hq-cv-abc           # Queue all open issues (auto-resolve rigs)
+  gt convoy queue hq-cv-abc --dry-run # Preview what would be queued`,
+	Args: cobra.ExactArgs(1),
 	RunE: runConvoyQueue,
 }
 
@@ -41,16 +45,10 @@ func init() {
 
 func runConvoyQueue(cmd *cobra.Command, args []string) error {
 	convoyID := args[0]
-	rigName := args[1]
 
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return err
-	}
-
-	// Validate rig exists
-	if _, isRig := IsRigName(rigName); !isRig {
-		return fmt.Errorf("'%s' is not a known rig", rigName)
 	}
 
 	// Validate convoy exists
@@ -72,13 +70,15 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 
 	// Filter to queueable issues
 	type queueCandidate struct {
-		ID    string
-		Title string
+		ID      string
+		Title   string
+		RigName string
 	}
 	var candidates []queueCandidate
 	skippedClosed := 0
 	skippedAssigned := 0
 	skippedQueued := 0
+	skippedNoRig := 0
 
 	for _, t := range tracked {
 		// Skip closed issues
@@ -104,37 +104,48 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		candidates = append(candidates, queueCandidate{ID: t.ID, Title: t.Title})
+		// Resolve rig from bead prefix
+		rigName := resolveRigForBead(townRoot, t.ID)
+		if rigName == "" {
+			skippedNoRig++
+			prefix := beads.ExtractPrefix(t.ID)
+			fmt.Printf("  %s %s: cannot resolve rig from prefix %q (town-root or unknown)\n",
+				style.Dim.Render("○"), t.ID, prefix)
+			continue
+		}
+
+		candidates = append(candidates, queueCandidate{ID: t.ID, Title: t.Title, RigName: rigName})
 	}
 
 	if len(candidates) == 0 {
 		fmt.Printf("No issues to queue from convoy %s", convoyID)
-		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 {
-			fmt.Printf(" (%d closed, %d assigned, %d already queued)", skippedClosed, skippedAssigned, skippedQueued)
+		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
+			fmt.Printf(" (%d closed, %d assigned, %d already queued, %d no rig)",
+				skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
 		}
 		fmt.Println()
 		return nil
 	}
 
 	if convoyQueueDryRun {
-		fmt.Printf("%s Would queue %d issue(s) from convoy %s → %s:\n",
-			style.Bold.Render("📋"), len(candidates), convoyID, rigName)
+		fmt.Printf("%s Would queue %d issue(s) from convoy %s:\n",
+			style.Bold.Render("📋"), len(candidates), convoyID)
 		for _, c := range candidates {
-			fmt.Printf("  Would queue: %s (%s)\n", c.ID, c.Title)
+			fmt.Printf("  Would queue: %s → %s (%s)\n", c.ID, c.RigName, c.Title)
 		}
-		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 {
-			fmt.Printf("\nSkipped: %d closed, %d assigned, %d already queued\n",
-				skippedClosed, skippedAssigned, skippedQueued)
+		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
+			fmt.Printf("\nSkipped: %d closed, %d assigned, %d already queued, %d no rig\n",
+				skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
 		}
 		return nil
 	}
 
-	fmt.Printf("%s Queuing %d issue(s) from convoy %s → %s...\n",
-		style.Bold.Render("📋"), len(candidates), convoyID, rigName)
+	fmt.Printf("%s Queuing %d issue(s) from convoy %s...\n",
+		style.Bold.Render("📋"), len(candidates), convoyID)
 
 	successCount := 0
 	for _, c := range candidates {
-		err := enqueueBead(c.ID, rigName, EnqueueOptions{
+		err := enqueueBead(c.ID, c.RigName, EnqueueOptions{
 			Formula:  "mol-polecat-work",
 			NoConvoy: true, // Already tracked by this convoy
 			Force:    convoyQueueForce,
@@ -148,9 +159,9 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\n%s Queued %d/%d issue(s) from convoy %s\n",
 		style.Bold.Render("📊"), successCount, len(candidates), convoyID)
-	if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 {
-		fmt.Printf("  Skipped: %d closed, %d assigned, %d already queued\n",
-			skippedClosed, skippedAssigned, skippedQueued)
+	if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
+		fmt.Printf("  Skipped: %d closed, %d assigned, %d already queued, %d no rig\n",
+			skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
 	}
 
 	return nil

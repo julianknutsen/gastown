@@ -75,6 +75,11 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 	results := make([]batchResult, 0, len(beadIDs))
 	activeCount := 0 // Track active spawns for --max-concurrent throttling
 
+	var slingMode string
+	if slingRalph {
+		slingMode = "ralph"
+	}
+
 	// Dispatch each bead via executeSling
 	for i, beadID := range beadIDs {
 		// Admission control: throttle spawns when --max-concurrent is set
@@ -111,6 +116,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			Force:            slingForce,
 			HookRawBead:      slingHookRawBead,
 			NoBoot:           slingNoBoot,
+			Mode:             slingMode,
 			SkipCook:         formulaCooked,
 			FormulaFailFatal: false, // Batch: warn + hook raw on formula failure
 			CallerContext:    "batch-sling",

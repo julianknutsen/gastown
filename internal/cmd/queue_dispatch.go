@@ -330,6 +330,7 @@ func dispatchSingleBead(b readyQueuedBead, townRoot, actor string) error {
 		params.Account = meta.Account
 		params.Agent = meta.Agent
 		params.HookRawBead = meta.HookRawBead
+		params.Mode = meta.Mode
 	}
 
 	// Dispatch via unified executeSling

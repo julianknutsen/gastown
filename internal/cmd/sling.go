@@ -274,6 +274,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 			Account:     slingAccount,
 			Agent:       slingAgent,
 			HookRawBead: slingHookRawBead,
+			Ralph:       slingRalph,
 		})
 	}
 
@@ -310,6 +311,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 			Account:     slingAccount,
 			Agent:       slingAgent,
 			HookRawBead: slingHookRawBead,
+			Ralph:       slingRalph,
 		})
 	}
 
