@@ -174,16 +174,12 @@ func runUp(cmd *cobra.Command, args []string) error {
 			doltSkipped = true
 			return
 		}
-		running, _, _ := doltserver.IsRunning(townRoot)
-		if running {
-			doltOK = true
-			doltDetail = "already running"
-			return
-		}
-		if err := doltserver.Start(townRoot); err != nil {
-			doltDetail = err.Error()
-		} else {
-			doltOK = true
+		doltOK, doltDetail = ensureDoltReady(
+			func() (bool, int, error) { return doltserver.IsRunning(townRoot) },
+			func() error { return doltserver.CheckServerReachable(townRoot) },
+			func() error { return doltserver.Start(townRoot) },
+		)
+		if doltOK && doltDetail == "" {
 			doltDetail = fmt.Sprintf("started (port %d)", doltserver.DefaultPort)
 		}
 	}()
@@ -849,4 +845,41 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 	}
 
 	return started, errors
+}
+
+// ensureDoltReady checks that the Dolt server is both alive AND accepting
+// connections. When the process is alive but the port isn't ready yet (e.g.,
+// server was just started by gt daemon), it retries with backoff.
+//
+// The function accepts dependency-injected callbacks so it can be unit tested
+// without a real Dolt server.
+func ensureDoltReady(
+	isRunning func() (bool, int, error),
+	checkReachable func() error,
+	startServer func() error,
+) (ok bool, detail string) {
+	running, _, _ := isRunning()
+	if running {
+		// Process is alive — verify port is actually accepting connections.
+		// This fixes the race where Dolt was just started (e.g., by gt daemon)
+		// and the PID exists but the port hasn't bound yet.
+		const maxAttempts = 10
+		const retryDelay = 500 * time.Millisecond
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			if err := checkReachable(); err == nil {
+				return true, "already running"
+			}
+			if attempt < maxAttempts-1 {
+				time.Sleep(retryDelay)
+			}
+		}
+		// Exhausted retries — process alive but port never came up
+		return false, "Dolt process running but not accepting connections after 5s"
+	}
+
+	// Not running — start it
+	if err := startServer(); err != nil {
+		return false, err.Error()
+	}
+	return true, ""
 }
