@@ -167,6 +167,27 @@ func TriggerPendingSpawns(townRoot string, timeout time.Duration) ([]TriggerResu
 	return results, nil
 }
 
+// ClearPendingSpawn archives the POLECAT_STARTED message for a specific session,
+// removing it from the pending list. Used by the Deacon after observing that a
+// session has been triggered via AI-based observation.
+func ClearPendingSpawn(townRoot, sessionName string) error {
+	pending, err := CheckInboxForSpawns(townRoot)
+	if err != nil {
+		return fmt.Errorf("checking inbox: %w", err)
+	}
+
+	for _, ps := range pending {
+		if ps.Session == sessionName {
+			if ps.mailbox != nil {
+				return ps.mailbox.Archive(ps.MailID)
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("no pending spawn found for session: %s", sessionName)
+}
+
 // PruneStalePending archives POLECAT_STARTED messages older than the given age.
 // Old spawns likely had their sessions die without triggering.
 func PruneStalePending(townRoot string, maxAge time.Duration) (int, error) {
