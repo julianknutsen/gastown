@@ -841,6 +841,14 @@ func (r *Router) validateRecipient(identity string) error {
 		return nil
 	}
 
+	// Town-level agents (mayor/, deacon/) are well-known infrastructure agents
+	// that should always be valid recipients, even if no agent bead exists yet.
+	// This matches isTownLevelAddress and prevents failures when agents haven't
+	// registered their beads (e.g., gt compact report sending to deacon/).
+	if isTownLevelAddress(identity) {
+		return nil
+	}
+
 	// Query agents from town-level beads
 	agents := r.queryAgents("")
 
