@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func hasTmux() bool {
@@ -319,74 +320,102 @@ func TestIsAgentRunning(t *testing.T) {
 	}
 
 	tm := NewTmux()
-	sessionName := "gt-test-agent-" + t.Name()
 
-	// Clean up any existing session
-	_ = tm.KillSession(sessionName)
+	// Use NewSessionWithCommand with deterministic processes to avoid a
+	// TOCTOU race: the default shell's init scripts (.zshrc) can briefly
+	// change the pane's foreground process (e.g., grep during sourcing),
+	// causing IsAgentRunning's internal GetPaneCommand to see a different
+	// command than what the test captured.
 
-	// Create session (will run default shell)
-	if err := tm.NewSession(sessionName, ""); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
-	defer func() { _ = tm.KillSession(sessionName) }()
+	t.Run("known_command", func(t *testing.T) {
+		sessionName := "gt-test-agent-cmd"
+		_ = tm.KillSession(sessionName)
 
-	// Get the current pane command (should be bash/zsh/etc)
-	cmd, err := tm.GetPaneCommand(sessionName)
-	if err != nil {
-		t.Fatalf("GetPaneCommand: %v", err)
-	}
+		// Start a deterministic long-running process — no shell init race.
+		if err := tm.NewSessionWithCommand(sessionName, "", "sleep 300"); err != nil {
+			t.Fatalf("NewSessionWithCommand: %v", err)
+		}
+		defer func() { _ = tm.KillSession(sessionName) }()
 
-	tests := []struct {
-		name         string
-		processNames []string
-		wantRunning  bool
-	}{
-		{
-			name:         "empty process list",
-			processNames: []string{},
-			wantRunning:  false,
-		},
-		{
-			name:         "matching shell process",
-			processNames: []string{cmd}, // Current shell
-			wantRunning:  true,
-		},
-		{
-			name:         "claude agent (node) - not running",
-			processNames: []string{"node"},
-			wantRunning:  cmd == "node", // Only true if shell happens to be node
-		},
-		{
-			name:         "gemini agent - not running",
-			processNames: []string{"gemini"},
-			wantRunning:  cmd == "gemini",
-		},
-		{
-			name:         "cursor agent - not running",
-			processNames: []string{"cursor-agent"},
-			wantRunning:  cmd == "cursor-agent",
-		},
-		{
-			name:         "multiple process names with match",
-			processNames: []string{"nonexistent", cmd, "also-nonexistent"},
-			wantRunning:  true,
-		},
-		{
-			name:         "multiple process names without match",
-			processNames: []string{"nonexistent1", "nonexistent2"},
-			wantRunning:  false,
-		},
-	}
+		// Brief wait for process to start.
+		time.Sleep(100 * time.Millisecond)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tm.IsAgentRunning(sessionName, tt.processNames...)
-			if got != tt.wantRunning {
-				t.Errorf("IsAgentRunning(%q, %v) = %v, want %v (current cmd: %q)",
-					sessionName, tt.processNames, got, tt.wantRunning, cmd)
+		cmd, err := tm.GetPaneCommand(sessionName)
+		if err != nil {
+			t.Fatalf("GetPaneCommand: %v", err)
+		}
+		if cmd != "sleep" {
+			t.Fatalf("expected pane command 'sleep', got %q", cmd)
+		}
+
+		t.Run("matching_process", func(t *testing.T) {
+			if !tm.IsAgentRunning(sessionName, "sleep") {
+				t.Error("IsAgentRunning should return true when process matches")
 			}
 		})
-	}
+
+		t.Run("non_matching_process", func(t *testing.T) {
+			if tm.IsAgentRunning(sessionName, "node") {
+				t.Error("IsAgentRunning should return false when process doesn't match")
+			}
+		})
+
+		t.Run("multiple_with_match", func(t *testing.T) {
+			if !tm.IsAgentRunning(sessionName, "nonexistent", "sleep", "also-nonexistent") {
+				t.Error("IsAgentRunning should return true when one of multiple processes matches")
+			}
+		})
+
+		t.Run("multiple_without_match", func(t *testing.T) {
+			if tm.IsAgentRunning(sessionName, "nonexistent1", "nonexistent2") {
+				t.Error("IsAgentRunning should return false when no process matches")
+			}
+		})
+
+		t.Run("empty_list_non_shell_process", func(t *testing.T) {
+			// sleep is not a shell, so the fallback detects it as "agent running".
+			if !tm.IsAgentRunning(sessionName) {
+				t.Error("IsAgentRunning with no args should return true for non-shell process")
+			}
+		})
+
+		t.Run("empty_string_in_list_ignored", func(t *testing.T) {
+			// Empty strings in the process list should be skipped.
+			if tm.IsAgentRunning(sessionName, "", "") {
+				t.Error("IsAgentRunning should return false when all process names are empty")
+			}
+		})
+	})
+
+	t.Run("shell_session", func(t *testing.T) {
+		sessionName := "gt-test-agent-sh"
+		_ = tm.KillSession(sessionName)
+
+		// Use sh directly — minimal init, no .zshrc race.
+		if err := tm.NewSessionWithCommand(sessionName, "", "sh"); err != nil {
+			t.Fatalf("NewSessionWithCommand: %v", err)
+		}
+		defer func() { _ = tm.KillSession(sessionName) }()
+
+		time.Sleep(100 * time.Millisecond)
+
+		t.Run("empty_list_shell_process", func(t *testing.T) {
+			// sh is a supported shell, so IsAgentRunning with no args should
+			// return false (shell = no agent running).
+			if tm.IsAgentRunning(sessionName) {
+				cmd, _ := tm.GetPaneCommand(sessionName)
+				t.Errorf("IsAgentRunning with no args should return false for shell session (cmd: %q)", cmd)
+			}
+		})
+
+		t.Run("matching_shell_by_name", func(t *testing.T) {
+			// Explicitly matching the shell name should return true.
+			if !tm.IsAgentRunning(sessionName, "sh") {
+				cmd, _ := tm.GetPaneCommand(sessionName)
+				t.Errorf("IsAgentRunning('sh') should return true when shell matches (cmd: %q)", cmd)
+			}
+		})
+	})
 }
 
 func TestIsAgentRunning_NonexistentSession(t *testing.T) {
