@@ -113,10 +113,14 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	t := tmux.NewTmux()
 	sessionID := m.SessionName()
 
+	// Resolve expected pane commands for the configured agent (supports non-Claude agents).
+	// Without this, IsClaudeRunning would misidentify non-Claude agents as dead (gt-nwgd5).
+	townRoot := filepath.Dir(m.rig.Path)
+	expectedCmds := config.RoleExpectedPaneCommands("refinery", townRoot, m.rig.Path, agentOverride)
+
 	if foreground {
 		// In foreground mode, check tmux session (no PID inference per ZFC)
-		// Use IsClaudeRunning for robust detection (see gastown#566)
-		if running, _ := t.HasSession(sessionID); running && t.IsClaudeRunning(sessionID) {
+		if running, _ := t.HasSession(sessionID); running && t.IsConfiguredAgentRunning(sessionID, expectedCmds) {
 			return ErrAlreadyRunning
 		}
 
@@ -137,12 +141,9 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	// Background mode: check if session already exists
 	running, _ := t.HasSession(sessionID)
 	if running {
-		// Session exists - check if Claude is actually running (healthy vs zombie)
-		// Use IsClaudeRunning for robust detection: Claude can report as "node", "claude",
-		// or version number like "2.0.76". IsAgentRunning with just "node" was too strict
-		// and caused healthy sessions to be killed. See: gastown#566
-		if t.IsClaudeRunning(sessionID) {
-			// Healthy - Claude is running
+		// Session exists - check if agent is actually running (healthy vs zombie)
+		if t.IsConfiguredAgentRunning(sessionID, expectedCmds) {
+			// Healthy - agent is running
 			return ErrAlreadyRunning
 		}
 		// Zombie - tmux alive but Claude dead. Kill and recreate.
@@ -174,7 +175,6 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	}
 
 	// Build startup command first
-	townRoot := filepath.Dir(m.rig.Path)
 	var command string
 	if agentOverride != "" {
 		var err error

@@ -432,6 +432,50 @@ func TestIsAgentRunning_NonexistentSession(t *testing.T) {
 	}
 }
 
+func TestIsConfiguredAgentRunning(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+
+	t.Run("matches expected pane commands", func(t *testing.T) {
+		sessionName := "gt-test-configured-agent"
+		_ = tm.KillSession(sessionName)
+		if err := tm.NewSessionWithCommand(sessionName, "", "sleep 300"); err != nil {
+			t.Fatalf("NewSessionWithCommand: %v", err)
+		}
+		defer func() { _ = tm.KillSession(sessionName) }()
+		time.Sleep(100 * time.Millisecond)
+
+		// Should match when expected commands include "sleep"
+		if !tm.IsConfiguredAgentRunning(sessionName, []string{"sleep"}) {
+			t.Error("IsConfiguredAgentRunning should return true when pane command matches expected")
+		}
+
+		// Should not match when expected commands don't include "sleep"
+		if tm.IsConfiguredAgentRunning(sessionName, []string{"codex", "gemini"}) {
+			t.Error("IsConfiguredAgentRunning should return false when pane command doesn't match expected")
+		}
+	})
+
+	t.Run("empty commands falls back to IsClaudeRunning", func(t *testing.T) {
+		sessionName := "gt-test-configured-agent-fallback"
+		_ = tm.KillSession(sessionName)
+		// Start a shell session - IsClaudeRunning should return false for a shell
+		if err := tm.NewSessionWithCommand(sessionName, "", "sh"); err != nil {
+			t.Fatalf("NewSessionWithCommand: %v", err)
+		}
+		defer func() { _ = tm.KillSession(sessionName) }()
+		time.Sleep(100 * time.Millisecond)
+
+		// With empty commands, falls back to IsClaudeRunning which returns false for shell
+		if tm.IsConfiguredAgentRunning(sessionName, nil) {
+			t.Error("IsConfiguredAgentRunning with nil commands should fall back to IsClaudeRunning")
+		}
+	})
+}
+
 func TestIsClaudeRunning(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not installed")

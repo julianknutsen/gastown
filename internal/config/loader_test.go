@@ -1444,6 +1444,51 @@ func TestExpectedPaneCommands(t *testing.T) {
 	})
 }
 
+func TestRoleExpectedPaneCommands(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default claude returns node", func(t *testing.T) {
+		t.Parallel()
+		// With no rig/town config, falls back to Claude (default)
+		dir := t.TempDir()
+		got := RoleExpectedPaneCommands("witness", dir, "", "")
+		if len(got) != 1 || got[0] != "node" {
+			t.Fatalf("RoleExpectedPaneCommands(witness, default) = %v, want [node]", got)
+		}
+	})
+
+	t.Run("agent override codex returns codex", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		// Create minimal town settings with codex agent
+		townSettingsDir := filepath.Join(dir, "mayor", "settings")
+		if err := os.MkdirAll(townSettingsDir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		ts := NewTownSettings()
+		ts.Agents = map[string]*RuntimeConfig{
+			"codex": {Command: "codex"},
+		}
+		if err := SaveTownSettings(TownSettingsPath(dir), ts); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		got := RoleExpectedPaneCommands("witness", dir, "", "codex")
+		if len(got) != 1 || got[0] != "codex" {
+			t.Fatalf("RoleExpectedPaneCommands(witness, codex override) = %v, want [codex]", got)
+		}
+	})
+
+	t.Run("invalid agent override falls back to role config", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		got := RoleExpectedPaneCommands("refinery", dir, "", "nonexistent-agent")
+		// Should fall back to default Claude
+		if len(got) != 1 || got[0] != "node" {
+			t.Fatalf("RoleExpectedPaneCommands(refinery, bad override) = %v, want [node]", got)
+		}
+	})
+}
+
 func TestLoadRuntimeConfigFromSettings(t *testing.T) {
 	t.Parallel()
 	// Create temp rig with custom runtime config

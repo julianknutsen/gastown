@@ -458,6 +458,11 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 	t := tmux.NewTmux()
 	sessionID := m.SessionName(name)
 
+	// Resolve expected pane commands for the configured agent (supports non-Claude agents).
+	// Without this, IsClaudeRunning would misidentify non-Claude agents as dead (gt-nwgd5).
+	townRoot := filepath.Dir(m.rig.Path)
+	expectedCmds := config.RoleExpectedPaneCommands("crew", townRoot, m.rig.Path, opts.AgentOverride)
+
 	// Check if session already exists
 	running, err := t.HasSession(sessionID)
 	if err != nil {
@@ -470,8 +475,8 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 				return fmt.Errorf("killing existing session: %w", err)
 			}
 		} else {
-			// Normal start - session exists, check if Claude is actually running
-			if t.IsClaudeRunning(sessionID) {
+			// Normal start - session exists, check if agent is actually running
+			if t.IsConfiguredAgentRunning(sessionID, expectedCmds) {
 				return fmt.Errorf("%w: %s", ErrSessionRunning, sessionID)
 			}
 			// Zombie session - kill and recreate
@@ -522,7 +527,6 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 
 	// Set environment variables (non-fatal: session works without these)
 	// Use centralized AgentEnv for consistency across all role startup paths
-	townRoot := filepath.Dir(m.rig.Path)
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:             "crew",
 		Rig:              m.rig.Name,

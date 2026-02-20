@@ -895,6 +895,18 @@ func (t *Tmux) IsRuntimeRunning(session string, processNames []string) bool {
 	return false
 }
 
+// IsConfiguredAgentRunning checks if the configured agent is running in a session.
+// expectedPaneCommands should come from config.ExpectedPaneCommands or
+// config.RoleExpectedPaneCommands. When commands are specified, uses IsAgentRunning
+// for precise matching. Falls back to IsClaudeRunning when no commands are
+// specified (backward compat with default Claude).
+func (t *Tmux) IsConfiguredAgentRunning(session string, expectedPaneCommands []string) bool {
+	if len(expectedPaneCommands) > 0 {
+		return t.IsAgentRunning(session, expectedPaneCommands...)
+	}
+	return t.IsClaudeRunning(session)
+}
+
 // WaitForCommand polls until the pane is NOT running one of the excluded commands.
 // Useful for waiting until a shell has started a new process (e.g., claude).
 // Returns nil when a non-excluded command is detected, or error on timeout.

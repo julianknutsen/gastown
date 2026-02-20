@@ -1472,6 +1472,24 @@ func ExpectedPaneCommands(rc *RuntimeConfig) []string {
 	return []string{filepath.Base(rc.Command)}
 }
 
+// RoleExpectedPaneCommands resolves the expected pane commands for a role's agent.
+// When agentOverride is specified, uses that; otherwise resolves from role config.
+// Returns nil only if no agent config could be resolved.
+func RoleExpectedPaneCommands(role, townRoot, rigPath, agentOverride string) []string {
+	var rc *RuntimeConfig
+	if agentOverride != "" {
+		var err error
+		rc, _, err = ResolveAgentConfigWithOverride(townRoot, rigPath, agentOverride)
+		if err != nil {
+			rc = nil
+		}
+	}
+	if rc == nil {
+		rc = ResolveRoleAgentConfig(role, townRoot, rigPath)
+	}
+	return ExpectedPaneCommands(rc)
+}
+
 // GetDefaultFormula returns the default formula for a rig from settings/config.json.
 // Returns empty string if no default is configured.
 // rigPath is the path to the rig directory (e.g., ~/gt/gastown).

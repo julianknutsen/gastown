@@ -111,10 +111,15 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 	t := tmux.NewTmux()
 	sessionID := m.SessionName()
 
+	// Resolve expected pane commands for the configured agent (supports non-Claude agents).
+	// Without this, IsClaudeRunning would misidentify non-Claude agents as dead (gt-nwgd5).
+	townRoot := m.townRoot()
+	expectedCmds := config.RoleExpectedPaneCommands("witness", townRoot, m.rig.Path, agentOverride)
+
 	if foreground {
 		// Foreground mode is deprecated - patrol logic moved to mol-witness-patrol
 		// Just check tmux session (no PID inference per ZFC)
-		if running, _ := t.HasSession(sessionID); running && t.IsClaudeRunning(sessionID) {
+		if running, _ := t.HasSession(sessionID); running && t.IsConfiguredAgentRunning(sessionID, expectedCmds) {
 			return ErrAlreadyRunning
 		}
 
@@ -130,9 +135,9 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 	// Background mode: check if session already exists
 	running, _ := t.HasSession(sessionID)
 	if running {
-		// Session exists - check if Claude is actually running (healthy vs zombie)
-		if t.IsClaudeRunning(sessionID) {
-			// Healthy - Claude is running
+		// Session exists - check if agent is actually running (healthy vs zombie)
+		if t.IsConfiguredAgentRunning(sessionID, expectedCmds) {
+			// Healthy - agent is running
 			return ErrAlreadyRunning
 		}
 		// Zombie - tmux alive but Claude dead. Kill and recreate.
@@ -157,8 +162,6 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 	if err != nil {
 		return err
 	}
-
-	townRoot := m.townRoot()
 
 	// Build startup command first
 	// NOTE: No gt prime injection needed - SessionStart hook handles it automatically

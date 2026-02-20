@@ -817,6 +817,10 @@ func (d *Daemon) checkRigGUPPViolations(rigName string) {
 		return
 	}
 
+	// Resolve expected pane commands for the configured polecat agent (gt-nwgd5).
+	rigPath := filepath.Join(d.config.TownRoot, rigName)
+	expectedCmds := config.RoleExpectedPaneCommands("polecat", d.config.TownRoot, rigPath, "")
+
 	// Use the rig's configured prefix (e.g., "gt" for gastown, "bd" for beads)
 	rigPrefix := config.GetRigPrefix(d.config.TownRoot, rigName)
 	// Pattern: <prefix>-<rig>-polecat-<name>
@@ -838,8 +842,8 @@ func (d *Daemon) checkRigGUPPViolations(rigName string) {
 		polecatName := strings.TrimPrefix(agent.ID, prefix)
 		sessionName := fmt.Sprintf("gt-%s-%s", rigName, polecatName)
 
-		// Check if tmux session exists and Claude is running
-		if d.tmux.IsClaudeRunning(sessionName) {
+		// Check if tmux session exists and agent is running
+		if d.tmux.IsConfiguredAgentRunning(sessionName, expectedCmds) {
 			// Session is alive - check if it's been stuck too long
 			updatedAt, err := time.Parse(time.RFC3339, agent.UpdatedAt)
 			if err != nil {
@@ -911,6 +915,10 @@ func (d *Daemon) checkRigOrphanedWork(rigName string) {
 		return
 	}
 
+	// Resolve expected pane commands for the configured polecat agent (gt-nwgd5).
+	rigPath := filepath.Join(d.config.TownRoot, rigName)
+	expectedCmds := config.RoleExpectedPaneCommands("polecat", d.config.TownRoot, rigPath, "")
+
 	// Use the rig's configured prefix (e.g., "gt" for gastown, "bd" for beads)
 	rigPrefix := config.GetRigPrefix(d.config.TownRoot, rigName)
 	// Pattern: <prefix>-<rig>-polecat-<name>
@@ -931,7 +939,7 @@ func (d *Daemon) checkRigOrphanedWork(rigName string) {
 		sessionName := fmt.Sprintf("gt-%s-%s", rigName, polecatName)
 
 		// Session running = not orphaned (work is being processed)
-		if d.tmux.IsClaudeRunning(sessionName) {
+		if d.tmux.IsConfiguredAgentRunning(sessionName, expectedCmds) {
 			continue
 		}
 

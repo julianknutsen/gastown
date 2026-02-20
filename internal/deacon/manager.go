@@ -55,11 +55,15 @@ func (m *Manager) Start(agentOverride string) error {
 	t := tmux.NewTmux()
 	sessionID := m.SessionName()
 
+	// Resolve expected pane commands for the configured agent (supports non-Claude agents).
+	// Without this, IsClaudeRunning would misidentify non-Claude agents as dead (gt-nwgd5).
+	expectedCmds := config.RoleExpectedPaneCommands("deacon", m.townRoot, "", agentOverride)
+
 	// Check if session already exists
 	running, _ := t.HasSession(sessionID)
 	if running {
-		// Session exists - check if Claude is actually running (healthy vs zombie)
-		if t.IsClaudeRunning(sessionID) {
+		// Session exists - check if agent is actually running (healthy vs zombie)
+		if t.IsConfiguredAgentRunning(sessionID, expectedCmds) {
 			return ErrAlreadyRunning
 		}
 		// Zombie - tmux alive but Claude dead. Kill and recreate.
