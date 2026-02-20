@@ -853,31 +853,56 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 //
 // The function accepts dependency-injected callbacks so it can be unit tested
 // without a real Dolt server.
+// doltReadyConfig holds retry parameters for ensureDoltReady. Tests can
+// override sleepFn to avoid real wall-clock delays.
+type doltReadyConfig struct {
+	maxAttempts int
+	retryDelay  time.Duration
+	sleepFn     func(time.Duration)
+}
+
+var defaultDoltReadyConfig = doltReadyConfig{
+	maxAttempts: 10,
+	retryDelay:  500 * time.Millisecond,
+	sleepFn:     time.Sleep,
+}
+
 func ensureDoltReady(
 	isRunning func() (bool, int, error),
 	checkReachable func() error,
 	startServer func() error,
+) (ok bool, detail string) {
+	return ensureDoltReadyWithConfig(isRunning, checkReachable, startServer, defaultDoltReadyConfig)
+}
+
+func ensureDoltReadyWithConfig(
+	isRunning func() (bool, int, error),
+	checkReachable func() error,
+	startServer func() error,
+	cfg doltReadyConfig,
 ) (ok bool, detail string) {
 	running, _, _ := isRunning()
 	if running {
 		// Process is alive — verify port is actually accepting connections.
 		// This fixes the race where Dolt was just started (e.g., by gt daemon)
 		// and the PID exists but the port hasn't bound yet.
-		const maxAttempts = 10
-		const retryDelay = 500 * time.Millisecond
-		for attempt := 0; attempt < maxAttempts; attempt++ {
+		var lastErr error
+		for attempt := 0; attempt < cfg.maxAttempts; attempt++ {
 			if err := checkReachable(); err == nil {
 				return true, "already running"
+			} else {
+				lastErr = err
 			}
-			if attempt < maxAttempts-1 {
-				time.Sleep(retryDelay)
+			if attempt < cfg.maxAttempts-1 {
+				cfg.sleepFn(cfg.retryDelay)
 			}
 		}
 		// Exhausted retries — process alive but port never came up
-		return false, "Dolt process running but not accepting connections after 5s"
+		return false, fmt.Sprintf("Dolt process running but not accepting connections after %s: %v",
+			time.Duration(cfg.maxAttempts)*cfg.retryDelay, lastErr)
 	}
 
-	// Not running — start it
+	// Not running — start it (Start() blocks until port-ready via its own retry loop)
 	if err := startServer(); err != nil {
 		return false, err.Error()
 	}

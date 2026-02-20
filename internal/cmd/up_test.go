@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,12 +14,22 @@ import (
 // Tests for ensureDoltReady — the extracted function that checks Dolt
 // process liveness AND port reachability before declaring "already running".
 
+// testDoltReadyConfig returns a config with no-op sleep for fast tests.
+func testDoltReadyConfig() doltReadyConfig {
+	return doltReadyConfig{
+		maxAttempts: 10,
+		retryDelay:  500 * time.Millisecond,
+		sleepFn:     func(time.Duration) {}, // no-op for tests
+	}
+}
+
 func TestEnsureDoltReady_ProcessRunningAndReachable(t *testing.T) {
 	// When process is alive AND port is reachable, should succeed immediately.
-	ok, detail := ensureDoltReady(
+	ok, detail := ensureDoltReadyWithConfig(
 		func() (bool, int, error) { return true, 1234, nil }, // isRunning
 		func() error { return nil },                          // checkReachable (success)
 		func() error { return nil },                          // startServer (not called)
+		testDoltReadyConfig(),
 	)
 	if !ok {
 		t.Error("expected ok=true when process running and reachable")
@@ -32,7 +43,7 @@ func TestEnsureDoltReady_ProcessRunningButUnreachable(t *testing.T) {
 	// When process is alive but port is NOT reachable (the race condition),
 	// should retry and eventually succeed once the port comes up.
 	calls := 0
-	ok, detail := ensureDoltReady(
+	ok, detail := ensureDoltReadyWithConfig(
 		func() (bool, int, error) { return true, 1234, nil },
 		func() error {
 			calls++
@@ -42,6 +53,7 @@ func TestEnsureDoltReady_ProcessRunningButUnreachable(t *testing.T) {
 			return nil // succeeds on 3rd attempt
 		},
 		func() error { return nil },
+		testDoltReadyConfig(),
 	)
 	if !ok {
 		t.Error("expected ok=true after retries succeed")
@@ -56,11 +68,12 @@ func TestEnsureDoltReady_ProcessRunningButUnreachable(t *testing.T) {
 
 func TestEnsureDoltReady_ProcessRunningNeverReachable(t *testing.T) {
 	// When process is alive but port never becomes reachable,
-	// should exhaust retries and report failure.
-	ok, detail := ensureDoltReady(
+	// should exhaust retries and report failure with last error.
+	ok, detail := ensureDoltReadyWithConfig(
 		func() (bool, int, error) { return true, 1234, nil },
 		func() error { return fmt.Errorf("connection refused") },
 		func() error { return nil },
+		testDoltReadyConfig(),
 	)
 	if ok {
 		t.Error("expected ok=false when port never reachable")
@@ -68,15 +81,20 @@ func TestEnsureDoltReady_ProcessRunningNeverReachable(t *testing.T) {
 	if detail == "" {
 		t.Error("expected non-empty detail describing the failure")
 	}
+	// Verify the last error is included in the detail
+	if !strings.Contains(detail, "connection refused") {
+		t.Errorf("detail should contain last error, got %q", detail)
+	}
 }
 
 func TestEnsureDoltReady_NotRunning_StartSucceeds(t *testing.T) {
 	// When process is not running, should call startServer.
 	started := false
-	ok, detail := ensureDoltReady(
+	ok, detail := ensureDoltReadyWithConfig(
 		func() (bool, int, error) { return false, 0, nil },
 		func() error { return nil },
 		func() error { started = true; return nil },
+		testDoltReadyConfig(),
 	)
 	if !ok {
 		t.Error("expected ok=true when start succeeds")
@@ -89,10 +107,11 @@ func TestEnsureDoltReady_NotRunning_StartSucceeds(t *testing.T) {
 
 func TestEnsureDoltReady_NotRunning_StartFails(t *testing.T) {
 	// When process is not running and start fails, should report error.
-	ok, detail := ensureDoltReady(
+	ok, detail := ensureDoltReadyWithConfig(
 		func() (bool, int, error) { return false, 0, nil },
 		func() error { return nil },
 		func() error { return fmt.Errorf("port in use") },
+		testDoltReadyConfig(),
 	)
 	if ok {
 		t.Error("expected ok=false when start fails")
