@@ -613,18 +613,18 @@ func TestQueueMultiRigEpicAutoResolve(t *testing.T) {
 
 	// Dry-run: verify auto-rig-resolution routes each child correctly.
 	// Uses --dry-run to avoid needing formula infrastructure (mol-polecat-work).
-	out := runGTCmdOutput(t, gtBinary, hqPath, env, "queue", "epic", epicID, "--dry-run")
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "queue", epicID, "--dry-run")
 
 	// Verify: child1 should be routed to rig1
-	expected1 := fmt.Sprintf("%s → rig1", child1)
+	expected1 := fmt.Sprintf("%s -> rig1", child1)
 	if !strings.Contains(out, expected1) {
-		t.Errorf("epic dry-run should route %s → rig1\noutput: %s", child1, out)
+		t.Errorf("epic dry-run should route %s -> rig1\noutput: %s", child1, out)
 	}
 
 	// Verify: child2 should be routed to rig2
-	expected2 := fmt.Sprintf("%s → rig2", child2)
+	expected2 := fmt.Sprintf("%s -> rig2", child2)
 	if !strings.Contains(out, expected2) {
-		t.Errorf("epic dry-run should route %s → rig2\noutput: %s", child2, out)
+		t.Errorf("epic dry-run should route %s -> rig2\noutput: %s", child2, out)
 	}
 
 	// Non-dry-run: actually enqueue each child to its auto-resolved rig.
@@ -661,6 +661,100 @@ func TestQueueMultiRigEpicAutoResolve(t *testing.T) {
 	}
 }
 
+// TestQueueUnifiedConvoyFlagRejection verifies that task-only flags are rejected
+// when gt queue auto-detects a convoy ID.
+func TestQueueUnifiedConvoyFlagRejection(t *testing.T) {
+	hqPath, _, _, gtBinary, env := setupMultiRigQueueTown(t)
+
+	// Create a convoy in HQ.
+	convoyID := createTestBeadOfType(t, hqPath, "Flag rejection convoy", "convoy")
+
+	// Attempt to queue convoy with task-only flag --ralph.
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "queue", convoyID, "--ralph")
+	if err == nil {
+		t.Fatalf("gt queue %s --ralph should fail, but succeeded:\n%s", convoyID, out)
+	}
+	if !strings.Contains(out, "convoy mode does not support") {
+		t.Errorf("expected 'convoy mode does not support' error, got:\n%s", out)
+	}
+	if !strings.Contains(out, "--ralph") {
+		t.Errorf("error should mention --ralph, got:\n%s", out)
+	}
+}
+
+// TestQueueUnifiedEpicFlagRejection verifies that task-only flags are rejected
+// when gt queue auto-detects an epic ID.
+func TestQueueUnifiedEpicFlagRejection(t *testing.T) {
+	hqPath, rig1Path, _, gtBinary, env := setupMultiRigQueueTown(t)
+
+	// Create an epic in rig1.
+	epicID := createTestBeadOfType(t, rig1Path, "Flag rejection epic", "epic")
+	// Create a child so the epic has something to queue.
+	child := createTestBead(t, rig1Path, "Epic child")
+	addBeadDependencyOfType(t, epicID, child, "depends_on", rig1Path)
+
+	// Attempt to queue epic with task-only flag --account.
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "queue", epicID, "--account", "foo")
+	if err == nil {
+		t.Fatalf("gt queue %s --account foo should fail, but succeeded:\n%s", epicID, out)
+	}
+	if !strings.Contains(out, "epic mode does not support") {
+		t.Errorf("expected 'epic mode does not support' error, got:\n%s", out)
+	}
+	if !strings.Contains(out, "--account") {
+		t.Errorf("error should mention --account, got:\n%s", out)
+	}
+}
+
+// TestQueueUnifiedEpicDetection verifies that gt queue <epic-id> auto-detects
+// the epic and routes to the epic handler (dry-run).
+func TestQueueUnifiedEpicDetection(t *testing.T) {
+	hqPath, rig1Path, rig2Path, gtBinary, env := setupMultiRigQueueTown(t)
+
+	// Create an epic with cross-rig children.
+	epicID := createTestBeadOfType(t, rig1Path, "Detection epic", "epic")
+	child1 := createTestBead(t, rig1Path, "Rig1 child")
+	child2 := createTestBead(t, rig2Path, "Rig2 child")
+	addBeadDependencyOfType(t, epicID, child1, "depends_on", rig1Path)
+	addBeadDependencyOfType(t, epicID, child2, "depends_on", rig1Path)
+
+	// gt queue <epic-id> --dry-run should auto-detect epic and list children.
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "queue", epicID, "--dry-run")
+
+	// Should show both children with rig resolution.
+	if !strings.Contains(out, child1) {
+		t.Errorf("epic dry-run should mention child1 %s\noutput: %s", child1, out)
+	}
+	if !strings.Contains(out, child2) {
+		t.Errorf("epic dry-run should mention child2 %s\noutput: %s", child2, out)
+	}
+	if !strings.Contains(out, "Would queue") {
+		t.Errorf("epic dry-run should show 'Would queue'\noutput: %s", out)
+	}
+}
+
+// TestQueueMixedBatchRejection verifies that gt queue rejects batches containing
+// mixed ID types (e.g., a task bead + an epic in the same batch).
+func TestQueueMixedBatchRejection(t *testing.T) {
+	hqPath, rig1Path, _, gtBinary, env := setupMultiRigQueueTown(t)
+
+	// Create a task bead and an epic in rig1.
+	taskID := createTestBead(t, rig1Path, "Task bead")
+	epicID := createTestBeadOfType(t, rig1Path, "Epic bead", "epic")
+
+	// Attempt to batch-queue a task + epic together.
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "queue", taskID, epicID, "--dry-run")
+	if err == nil {
+		t.Fatalf("gt queue %s %s should fail (mixed types), but succeeded:\n%s", taskID, epicID, out)
+	}
+	if !strings.Contains(out, "mixed ID types") {
+		t.Errorf("expected 'mixed ID types' error, got:\n%s", out)
+	}
+	if !strings.Contains(out, epicID) {
+		t.Errorf("error should mention the epic ID %s, got:\n%s", epicID, out)
+	}
+}
+
 // TestQueueMultiRigConvoyAutoResolve verifies that gt convoy queue auto-resolves
 // each tracked issue's target rig from its prefix. A convoy in HQ tracking beads
 // in rig1 and rig2 should queue each bead to its respective rig.
@@ -680,18 +774,18 @@ func TestQueueMultiRigConvoyAutoResolve(t *testing.T) {
 	addBeadDependencyOfType(t, convoyID, bead2, "tracks", hqPath)
 
 	// Dry-run: verify auto-rig-resolution routes each bead correctly.
-	out := runGTCmdOutput(t, gtBinary, hqPath, env, "convoy", "queue", convoyID, "--dry-run")
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "queue", convoyID, "--dry-run")
 
 	// Verify: bead1 should be routed to rig1
-	expected1 := fmt.Sprintf("%s → rig1", bead1)
+	expected1 := fmt.Sprintf("%s -> rig1", bead1)
 	if !strings.Contains(out, expected1) {
-		t.Errorf("convoy dry-run should route %s → rig1\noutput: %s", bead1, out)
+		t.Errorf("convoy dry-run should route %s -> rig1\noutput: %s", bead1, out)
 	}
 
 	// Verify: bead2 should be routed to rig2
-	expected2 := fmt.Sprintf("%s → rig2", bead2)
+	expected2 := fmt.Sprintf("%s -> rig2", bead2)
 	if !strings.Contains(out, expected2) {
-		t.Errorf("convoy dry-run should route %s → rig2\noutput: %s", bead2, out)
+		t.Errorf("convoy dry-run should route %s -> rig2\noutput: %s", bead2, out)
 	}
 
 	// Non-dry-run: actually enqueue each bead to its auto-resolved rig.

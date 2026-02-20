@@ -7,51 +7,22 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
-var (
-	queueEpicDryRun  bool
-	queueEpicForce   bool
-	queueEpicFormula string
-	queueEpicHookRaw bool
-)
-
-var queueEpicCmd = &cobra.Command{
-	Use:   "epic <epic-id>",
-	Short: "Queue all open children of an epic for deferred dispatch",
-	Long: `Queue all open child issues of an epic for capacity-controlled dispatch.
-
-Each child's target rig is auto-resolved from its bead ID prefix. Town-root
-beads (hq-*) are skipped since they are not dispatchable work.
-
-ALL open children are queued, including blocked ones. Blocked beads wait
-in the queue and automatically dispatch when their blockers resolve.
-
-Children that are already queued, closed, or assigned are skipped.
-
-Examples:
-  gt queue epic gt-epic-123           # Queue all open children (auto-resolve rigs)
-  gt queue epic gt-epic-123 --dry-run # Preview what would be queued`,
-	Args: cobra.ExactArgs(1),
-	RunE: runQueueEpic,
+// epicQueueOpts holds options for epic queue operations.
+type epicQueueOpts struct {
+	Formula     string
+	HookRawBead bool
+	Force       bool
+	DryRun      bool
 }
 
-func init() {
-	queueEpicCmd.Flags().BoolVar(&queueEpicDryRun, "dry-run", false, "Show what would be queued without acting")
-	queueEpicCmd.Flags().BoolVar(&queueEpicForce, "force", false, "Force enqueue even if bead is hooked/in_progress")
-	queueEpicCmd.Flags().StringVar(&queueEpicFormula, "formula", "", "Formula to apply (default: mol-polecat-work)")
-	queueEpicCmd.Flags().BoolVar(&queueEpicHookRaw, "hook-raw-bead", false, "Hook raw bead without formula")
-
-	queueCmd.AddCommand(queueEpicCmd)
-}
-
-func runQueueEpic(cmd *cobra.Command, args []string) error {
-	epicID := args[0]
-
+// runEpicQueueByID queues all open children of an epic.
+// Called from `gt queue <epic-id>`.
+func runEpicQueueByID(epicID string, opts epicQueueOpts) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return err
@@ -93,7 +64,7 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 		}
 
 		// Skip already assigned unless --force
-		if c.Assignee != "" && !queueEpicForce {
+		if c.Assignee != "" && !opts.Force {
 			skippedAssigned++
 			continue
 		}
@@ -127,18 +98,18 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	formula := resolveFormula(queueEpicFormula, queueEpicHookRaw)
+	formula := opts.Formula
 
-	if queueEpicDryRun {
+	if opts.DryRun {
 		fmt.Printf("%s Would queue %d child(ren) from epic %s:\n",
-			style.Bold.Render("📋"), len(candidates), epicID)
+			style.Bold.Render("DRY-RUN"), len(candidates), epicID)
 		if formula != "" {
 			fmt.Printf("  Formula: %s\n", formula)
 		} else {
 			fmt.Printf("  Hook raw beads (no formula)\n")
 		}
 		for _, c := range candidates {
-			fmt.Printf("  Would queue: %s → %s (%s)\n", c.ID, c.RigName, c.Title)
+			fmt.Printf("  Would queue: %s -> %s (%s)\n", c.ID, c.RigName, c.Title)
 		}
 		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
 			fmt.Printf("\nSkipped: %d closed, %d assigned, %d already queued, %d no rig\n",
@@ -154,8 +125,8 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 	for _, c := range candidates {
 		err := enqueueBead(c.ID, c.RigName, EnqueueOptions{
 			Formula:     formula,
-			Force:       queueEpicForce,
-			HookRawBead: queueEpicHookRaw,
+			Force:       opts.Force,
+			HookRawBead: opts.HookRawBead,
 		})
 		if err != nil {
 			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), c.ID, err)
@@ -171,6 +142,9 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 			skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
 	}
 
+	if successCount == 0 {
+		return fmt.Errorf("all %d enqueue attempts failed for epic %s", len(candidates), epicID)
+	}
 	return nil
 }
 

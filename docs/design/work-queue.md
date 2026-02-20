@@ -10,9 +10,11 @@ Enable the queue and dispatch some work:
 # 1. Enable daemon auto-dispatch
 gt config set queue.enabled true
 
-# 2. Queue beads for deferred dispatch
-gt sling gt-abc gastown --queue              # Single bead
-gt sling gt-abc gt-def gt-ghi gastown --queue  # Batch
+# 2. Queue work (rig auto-resolved from bead prefix)
+gt queue gt-abc                    # Single task bead
+gt queue gt-abc gt-def gt-ghi      # Batch task beads
+gt queue hq-cv-abc                 # Convoy (queues all tracked issues)
+gt queue gt-epic-123               # Epic (queues all children)
 
 # 3. Check what's queued
 gt queue status
@@ -27,9 +29,12 @@ gt queue run --dry-run    # Preview first
 
 | Command | Flags | Description |
 |---------|-------|-------------|
-| `gt sling <bead> <rig> --queue` | `--force`, `--merge`, `--args`, `--no-convoy`, `--formula`, `--hook-raw-bead` | Queue single bead |
-| `gt convoy queue <id>` | `--dry-run`, `--force`, `--formula`, `--hook-raw-bead` | Queue all open issues in convoy (auto-resolve rigs) |
-| `gt queue epic <id>` | `--dry-run`, `--force`, `--formula`, `--hook-raw-bead` | Queue all children of epic (auto-resolve rigs) |
+| `gt queue <bead>` | `--force`, `--merge`, `--args`, `--no-convoy`, `--formula`, `--hook-raw-bead`, `--account`, `--agent`, `--ralph` | Queue task bead (rig auto-resolved) |
+| `gt queue <bead>... [rig]` | (same as above) | Queue batch (explicit rig optional) |
+| `gt queue <convoy-id>` | `--dry-run`, `--force`, `--formula`, `--hook-raw-bead` | Queue all open issues in convoy (auto-resolve rigs) |
+| `gt queue <epic-id>` | `--dry-run`, `--force`, `--formula`, `--hook-raw-bead` | Queue all children of epic (auto-resolve rigs) |
+| `gt queue <formula> --on <bead>` | | Queue formula-on-bead |
+| `gt sling <bead> <rig> --queue` | `--force`, `--merge`, `--args`, `--no-convoy`, `--formula`, `--hook-raw-bead` | Queue single bead (legacy, still supported) |
 | `gt queue run` | `--batch N`, `--max-polecats N`, `--dry-run` | Trigger dispatch manually |
 | `gt queue status` | `--json` | Show queue state and capacity |
 | `gt queue list` | `--json` | List all queued beads by rig |
@@ -40,9 +45,9 @@ gt queue run --dry-run    # Preview first
 ### Minimal Example
 
 ```bash
-gt sling gt-abc gastown --queue   # Enqueue (adds gt:queued label + metadata)
+gt queue gt-abc                   # Enqueue (adds gt:queued label + metadata)
 gt queue status                   # "Queued: 1 total, 1 ready"
-gt queue run                      # Dispatches → spawns polecat → strips metadata
+gt queue run                      # Dispatches -> spawns polecat -> strips metadata
 ```
 
 ---
@@ -120,14 +125,24 @@ Key invariant: `gt:queued` is always removed on terminal transitions. Dispatched
 
 ### CLI Entry Points
 
+The unified `gt queue <id>` entry point auto-detects ID type and routes accordingly:
+
 | Command | Use Case | Formula |
 |---------|----------|---------|
-| `gt sling <bead> <rig> --queue` | Queue single bead | `mol-polecat-work` (auto, override with `--formula`) |
-| `gt sling <bead>... <rig> --queue` | Queue batch | `mol-polecat-work` (auto, override with `--formula`) |
-| `gt sling <formula> --on <bead> <rig> --queue` | Queue with explicit formula | User-specified |
-| `gt convoy queue <convoy-id>` | Queue all open convoy issues (auto-resolve rigs from prefix) | `mol-polecat-work` (override with `--formula`) |
-| `gt queue epic <epic-id>` | Queue all children of epic (auto-resolve rigs from prefix) | `mol-polecat-work` (override with `--formula`) |
+| `gt queue <bead> [rig]` | Queue task bead (rig auto-resolved from prefix) | `mol-polecat-work` (auto, override with `--formula`) |
+| `gt queue <bead>... [rig]` | Queue batch (rig auto-resolved per bead, or explicit trailing rig) | `mol-polecat-work` (auto, override with `--formula`) |
+| `gt queue <formula> --on <bead> [rig]` | Queue formula-on-bead | User-specified |
+| `gt queue <convoy-id>` | Queue all open convoy issues (auto-detected from hq-cv- prefix or issue_type) | `mol-polecat-work` (override with `--formula`) |
+| `gt queue <epic-id>` | Queue all children of epic (auto-detected from issue_type) | `mol-polecat-work` (override with `--formula`) |
 | `gt queue run` | Manual dispatch trigger | N/A (dispatches) |
+| `gt sling <bead> <rig> --queue` | Queue single bead (legacy path, still supported) | `mol-polecat-work` (auto, override with `--formula`) |
+
+**Detection chain** in `runQueueEnqueue`:
+1. `--on` flag set -> formula-on-bead mode
+2. First arg starts with `hq-cv-` -> convoy mode (fast path)
+3. `getBeadInfo()` returns `issue_type == "epic"` -> epic mode
+4. `getBeadInfo()` returns `issue_type == "convoy"` -> convoy mode
+5. Default -> task bead mode
 
 All enqueue paths go through `enqueueBead()` in `internal/cmd/sling_queue.go`. All dispatch goes through `dispatchQueuedWork()` in `internal/cmd/queue_dispatch.go`.
 
@@ -405,21 +420,21 @@ Convoys and the work queue are complementary but distinct mechanisms. Convoys tr
 | Path | Trigger | Capacity Control | Use Case |
 |------|---------|-----------------|----------|
 | **Deacon dogs** | `mol-convoy-feed` formula | None (fires immediately) | Autonomous — Deacon observes convoy events and slings directly |
-| **Queue dispatch** | `gt convoy queue` / `gt queue epic` | Yes (daemon heartbeat, max_polecats, batch_size) | Operator-initiated — batched work with back-pressure |
+| **Queue dispatch** | `gt queue <convoy-id>` / `gt queue <epic-id>` | Yes (daemon heartbeat, max_polecats, batch_size) | Operator-initiated — batched work with back-pressure |
 
 **Deacon dogs** (direct sling): The Deacon's `mol-convoy-feed` formula watches convoy activity via `bd activity --follow`. When a new issue is tracked, the Deacon determines the rig from the bead's prefix (`beads.ExtractPrefix` + `beads.GetRigNameForPrefix`) and slings it immediately. No capacity control — all issues dispatch at once.
 
-**Queue dispatch** (capacity-controlled): `gt convoy queue <convoy-id>` enqueues all open tracked issues. Each issue's rig is auto-resolved from its bead ID prefix. The daemon dispatches incrementally via `gt queue run`, respecting `max_polecats` and `batch_size`. Use this for large batches where simultaneous dispatch would exhaust resources.
+**Queue dispatch** (capacity-controlled): `gt queue <convoy-id>` enqueues all open tracked issues. Each issue's rig is auto-resolved from its bead ID prefix. The daemon dispatches incrementally via `gt queue run`, respecting `max_polecats` and `batch_size`. Use this for large batches where simultaneous dispatch would exhaust resources.
 
 ### When to Use Which
 
 - **Small convoys (< 5 issues)**: Deacon dogs are fine — simultaneous dispatch is manageable
-- **Large batches (5+ issues)**: Use `gt convoy queue` for capacity-controlled dispatch
-- **Epics**: Use `gt queue epic` — same auto-rig-resolution, scoped to epic children
+- **Large batches (5+ issues)**: Use `gt queue <convoy-id>` for capacity-controlled dispatch
+- **Epics**: Use `gt queue <epic-id>` — same auto-rig-resolution, scoped to epic children
 
 ### Rig Resolution
 
-Both `gt convoy queue` and `gt queue epic` auto-resolve the target rig per-bead from its ID prefix using `beads.ExtractPrefix()` + `beads.GetRigNameForPrefix()`. This matches the pattern used by the Deacon's `mol-convoy-feed` and `redispatch`. Town-root beads (`hq-*`) are skipped with a warning since they are coordination artifacts, not dispatchable work.
+`gt queue <convoy-id>` and `gt queue <epic-id>` auto-resolve the target rig per-bead from its ID prefix using `beads.ExtractPrefix()` + `beads.GetRigNameForPrefix()`. This matches the pattern used by the Deacon's `mol-convoy-feed` and `redispatch`. Town-root beads (`hq-*`) are skipped with a warning since they are coordination artifacts, not dispatchable work.
 
 ### ConvoyWatcher Event-Driven Completion
 
@@ -427,7 +442,7 @@ The `ConvoyWatcher` (in `internal/convoy/observer.go`) streams `bd activity --fo
 
 ### Auto-Convoy at Enqueue
 
-`enqueueBead()` automatically creates a convoy for each queued bead (unless `--no-convoy` is set or the bead is already tracked). When using `gt convoy queue`, auto-convoy is disabled (`NoConvoy: true`) since the bead is already tracked by the source convoy.
+`enqueueBead()` automatically creates a convoy for each queued bead (unless `--no-convoy` is set or the bead is already tracked). When queuing a convoy's issues via `gt queue <convoy-id>`, auto-convoy is disabled (`NoConvoy: true`) since the bead is already tracked by the source convoy.
 
 ---
 

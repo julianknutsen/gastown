@@ -446,24 +446,6 @@ func runSling(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Preflight: check existing molecules BEFORE spawning polecat.
-	// When formulaName is already known (explicit formula via --on flag), we can
-	// validate early to avoid spawning a polecat that will be immediately orphaned
-	// if the check fails. The auto-apply path (formulaName set after resolveTarget)
-	// handles its own check with rollback protection below.
-	//
-	// Trade-off: with --force, this burns molecules before resolveTarget(). If
-	// target resolution then fails, molecule state is irreversibly destroyed.
-	// This is accepted --force semantics — the alternative (defer burn until after
-	// spawn) re-introduces the orphaned polecat problem this PR fixes, since a
-	// post-spawn burn failure would leave both a spawned polecat AND stale molecules.
-	preflightFormulaName := formulaName
-	if formulaName != "" {
-		if err := ensureNoExistingMolecules(info, beadID, townRoot, force, slingDryRun); err != nil {
-			return err
-		}
-	}
-
 	// TODO: Migrate single-sling rig dispatch to use executeSling().
 	// The inline logic below duplicates executeSling's 12-step flow. Batch sling
 	// and queue dispatch already use the unified path. Single-sling is deferred

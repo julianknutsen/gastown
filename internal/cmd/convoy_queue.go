@@ -4,52 +4,22 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
-var (
-	convoyQueueDryRun  bool
-	convoyQueueForce   bool
-	convoyQueueFormula string
-	convoyQueueHookRaw bool
-)
-
-var convoyQueueCmd = &cobra.Command{
-	Use:   "queue <convoy-id>",
-	Short: "Queue all open tracked issues for deferred dispatch",
-	Long: `Queue all open issues tracked by a convoy for capacity-controlled dispatch.
-
-Each issue's target rig is auto-resolved from its bead ID prefix. Town-root
-beads (hq-*) are skipped since they are not dispatchable work.
-
-ALL open issues are queued, including blocked ones. Blocked beads wait in
-the queue and automatically dispatch when their blockers resolve (bd ready
-filters them at dispatch time).
-
-Issues that are already queued, closed, or assigned are skipped.
-
-Examples:
-  gt convoy queue hq-cv-abc           # Queue all open issues (auto-resolve rigs)
-  gt convoy queue hq-cv-abc --dry-run # Preview what would be queued`,
-	Args: cobra.ExactArgs(1),
-	RunE: runConvoyQueue,
+// convoyQueueOpts holds options for convoy queue operations.
+type convoyQueueOpts struct {
+	Formula     string
+	HookRawBead bool
+	Force       bool
+	DryRun      bool
 }
 
-func init() {
-	convoyQueueCmd.Flags().BoolVar(&convoyQueueDryRun, "dry-run", false, "Show what would be queued without acting")
-	convoyQueueCmd.Flags().BoolVar(&convoyQueueForce, "force", false, "Force enqueue even if bead is hooked/in_progress")
-	convoyQueueCmd.Flags().StringVar(&convoyQueueFormula, "formula", "", "Formula to apply (default: mol-polecat-work)")
-	convoyQueueCmd.Flags().BoolVar(&convoyQueueHookRaw, "hook-raw-bead", false, "Hook raw bead without formula")
-
-	convoyCmd.AddCommand(convoyQueueCmd)
-}
-
-func runConvoyQueue(cmd *cobra.Command, args []string) error {
-	convoyID := args[0]
-
+// runConvoyQueueByID queues all open tracked issues of a convoy.
+// Called from `gt queue <convoy-id>`.
+func runConvoyQueueByID(convoyID string, opts convoyQueueOpts) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return err
@@ -92,7 +62,7 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 		}
 
 		// Skip already assigned (hooked/in_progress) unless --force
-		if t.Assignee != "" && !convoyQueueForce {
+		if t.Assignee != "" && !opts.Force {
 			skippedAssigned++
 			continue
 		}
@@ -131,18 +101,18 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	formula := resolveFormula(convoyQueueFormula, convoyQueueHookRaw)
+	formula := opts.Formula
 
-	if convoyQueueDryRun {
+	if opts.DryRun {
 		fmt.Printf("%s Would queue %d issue(s) from convoy %s:\n",
-			style.Bold.Render("📋"), len(candidates), convoyID)
+			style.Bold.Render("DRY-RUN"), len(candidates), convoyID)
 		if formula != "" {
 			fmt.Printf("  Formula: %s\n", formula)
 		} else {
 			fmt.Printf("  Hook raw beads (no formula)\n")
 		}
 		for _, c := range candidates {
-			fmt.Printf("  Would queue: %s → %s (%s)\n", c.ID, c.RigName, c.Title)
+			fmt.Printf("  Would queue: %s -> %s (%s)\n", c.ID, c.RigName, c.Title)
 		}
 		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
 			fmt.Printf("\nSkipped: %d closed, %d assigned, %d already queued, %d no rig\n",
@@ -159,8 +129,8 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 		err := enqueueBead(c.ID, c.RigName, EnqueueOptions{
 			Formula:     formula,
 			NoConvoy:    true, // Already tracked by this convoy
-			Force:       convoyQueueForce,
-			HookRawBead: convoyQueueHookRaw,
+			Force:       opts.Force,
+			HookRawBead: opts.HookRawBead,
 		})
 		if err != nil {
 			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), c.ID, err)
@@ -176,5 +146,8 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 			skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
 	}
 
+	if successCount == 0 {
+		return fmt.Errorf("all %d enqueue attempts failed for convoy %s", len(candidates), convoyID)
+	}
 	return nil
 }

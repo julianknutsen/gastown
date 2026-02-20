@@ -24,30 +24,35 @@ var (
 )
 
 var queueCmd = &cobra.Command{
-	Use:     "queue",
+	Use:     "queue [<bead-id|convoy-id|epic-id>...] [rig]",
 	GroupID: GroupWork,
-	Short:   "Manage the work queue for capacity-controlled dispatch",
-	Long: `Manage the work queue for capacity-controlled polecat dispatch.
+	Short:   "Queue work for capacity-controlled dispatch",
+	Long: `Queue work for capacity-controlled polecat dispatch.
 
-The work queue enables "set and forget" dispatch: queue beads, and the
-daemon dispatches them as capacity allows. Blocked beads automatically
-dispatch when their blockers resolve.
-
-Queue work:
-  gt sling gt-abc gastown --queue         # Queue single bead
-  gt sling gt-abc gt-def gastown --queue  # Queue batch
-  gt convoy queue hq-cv-abc               # Queue convoy's issues (auto-resolve rigs)
-  gt queue epic gt-epic-123               # Queue epic's children (auto-resolve rigs)
+Pass any ID and gt queue auto-detects the type:
+  gt queue gt-abc              # Task bead (rig auto-resolved from prefix)
+  gt queue hq-cv-abc           # Convoy (queues all tracked issues)
+  gt queue gt-epic-123         # Epic (queues all children)
+  gt queue gt-abc gt-def       # Batch task beads
+  gt queue gt-abc gastown      # Task bead with explicit rig
+  gt queue mol-review --on gt-abc  # Formula-on-bead
 
 Manage queue:
-  gt queue status                         # Show queue state
-  gt queue list                           # List all queued beads
-  gt queue run                            # Manual dispatch trigger
-  gt queue pause                          # Pause all dispatch
-  gt queue resume                         # Resume dispatch
-  gt queue clear                          # Remove all beads from queue`,
+  gt queue status              # Show queue state
+  gt queue list                # List all queued beads
+  gt queue run                 # Manual dispatch trigger
+  gt queue pause / resume      # Pause/resume dispatch
+  gt queue clear               # Remove beads from queue`,
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return requireSubcommand(cmd, args)
+		if len(args) == 0 {
+			// Check if --on was set without a formula arg
+			if on, _ := cmd.Flags().GetString("on"); on != "" {
+				return fmt.Errorf("--on requires a formula name argument (e.g., gt queue mol-review --on %s)", on)
+			}
+			return requireSubcommand(cmd, args)
+		}
+		return runQueueEnqueue(cmd, args)
 	},
 }
 
