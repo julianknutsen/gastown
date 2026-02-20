@@ -1097,6 +1097,12 @@ func TestValidateRecipientTownLevelNoBeads(t *testing.T) {
 
 	r := NewRouterWithTownRoot(townRoot, townRoot)
 
+	// Precondition: verify no agent beads exist after bd init.
+	// This ensures the test exercises the whitelist bypass, not bead lookup.
+	if agents := r.queryAgents(""); len(agents) != 0 {
+		t.Fatalf("precondition failed: expected 0 agent beads after bd init, got %d", len(agents))
+	}
+
 	tests := []struct {
 		name     string
 		identity string
@@ -1105,8 +1111,9 @@ func TestValidateRecipientTownLevelNoBeads(t *testing.T) {
 		// Town-level agents should be valid even without agent beads
 		{"mayor without bead", "mayor/", false},
 		{"deacon without bead", "deacon/", false},
-		// Overseer should still be valid
+		// Overseer should still be valid (both with and without trailing slash)
 		{"overseer", "overseer", false},
+		{"overseer with slash", "overseer/", false},
 		// Non-town-level agents should still fail without beads
 		{"unknown rig agent", "testrig/nonexistent", true},
 	}
