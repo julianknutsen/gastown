@@ -1342,8 +1342,10 @@ func TestAddWithOptions_RollbackReleasesName(t *testing.T) {
 		t.Fatalf("mkdir mayor/rig: %v", err)
 	}
 
-	// Initialize git repo in mayor/rig
-	cmd := exec.Command("git", "init")
+	// Initialize git repo in mayor/rig with a non-main branch name.
+	// Using -b notmain ensures origin/main never exists after fetch,
+	// regardless of git init.defaultBranch config (fix for gt-2wphr).
+	cmd := exec.Command("git", "init", "-b", "notmain")
 	cmd.Dir = mayorRig
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
@@ -1362,7 +1364,8 @@ func TestAddWithOptions_RollbackReleasesName(t *testing.T) {
 	}
 
 	// Add origin remote but deliberately DON'T create origin/main ref.
-	// This will cause AddWithOptions to fail at ref validation, testing rollback.
+	// Because the branch is "notmain", fetch creates origin/notmain — not origin/main.
+	// This causes AddWithOptions to fail at ref validation, testing rollback.
 	cmd = exec.Command("git", "remote", "add", "origin", mayorRig)
 	cmd.Dir = mayorRig
 	if out, err := cmd.CombinedOutput(); err != nil {
