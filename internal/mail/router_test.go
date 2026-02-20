@@ -1070,6 +1070,63 @@ func TestValidateRecipient(t *testing.T) {
 	}
 }
 
+// TestValidateRecipientTownLevelNoBeads verifies that town-level agents (mayor/, deacon/)
+// are accepted as valid recipients even when no agent beads exist in the database.
+// This is the bug scenario from gt-pxlri: gt compact report fails because deacon/
+// has no agent bead and validateRecipient rejects it.
+func TestValidateRecipientTownLevelNoBeads(t *testing.T) {
+	// Skip if bd CLI is not available
+	if out, err := exec.Command("bd", "version").CombinedOutput(); err != nil {
+		t.Skipf("bd CLI not functional, skipping test: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	// Create isolated beads environment with NO agent beads
+	tmpDir := t.TempDir()
+	townRoot := tmpDir
+	beadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("creating beads dir: %v", err)
+	}
+
+	cmd := exec.Command("bd", "init", "gt")
+	cmd.Dir = townRoot
+	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bd init failed: %v\n%s", err, out)
+	}
+
+	r := NewRouterWithTownRoot(townRoot, townRoot)
+
+	tests := []struct {
+		name     string
+		identity string
+		wantErr  bool
+	}{
+		// Town-level agents should be valid even without agent beads
+		{"mayor without bead", "mayor/", false},
+		{"deacon without bead", "deacon/", false},
+		// Overseer should still be valid
+		{"overseer", "overseer", false},
+		// Non-town-level agents should still fail without beads
+		{"unknown rig agent", "testrig/nonexistent", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := r.validateRecipient(tt.identity)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("validateRecipient(%q) expected error, got nil", tt.identity)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("validateRecipient(%q) unexpected error: %v", tt.identity, err)
+				}
+			}
+		})
+	}
+}
+
 func setupTestRegistryForAddressTest(t *testing.T) {
 	t.Helper()
 	reg := session.NewPrefixRegistry()
