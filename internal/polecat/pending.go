@@ -167,25 +167,36 @@ func TriggerPendingSpawns(townRoot string, timeout time.Duration) ([]TriggerResu
 	return results, nil
 }
 
-// ClearPendingSpawn archives the POLECAT_STARTED message for a specific session,
-// removing it from the pending list. Used by the Deacon after observing that a
+// ClearPendingSpawn archives all POLECAT_STARTED messages for a specific session,
+// removing them from the pending list. Used by the Deacon after observing that a
 // session has been triggered via AI-based observation.
+//
+// Idempotent: returns nil if no pending spawn is found (another process may have
+// already cleared it).
 func ClearPendingSpawn(townRoot, sessionName string) error {
 	pending, err := CheckInboxForSpawns(townRoot)
 	if err != nil {
 		return fmt.Errorf("checking inbox: %w", err)
 	}
 
+	return clearPendingFromList(pending, sessionName)
+}
+
+// clearPendingFromList archives all matching POLECAT_STARTED messages from the
+// given list. Extracted for testability.
+func clearPendingFromList(pending []*PendingSpawn, sessionName string) error {
 	for _, ps := range pending {
 		if ps.Session == sessionName {
-			if ps.mailbox != nil {
-				return ps.mailbox.Archive(ps.MailID)
+			if ps.mailbox == nil {
+				return fmt.Errorf("nil mailbox for pending spawn %s (session: %s)", ps.MailID, sessionName)
 			}
-			return nil
+			if err := ps.mailbox.Archive(ps.MailID); err != nil {
+				return fmt.Errorf("archiving mail %s: %w", ps.MailID, err)
+			}
 		}
 	}
 
-	return fmt.Errorf("no pending spawn found for session: %s", sessionName)
+	return nil
 }
 
 // PruneStalePending archives POLECAT_STARTED messages older than the given age.
@@ -196,14 +207,22 @@ func PruneStalePending(townRoot string, maxAge time.Duration) (int, error) {
 		return 0, err
 	}
 
+	return pruneStalePendingFromList(pending, maxAge)
+}
+
+// pruneStalePendingFromList archives stale pending spawns from the given list.
+// Extracted for testability.
+func pruneStalePendingFromList(pending []*PendingSpawn, maxAge time.Duration) (int, error) {
 	cutoff := time.Now().Add(-maxAge)
 	pruned := 0
 
 	for _, ps := range pending {
 		if ps.SpawnedAt.Before(cutoff) {
-			// Archive stale spawn message
-			if ps.mailbox != nil {
-				_ = ps.mailbox.Archive(ps.MailID)
+			if ps.mailbox == nil {
+				return pruned, fmt.Errorf("nil mailbox for pending spawn %s", ps.MailID)
+			}
+			if err := ps.mailbox.Archive(ps.MailID); err != nil {
+				return pruned, fmt.Errorf("archiving stale mail %s: %w", ps.MailID, err)
 			}
 			pruned++
 		}

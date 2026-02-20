@@ -1225,6 +1225,12 @@ func runDeaconPending(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s\n\n", style.Dim.Render("--- end ---"))
 	}
 
+	// Prune stale pending spawns (older than 5 minutes)
+	pruned, _ := polecat.PruneStalePending(townRoot, 5*time.Minute)
+	if pruned > 0 {
+		fmt.Printf("%s Pruned %d stale spawn(s)\n", style.Dim.Render("○"), pruned)
+	}
+
 	return nil
 }
 
