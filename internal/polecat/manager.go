@@ -267,9 +267,33 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 		return nil, fmt.Errorf("creating polecat dir: %w", err)
 	}
 
+	// Track whether the worktree was created for rollback cleanup.
+	// On any error after this point, cleanupOnError releases the allocated name
+	// and removes created resources to prevent leaking pool names or leaving
+	// orphaned directories/worktrees. See: gt-2vs22, gt-2wphr.
+	var worktreeCreated bool
+	var failed bool
+	defer func() {
+		if !failed {
+			return
+		}
+		// Release name back to pool
+		m.namePool.Release(name)
+		_ = m.namePool.Save()
+		// Remove worktree registration if created
+		if worktreeCreated {
+			if rg, repoErr := m.repoBase(); repoErr == nil {
+				_ = rg.WorktreeRemove(clonePath, true)
+			}
+		}
+		// Remove polecat directory
+		_ = os.RemoveAll(polecatDir)
+	}()
+
 	// Get the repo base (bare repo or mayor/rig)
 	repoGit, err := m.repoBase()
 	if err != nil {
+		failed = true
 		return nil, fmt.Errorf("finding repo base: %w", err)
 	}
 
@@ -291,8 +315,10 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 	// git worktree add -b polecat/<name>-<timestamp> <path> <startpoint>
 	// Worktree goes in polecats/<name>/<rigname>/ for LLM ergonomics
 	if err := repoGit.WorktreeAddFromRef(clonePath, branchName, startPoint); err != nil {
+		failed = true
 		return nil, fmt.Errorf("creating worktree from %s: %w", startPoint, err)
 	}
+	worktreeCreated = true
 
 	// Ensure AGENTS.md exists - critical for polecats to "land the plane"
 	// Fall back to copy from mayor/rig if not in git (e.g., stale fetch, local-only file)
