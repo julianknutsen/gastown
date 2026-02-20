@@ -10,6 +10,98 @@ import (
 	"github.com/steveyegge/gastown/internal/rig"
 )
 
+// Tests for ensureDoltReady — the extracted function that checks Dolt
+// process liveness AND port reachability before declaring "already running".
+
+func TestEnsureDoltReady_ProcessRunningAndReachable(t *testing.T) {
+	// When process is alive AND port is reachable, should succeed immediately.
+	ok, detail := ensureDoltReady(
+		func() (bool, int, error) { return true, 1234, nil }, // isRunning
+		func() error { return nil },                          // checkReachable (success)
+		func() error { return nil },                          // startServer (not called)
+	)
+	if !ok {
+		t.Error("expected ok=true when process running and reachable")
+	}
+	if detail != "already running" {
+		t.Errorf("detail = %q, want %q", detail, "already running")
+	}
+}
+
+func TestEnsureDoltReady_ProcessRunningButUnreachable(t *testing.T) {
+	// When process is alive but port is NOT reachable (the race condition),
+	// should retry and eventually succeed once the port comes up.
+	calls := 0
+	ok, detail := ensureDoltReady(
+		func() (bool, int, error) { return true, 1234, nil },
+		func() error {
+			calls++
+			if calls < 3 {
+				return fmt.Errorf("connection refused")
+			}
+			return nil // succeeds on 3rd attempt
+		},
+		func() error { return nil },
+	)
+	if !ok {
+		t.Error("expected ok=true after retries succeed")
+	}
+	if detail != "already running" {
+		t.Errorf("detail = %q, want %q", detail, "already running")
+	}
+	if calls < 3 {
+		t.Errorf("expected at least 3 reachability checks, got %d", calls)
+	}
+}
+
+func TestEnsureDoltReady_ProcessRunningNeverReachable(t *testing.T) {
+	// When process is alive but port never becomes reachable,
+	// should exhaust retries and report failure.
+	ok, detail := ensureDoltReady(
+		func() (bool, int, error) { return true, 1234, nil },
+		func() error { return fmt.Errorf("connection refused") },
+		func() error { return nil },
+	)
+	if ok {
+		t.Error("expected ok=false when port never reachable")
+	}
+	if detail == "" {
+		t.Error("expected non-empty detail describing the failure")
+	}
+}
+
+func TestEnsureDoltReady_NotRunning_StartSucceeds(t *testing.T) {
+	// When process is not running, should call startServer.
+	started := false
+	ok, detail := ensureDoltReady(
+		func() (bool, int, error) { return false, 0, nil },
+		func() error { return nil },
+		func() error { started = true; return nil },
+	)
+	if !ok {
+		t.Error("expected ok=true when start succeeds")
+	}
+	if !started {
+		t.Error("expected startServer to be called")
+	}
+	_ = detail
+}
+
+func TestEnsureDoltReady_NotRunning_StartFails(t *testing.T) {
+	// When process is not running and start fails, should report error.
+	ok, detail := ensureDoltReady(
+		func() (bool, int, error) { return false, 0, nil },
+		func() error { return nil },
+		func() error { return fmt.Errorf("port in use") },
+	)
+	if ok {
+		t.Error("expected ok=false when start fails")
+	}
+	if detail == "" {
+		t.Error("expected non-empty detail on start failure")
+	}
+}
+
 func TestAgentStartResult_Fields(t *testing.T) {
 	result := agentStartResult{
 		name:   "Witness (gastown)",
