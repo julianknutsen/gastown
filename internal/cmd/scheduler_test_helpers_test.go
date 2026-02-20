@@ -1,6 +1,6 @@
 package cmd
 
-// Shared test helpers for queue tests. No build tag — compiled for both
+// Shared test helpers for scheduler tests. No build tag — compiled for both
 // integration and e2e_agent builds. Helpers that need bd/gt binaries take
 // explicit paths and env slices so callers control isolation.
 
@@ -13,13 +13,14 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 )
 
 // --- Environment helpers ---
 
-// cleanQueueTestEnv returns os.Environ() with GT_* variables removed and HOME
+// cleanSchedulerTestEnv returns os.Environ() with GT_* variables removed and HOME
 // overridden to tmpHome. This isolates gt/bd processes from the host.
-func cleanQueueTestEnv(tmpHome string) []string {
+func cleanSchedulerTestEnv(tmpHome string) []string {
 	var clean []string
 	for _, env := range os.Environ() {
 		if strings.HasPrefix(env, "GT_") {
@@ -52,13 +53,13 @@ func writeJSONFile(t *testing.T, path string, v interface{}) {
 	}
 }
 
-// --- Queue config helpers ---
+// --- Scheduler config helpers ---
 
-// configureQueue writes a TownSettings file with the given queue configuration.
-func configureQueue(t *testing.T, hqPath string, enabled bool, maxPolecats, batchSize int) {
+// configureScheduler writes a TownSettings file with the given scheduler configuration.
+func configureScheduler(t *testing.T, hqPath string, enabled bool, maxPolecats, batchSize int) {
 	t.Helper()
 	settings := config.NewTownSettings()
-	settings.Queue = &config.WorkQueueConfig{
+	settings.Scheduler = &capacity.SchedulerConfig{
 		Enabled:     enabled,
 		MaxPolecats: &maxPolecats,
 		BatchSize:   &batchSize,
@@ -93,26 +94,26 @@ func runGTCmdMayFail(t *testing.T, binary, dir string, env []string, args ...str
 	return string(out), err
 }
 
-// --- Queue query helpers ---
+// --- Scheduler query helpers ---
 
-// getQueueStatus runs `gt queue status --json` and returns the parsed output.
-func getQueueStatus(t *testing.T, gtBinary, dir string, env []string) map[string]interface{} {
+// getSchedulerStatus runs `gt scheduler capacity status --json` and returns the parsed output.
+func getSchedulerStatus(t *testing.T, gtBinary, dir string, env []string) map[string]interface{} {
 	t.Helper()
-	out := runGTCmdOutput(t, gtBinary, dir, env, "queue", "status", "--json")
+	out := runGTCmdOutput(t, gtBinary, dir, env, "scheduler", "capacity", "status", "--json")
 	var result map[string]interface{}
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("parse queue status JSON: %v\nraw: %s", err, out)
+		t.Fatalf("parse scheduler status JSON: %v\nraw: %s", err, out)
 	}
 	return result
 }
 
-// getQueueList runs `gt queue list --json` and returns the parsed output.
-func getQueueList(t *testing.T, gtBinary, dir string, env []string) []map[string]interface{} {
+// getSchedulerList runs `gt scheduler capacity list --json` and returns the parsed output.
+func getSchedulerList(t *testing.T, gtBinary, dir string, env []string) []map[string]interface{} {
 	t.Helper()
-	out := runGTCmdOutput(t, gtBinary, dir, env, "queue", "list", "--json")
+	out := runGTCmdOutput(t, gtBinary, dir, env, "scheduler", "capacity", "list", "--json")
 	var result []map[string]interface{}
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("parse queue list JSON: %v\nraw: %s", err, out)
+		t.Fatalf("parse scheduler list JSON: %v\nraw: %s", err, out)
 	}
 	return result
 }
@@ -264,12 +265,12 @@ func createTestBeadOfType(t *testing.T, dir, title, issueType string) string {
 	return issue.ID
 }
 
-// slingToQueue runs `gt sling <bead> <rig> --queue --hook-raw-bead` with
-// optional extra flags. Uses --hook-raw-bead to skip formula cooking (no
+// slingToScheduler runs `gt sling <bead> <rig> --scheduler capacity --hook-raw-bead`
+// with optional extra flags. Uses --hook-raw-bead to skip formula cooking (no
 // formula infrastructure in integration tests).
-func slingToQueue(t *testing.T, gtBinary, dir string, env []string, beadID, rig string, extraFlags ...string) string {
+func slingToScheduler(t *testing.T, gtBinary, dir string, env []string, beadID, rig string, extraFlags ...string) string {
 	t.Helper()
-	args := []string{"sling", beadID, rig, "--queue", "--hook-raw-bead"}
+	args := []string{"sling", beadID, rig, "--scheduler", "capacity", "--hook-raw-bead"}
 	args = append(args, extraFlags...)
 	return runGTCmdOutput(t, gtBinary, dir, env, args...)
 }

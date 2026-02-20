@@ -6,14 +6,16 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
+	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
-// EnqueueOptions holds options for enqueueing a bead.
-type EnqueueOptions struct {
+// ScheduleOptions holds options for scheduling a bead.
+type ScheduleOptions struct {
 	Formula     string   // Formula to apply at dispatch time (e.g., "mol-polecat-work")
 	Args        string   // Natural language args for executor
 	Vars        []string // Formula variables (key=value)
@@ -22,7 +24,7 @@ type EnqueueOptions struct {
 	NoConvoy    bool     // Skip auto-convoy creation
 	Owned       bool     // Mark auto-convoy as caller-managed lifecycle
 	DryRun      bool     // Show what would be done without acting
-	Force       bool     // Force enqueue even if bead is hooked/in_progress
+	Force       bool     // Force schedule even if bead is hooked/in_progress
 	NoMerge     bool     // Skip merge queue on completion
 	Account     string   // Claude Code account handle
 	Agent       string   // Agent override (e.g., "gemini", "codex")
@@ -30,66 +32,49 @@ type EnqueueOptions struct {
 	Ralph       bool     // Ralph Wiggum loop mode
 }
 
-const (
-	// LabelQueued marks a bead as queued for dispatch.
-	LabelQueued = "gt:queued"
-)
-
-// enqueueBead queues a bead for deferred dispatch via the work queue.
-// It adds labels, writes queue metadata to the description, and creates
-// an auto-convoy. Does NOT spawn a polecat or hook the bead.
-func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
+// scheduleBead schedules a bead for deferred dispatch via the capacity scheduler.
+func scheduleBead(beadID, rigName string, opts ScheduleOptions) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return err
 	}
 
-	// Validate bead exists
 	if err := verifyBeadExists(beadID); err != nil {
 		return fmt.Errorf("bead '%s' not found", beadID)
 	}
 
-	// Validate rig exists
 	if _, isRig := IsRigName(rigName); !isRig {
 		return fmt.Errorf("'%s' is not a known rig", rigName)
 	}
 
-	// Cross-rig guard: prevent queuing beads to the wrong rig.
-	// Polecats are worktree-scoped — a bead from Rig A dispatched in Rig B
-	// creates a broken polecat. Skip when Force is set (user override).
 	if !opts.Force {
 		if err := checkCrossRigGuard(beadID, rigName+"/polecats/_", townRoot); err != nil {
 			return err
 		}
 	}
 
-	// Get bead info for status/label checks
 	info, err := getBeadInfo(beadID)
 	if err != nil {
 		return fmt.Errorf("checking bead status: %w", err)
 	}
 
-	// Idempotency: skip if bead is actively queued (open + gt:queued label).
-	// Dispatched beads retain gt:queued as audit trail but are hooked/closed,
-	// so they should be re-queueable without --force.
-	hasQueuedLabel := false
+	// Idempotency: skip if bead is actively scheduled (open + gt:queued label).
+	isScheduled := false
 	for _, label := range info.Labels {
-		if label == LabelQueued {
-			hasQueuedLabel = true
+		if label == capacity.LabelScheduled {
+			isScheduled = true
 			break
 		}
 	}
-	if hasQueuedLabel && info.Status == "open" {
-		fmt.Printf("%s Bead %s is already queued, no-op\n", style.Dim.Render("○"), beadID)
+	if isScheduled && info.Status == "open" {
+		fmt.Printf("%s Bead %s is already scheduled, no-op\n", style.Dim.Render("○"), beadID)
 		return nil
 	}
 
-	// Check status: error if hooked/in_progress (unless --force)
 	if (info.Status == "pinned" || info.Status == "hooked") && !opts.Force {
 		return fmt.Errorf("bead %s is already %s to %s\nUse --force to override", beadID, info.Status, info.Assignee)
 	}
 
-	// Validate formula exists (lightweight check, no side effects for dry-run)
 	if opts.Formula != "" {
 		if err := verifyFormulaExists(opts.Formula); err != nil {
 			return fmt.Errorf("formula %q not found: %w", opts.Formula, err)
@@ -97,18 +82,16 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 	}
 
 	if opts.DryRun {
-		fmt.Printf("Would queue %s → %s\n", beadID, rigName)
-		fmt.Printf("  Would add label: %s\n", LabelQueued)
-		fmt.Printf("  Would append queue metadata to description\n")
+		fmt.Printf("Would schedule %s → %s\n", beadID, rigName)
+		fmt.Printf("  Would add label: %s\n", capacity.LabelScheduled)
+		fmt.Printf("  Would append scheduler metadata to description\n")
 		if !opts.NoConvoy {
 			fmt.Printf("  Would create auto-convoy\n")
 		}
 		return nil
 	}
 
-	// Cook formula after dry-run check to avoid side effects (bd cook writes
-	// artifacts) when only previewing. Catches bad protos early before the
-	// daemon tries to dispatch and silently requeues in an infinite loop.
+	// Cook formula after dry-run check to avoid side effects
 	if opts.Formula != "" {
 		workDir := beads.ResolveHookDir(townRoot, beadID, "")
 		if err := CookFormula(opts.Formula, workDir, townRoot); err != nil {
@@ -116,8 +99,8 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		}
 	}
 
-	// Build queue metadata
-	meta := NewQueueMetadata(rigName)
+	// Build scheduler metadata
+	meta := capacity.NewMetadata(rigName)
 	if opts.Formula != "" {
 		meta.Formula = opts.Formula
 	}
@@ -144,51 +127,41 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 	if opts.Ralph {
 		meta.Mode = "ralph"
 	}
-	// NoBoot is intentionally NOT stored in queue metadata. Dispatch always
-	// sets NoBoot=true to avoid lock contention in the daemon dispatch loop.
-	// Storing it would be dead code that creates false contract signaling.
 	meta.Owned = opts.Owned
 
-	// Strip any existing queue metadata before appending new metadata.
-	// This ensures idempotent re-enqueue (no duplicate ---queue--- blocks).
-	baseDesc := StripQueueMetadata(info.Description)
+	// Strip any existing metadata before appending new metadata
+	baseDesc := capacity.StripMetadata(info.Description)
 
-	// Append queue metadata to bead description
-	metaBlock := FormatQueueMetadata(meta)
+	metaBlock := capacity.FormatMetadata(meta)
 	newDesc := baseDesc
 	if newDesc != "" {
 		newDesc += "\n"
 	}
 	newDesc += metaBlock
 
-	// Write metadata FIRST, then add label. Metadata without the label is
-	// inert (dispatch queries bd ready --label gt:queued, so unlabeled beads
-	// are invisible). The label is the atomic "commit" of the enqueue.
-	// This prevents a race where dispatch fires between label-add and
-	// metadata-write, sees meta==nil, and irreversibly quarantines the bead.
+	// Write metadata FIRST, then add label (atomic activation)
 	beadDir := resolveBeadDir(beadID)
 	descCmd := exec.Command("bd", "update", beadID, "--description="+newDesc)
 	descCmd.Dir = beadDir
 	if err := descCmd.Run(); err != nil {
-		return fmt.Errorf("writing queue metadata: %w", err)
+		return fmt.Errorf("writing scheduler metadata: %w", err)
 	}
 
-	// Add queue label (the activation signal for dispatch).
 	labelCmd := exec.Command("bd", "update", beadID,
-		"--add-label="+LabelQueued)
+		"--add-label="+capacity.LabelScheduled)
 	labelCmd.Dir = beadDir
 	var labelStderr bytes.Buffer
 	labelCmd.Stderr = &labelStderr
 	if err := labelCmd.Run(); err != nil {
-		// Roll back metadata — strip it so the bead doesn't have orphaned queue data.
+		// Roll back metadata
 		rollbackCmd := exec.Command("bd", "update", beadID, "--description="+baseDesc)
 		rollbackCmd.Dir = beadDir
-		_ = rollbackCmd.Run() // best effort rollback
+		_ = rollbackCmd.Run()
 		errMsg := strings.TrimSpace(labelStderr.String())
 		if errMsg != "" {
-			return fmt.Errorf("adding queue label: %s", errMsg)
+			return fmt.Errorf("adding scheduled label: %s", errMsg)
 		}
-		return fmt.Errorf("adding queue label: %w", err)
+		return fmt.Errorf("adding scheduled label: %w", err)
 	}
 
 	// Auto-convoy (unless --no-convoy)
@@ -200,9 +173,8 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 				fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
 			} else {
 				fmt.Printf("%s Created convoy %s\n", style.Bold.Render("→"), convoyID)
-				// Re-persist metadata with convoy ID so dispatch can see it
 				meta.Convoy = convoyID
-				updatedBlock := FormatQueueMetadata(meta)
+				updatedBlock := capacity.FormatMetadata(meta)
 				updatedDesc := baseDesc
 				if updatedDesc != "" {
 					updatedDesc += "\n"
@@ -219,32 +191,29 @@ func enqueueBead(beadID, rigName string, opts EnqueueOptions) error {
 		}
 	}
 
-	// Log enqueue event
 	actor := detectActor()
-	_ = events.LogFeed(events.TypeQueueEnqueue, actor, events.QueueEnqueuePayload(beadID, rigName))
+	_ = events.LogFeed(events.TypeSchedulerEnqueue, actor, events.SchedulerEnqueuePayload(beadID, rigName))
 
-	fmt.Printf("%s Queued %s → %s\n", style.Bold.Render("✓"), beadID, rigName)
+	fmt.Printf("%s Scheduled %s → %s\n", style.Bold.Render("✓"), beadID, rigName)
 	return nil
 }
 
-// runBatchEnqueue enqueues multiple beads for deferred dispatch.
-// Called from sling when --queue is set with multiple beads and a rig target.
-func runBatchEnqueue(beadIDs []string, rigName string) {
+// runBatchSchedule schedules multiple beads for deferred dispatch.
+func runBatchSchedule(beadIDs []string, rigName string) {
 	if slingDryRun {
-		fmt.Printf("%s Would queue %d beads to rig '%s':\n", style.Bold.Render("📋"), len(beadIDs), rigName)
+		fmt.Printf("%s Would schedule %d beads to rig '%s':\n", style.Bold.Render("📋"), len(beadIDs), rigName)
 		for _, beadID := range beadIDs {
-			fmt.Printf("  Would queue: %s → %s\n", beadID, rigName)
+			fmt.Printf("  Would schedule: %s → %s\n", beadID, rigName)
 		}
 		return
 	}
 
-	fmt.Printf("%s Queuing %d beads to rig '%s'...\n", style.Bold.Render("📋"), len(beadIDs), rigName)
+	fmt.Printf("%s Scheduling %d beads to rig '%s'...\n", style.Bold.Render("📋"), len(beadIDs), rigName)
 
 	successCount := 0
 	for _, beadID := range beadIDs {
-		// Resolve formula from flags
 		formula := resolveFormula(slingFormula, slingHookRawBead)
-		err := enqueueBead(beadID, rigName, EnqueueOptions{
+		err := scheduleBead(beadID, rigName, ScheduleOptions{
 			Formula:     formula,
 			Args:        slingArgs,
 			Vars:        slingVars,
@@ -267,38 +236,31 @@ func runBatchEnqueue(beadIDs []string, rigName string) {
 		successCount++
 	}
 
-	fmt.Printf("\n%s Queued %d/%d beads\n", style.Bold.Render("📊"), successCount, len(beadIDs))
+	fmt.Printf("\n%s Scheduled %d/%d beads\n", style.Bold.Render("📊"), successCount, len(beadIDs))
 }
 
-// dequeueBeadLabels removes the gt:queued label and strips queue metadata from
-// a bead. If metadata stripping fails (e.g., getBeadInfo error), falls back to
-// label-only removal to avoid blocking queue clear operations.
-func dequeueBeadLabels(beadID string) error {
+// unscheduleBeadLabels removes the gt:queued label and strips scheduler metadata.
+func unscheduleBeadLabels(beadID string) error {
 	beadDir := resolveBeadDir(beadID)
 
-	// Try to strip queue metadata from description.
-	// Best-effort: if we can't read the bead, still remove the label.
 	info, err := getBeadInfo(beadID)
 	if err == nil {
-		stripped := StripQueueMetadata(info.Description)
+		stripped := capacity.StripMetadata(info.Description)
 		if stripped != info.Description {
-			// Combine metadata strip + label removal in a single bd update
 			cmd := exec.Command("bd", "update", beadID,
 				"--description="+stripped,
-				"--remove-label="+LabelQueued)
+				"--remove-label="+capacity.LabelScheduled)
 			cmd.Dir = beadDir
 			return cmd.Run()
 		}
 	}
 
-	// Fallback: label-only removal (no metadata to strip, or couldn't read bead)
-	cmd := exec.Command("bd", "update", beadID, "--remove-label="+LabelQueued)
+	cmd := exec.Command("bd", "update", beadID, "--remove-label="+capacity.LabelScheduled)
 	cmd.Dir = beadDir
 	return cmd.Run()
 }
 
 // resolveRigForBead determines the rig that owns a bead from its ID prefix.
-// Returns empty string for town-root beads or unknown prefixes.
 func resolveRigForBead(townRoot, beadID string) string {
 	prefix := beads.ExtractPrefix(beadID)
 	if prefix == "" {
@@ -308,7 +270,6 @@ func resolveRigForBead(townRoot, beadID string) string {
 }
 
 // resolveFormula determines the formula name from user flags.
-// Priority: --hook-raw-bead (suppresses all) > --formula (explicit) > default.
 func resolveFormula(explicit string, hookRawBead bool) string {
 	if hookRawBead {
 		return ""
@@ -319,12 +280,66 @@ func resolveFormula(explicit string, hookRawBead bool) string {
 	return "mol-polecat-work"
 }
 
-// hasQueuedLabel checks if a bead has the gt:queued label.
-func hasQueuedLabel(labels []string) bool {
+// hasScheduledLabel checks if a bead has the gt:queued label.
+func hasScheduledLabel(labels []string) bool {
 	for _, l := range labels {
-		if l == LabelQueued {
+		if l == capacity.LabelScheduled {
 			return true
 		}
 	}
 	return false
+}
+
+// detectSchedulerIDType determines what kind of ID was passed for scheduling.
+// Returns "convoy", "epic", or "task".
+func detectSchedulerIDType(id string) (string, error) {
+	// Fast path: hq-cv-* is always a convoy
+	if strings.HasPrefix(id, "hq-cv-") {
+		return "convoy", nil
+	}
+
+	info, err := getBeadInfo(id)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve bead '%s': %w", id, err)
+	}
+
+	switch info.IssueType {
+	case "epic":
+		return "epic", nil
+	case "convoy":
+		return "convoy", nil
+	}
+
+	for _, label := range info.Labels {
+		switch label {
+		case "gt:epic":
+			return "epic", nil
+		case "gt:convoy":
+			return "convoy", nil
+		}
+	}
+
+	return "task", nil
+}
+
+// schedulerTaskOnlyFlagNames lists flags that only apply to task bead scheduling,
+// not convoy or epic mode.
+var schedulerTaskOnlyFlagNames = []string{
+	"account", "agent", "ralph", "args", "var",
+	"merge", "base-branch", "no-convoy", "owned", "no-merge",
+}
+
+// validateNoTaskOnlySchedulerFlags checks that no task-only flags were set.
+func validateNoTaskOnlySchedulerFlags(cmd *cobra.Command, mode string) error {
+	var used []string
+	for _, name := range schedulerTaskOnlyFlagNames {
+		if f := cmd.Flags().Lookup(name); f != nil && f.Changed {
+			used = append(used, "--"+name)
+		}
+	}
+	if len(used) > 0 {
+		return fmt.Errorf("%s mode does not support: %s\nThese flags only apply to task bead scheduling",
+			mode, strings.Join(used, ", "))
+	}
+	return nil
 }

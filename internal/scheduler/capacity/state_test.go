@@ -1,4 +1,4 @@
-package cmd
+package capacity
 
 import (
 	"os"
@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-func TestLoadQueueState_MissingFile(t *testing.T) {
+func TestLoadState_MissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	state, err := LoadQueueState(tmpDir)
+	state, err := LoadState(tmpDir)
 	if err != nil {
-		t.Fatalf("LoadQueueState with missing file: %v", err)
+		t.Fatalf("LoadState with missing file: %v", err)
 	}
 	if state.Paused {
 		t.Error("expected Paused=false for missing file")
@@ -28,10 +28,10 @@ func TestLoadQueueState_MissingFile(t *testing.T) {
 	}
 }
 
-func TestSaveAndLoadQueueState_RoundTrip(t *testing.T) {
+func TestSaveAndLoadState_RoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	original := &QueueState{
+	original := &SchedulerState{
 		Paused:            true,
 		PausedBy:          "test-user",
 		PausedAt:          "2026-01-15T10:00:00Z",
@@ -39,13 +39,13 @@ func TestSaveAndLoadQueueState_RoundTrip(t *testing.T) {
 		LastDispatchCount: 3,
 	}
 
-	if err := SaveQueueState(tmpDir, original); err != nil {
-		t.Fatalf("SaveQueueState: %v", err)
+	if err := SaveState(tmpDir, original); err != nil {
+		t.Fatalf("SaveState: %v", err)
 	}
 
-	loaded, err := LoadQueueState(tmpDir)
+	loaded, err := LoadState(tmpDir)
 	if err != nil {
-		t.Fatalf("LoadQueueState: %v", err)
+		t.Fatalf("LoadState: %v", err)
 	}
 
 	if loaded.Paused != original.Paused {
@@ -66,7 +66,7 @@ func TestSaveAndLoadQueueState_RoundTrip(t *testing.T) {
 }
 
 func TestSetPaused(t *testing.T) {
-	state := &QueueState{}
+	state := &SchedulerState{}
 
 	before := time.Now().UTC()
 	state.SetPaused("admin")
@@ -89,7 +89,7 @@ func TestSetPaused(t *testing.T) {
 }
 
 func TestSetResumed(t *testing.T) {
-	state := &QueueState{
+	state := &SchedulerState{
 		Paused:   true,
 		PausedBy: "admin",
 		PausedAt: "2026-01-15T10:00:00Z",
@@ -109,7 +109,7 @@ func TestSetResumed(t *testing.T) {
 }
 
 func TestRecordDispatch(t *testing.T) {
-	state := &QueueState{}
+	state := &SchedulerState{}
 
 	before := time.Now().UTC()
 	state.RecordDispatch(5)
@@ -128,7 +128,7 @@ func TestRecordDispatch(t *testing.T) {
 	}
 }
 
-func TestSaveQueueState_CreatesRuntimeDir(t *testing.T) {
+func TestSaveState_CreatesRuntimeDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	runtimeDir := filepath.Join(tmpDir, ".runtime")
 
@@ -137,9 +137,9 @@ func TestSaveQueueState_CreatesRuntimeDir(t *testing.T) {
 		t.Fatal(".runtime should not exist before save")
 	}
 
-	state := &QueueState{Paused: true, PausedBy: "test"}
-	if err := SaveQueueState(tmpDir, state); err != nil {
-		t.Fatalf("SaveQueueState: %v", err)
+	state := &SchedulerState{Paused: true, PausedBy: "test"}
+	if err := SaveState(tmpDir, state); err != nil {
+		t.Fatalf("SaveState: %v", err)
 	}
 
 	// Confirm .runtime was created
@@ -151,9 +151,35 @@ func TestSaveQueueState_CreatesRuntimeDir(t *testing.T) {
 		t.Fatal(".runtime should be a directory")
 	}
 
-	// Confirm file exists in .runtime
-	stateFile := filepath.Join(runtimeDir, "queue-state.json")
-	if _, err := os.Stat(stateFile); err != nil {
-		t.Fatalf("queue-state.json should exist: %v", err)
+	// Confirm file exists in .runtime with new name
+	sf := filepath.Join(runtimeDir, "scheduler-state.json")
+	if _, err := os.Stat(sf); err != nil {
+		t.Fatalf("scheduler-state.json should exist: %v", err)
+	}
+}
+
+func TestLoadState_LegacyFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	runtimeDir := filepath.Join(tmpDir, ".runtime")
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a legacy queue-state.json file
+	legacyData := `{"paused": true, "paused_by": "legacy-user", "paused_at": "2026-01-15T10:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(runtimeDir, "queue-state.json"), []byte(legacyData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// LoadState should fall back to legacy path when scheduler-state.json doesn't exist
+	state, err := LoadState(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadState with legacy file: %v", err)
+	}
+	if !state.Paused {
+		t.Error("expected Paused=true from legacy file")
+	}
+	if state.PausedBy != "legacy-user" {
+		t.Errorf("PausedBy: got %q, want %q", state.PausedBy, "legacy-user")
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -670,17 +671,17 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	case "default_agent":
 		townSettings.DefaultAgent = value
 
-	case "queue.enabled":
+	case "scheduler.enabled":
 		b, err := parseBool(value)
 		if err != nil {
 			return fmt.Errorf("invalid value for %s: %w (expected true/false)", key, err)
 		}
-		if townSettings.Queue == nil {
-			townSettings.Queue = config.DefaultWorkQueueConfig()
+		if townSettings.Scheduler == nil {
+			townSettings.Scheduler = capacity.DefaultSchedulerConfig()
 		}
-		townSettings.Queue.Enabled = b
+		townSettings.Scheduler.Enabled = b
 
-	case "queue.max_polecats":
+	case "scheduler.max_polecats":
 		n, err := strconv.Atoi(value)
 		if err != nil {
 			return fmt.Errorf("invalid value for %s: %w (expected integer)", key, err)
@@ -688,34 +689,34 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if n < 0 {
 			return fmt.Errorf("invalid value for %s: must be >= 0 (0 = unlimited)", key)
 		}
-		if townSettings.Queue == nil {
-			townSettings.Queue = config.DefaultWorkQueueConfig()
+		if townSettings.Scheduler == nil {
+			townSettings.Scheduler = capacity.DefaultSchedulerConfig()
 		}
-		townSettings.Queue.MaxPolecats = &n
+		townSettings.Scheduler.MaxPolecats = &n
 
-	case "queue.batch_size":
+	case "scheduler.batch_size":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 1 {
 			return fmt.Errorf("invalid value for %s: expected positive integer", key)
 		}
-		if townSettings.Queue == nil {
-			townSettings.Queue = config.DefaultWorkQueueConfig()
+		if townSettings.Scheduler == nil {
+			townSettings.Scheduler = capacity.DefaultSchedulerConfig()
 		}
-		townSettings.Queue.BatchSize = &n
+		townSettings.Scheduler.BatchSize = &n
 
-	case "queue.spawn_delay":
+	case "scheduler.spawn_delay":
 		// Validate it parses as a duration
 		_, err := time.ParseDuration(value)
 		if err != nil {
 			return fmt.Errorf("invalid value for %s: %w (expected Go duration, e.g. 2s, 500ms)", key, err)
 		}
-		if townSettings.Queue == nil {
-			townSettings.Queue = config.DefaultWorkQueueConfig()
+		if townSettings.Scheduler == nil {
+			townSettings.Scheduler = capacity.DefaultSchedulerConfig()
 		}
-		townSettings.Queue.SpawnDelay = value
+		townSettings.Scheduler.SpawnDelay = value
 
 	default:
-		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  queue.enabled\n  queue.max_polecats\n  queue.batch_size\n  queue.spawn_delay", key)
+		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  scheduler.enabled\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay", key)
 	}
 
 	if err := config.SaveTownSettings(settingsPath, townSettings); err != nil {
@@ -761,36 +762,36 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 			value = "claude"
 		}
 
-	case "queue.enabled":
-		if townSettings.Queue != nil && townSettings.Queue.Enabled {
+	case "scheduler.enabled":
+		if townSettings.Scheduler != nil && townSettings.Scheduler.Enabled {
 			value = "true"
 		} else {
 			value = "false"
 		}
 
-	case "queue.max_polecats":
-		qcfg := townSettings.Queue
-		if qcfg == nil {
-			qcfg = config.DefaultWorkQueueConfig()
+	case "scheduler.max_polecats":
+		scfg := townSettings.Scheduler
+		if scfg == nil {
+			scfg = capacity.DefaultSchedulerConfig()
 		}
-		value = strconv.Itoa(qcfg.GetMaxPolecats())
+		value = strconv.Itoa(scfg.GetMaxPolecats())
 
-	case "queue.batch_size":
-		qcfg := townSettings.Queue
-		if qcfg == nil {
-			qcfg = config.DefaultWorkQueueConfig()
+	case "scheduler.batch_size":
+		scfg := townSettings.Scheduler
+		if scfg == nil {
+			scfg = capacity.DefaultSchedulerConfig()
 		}
-		value = strconv.Itoa(qcfg.GetBatchSize())
+		value = strconv.Itoa(scfg.GetBatchSize())
 
-	case "queue.spawn_delay":
-		qcfg := townSettings.Queue
-		if qcfg == nil {
-			qcfg = config.DefaultWorkQueueConfig()
+	case "scheduler.spawn_delay":
+		scfg := townSettings.Scheduler
+		if scfg == nil {
+			scfg = capacity.DefaultSchedulerConfig()
 		}
-		value = qcfg.GetSpawnDelay().String()
+		value = scfg.GetSpawnDelay().String()
 
 	default:
-		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  queue.enabled\n  queue.max_polecats\n  queue.batch_size\n  queue.spawn_delay", key)
+		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  scheduler.enabled\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay", key)
 	}
 
 	fmt.Println(value)

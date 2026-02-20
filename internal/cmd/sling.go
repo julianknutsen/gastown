@@ -125,7 +125,7 @@ var (
 	slingMaxConcurrent int    // --max-concurrent: limit concurrent spawns in batch mode
 	slingBaseBranch    string // --base-branch: override base branch for polecat worktree
 	slingRalph         bool   // --ralph: enable Ralph Wiggum loop mode for multi-step workflows
-	slingQueue         bool   // --queue: defer dispatch via work queue instead of immediate sling
+	slingScheduler     string // --scheduler: dispatch scheduler (e.g., "capacity")
 	slingFormula       string // --formula: override formula for dispatch (default: mol-polecat-work)
 )
 
@@ -152,7 +152,7 @@ func init() {
 	slingCmd.Flags().IntVar(&slingMaxConcurrent, "max-concurrent", 0, "Limit concurrent polecat spawns in batch mode (0 = no limit)")
 	slingCmd.Flags().StringVar(&slingBaseBranch, "base-branch", "", "Override base branch for polecat worktree (e.g., 'develop', 'release/v2')")
 	slingCmd.Flags().BoolVar(&slingRalph, "ralph", false, "Enable Ralph Wiggum loop mode (fresh context per step, for multi-step workflows)")
-	slingCmd.Flags().BoolVar(&slingQueue, "queue", false, "Defer dispatch via work queue instead of immediate sling")
+	slingCmd.Flags().StringVar(&slingScheduler, "scheduler", "", "Dispatch scheduler: capacity")
 	slingCmd.Flags().StringVar(&slingFormula, "formula", "", "Formula to apply (default: mol-polecat-work for polecat targets)")
 
 	rootCmd.AddCommand(slingCmd)
@@ -242,31 +242,37 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 	// Batch mode detection: multiple beads with rig target
 	// Pattern: gt sling gt-abc gt-def gt-ghi gastown
+	// Validate --scheduler flag
+	useScheduler := slingScheduler != ""
+	if useScheduler && slingScheduler != "capacity" {
+		return fmt.Errorf("unknown scheduler %q: only 'capacity' is supported", slingScheduler)
+	}
+
 	// When len(args) > 2 and last arg is a rig, sling each bead to its own polecat
 	if len(args) > 2 {
 		lastArg := args[len(args)-1]
 		if rigName, isRig := IsRigName(lastArg); isRig {
-			if slingQueue {
-				runBatchEnqueue(args[:len(args)-1], rigName)
+			if useScheduler {
+				runBatchSchedule(args[:len(args)-1], rigName)
 				return nil
 			}
 			return runBatchSling(args[:len(args)-1], rigName, townBeadsDir)
 		}
 	}
 
-	// Queue routing: formula-on-bead + queue
-	// gt sling mol-review --on gt-abc gastown --queue
-	if slingQueue && slingOnTarget != "" && len(args) >= 2 {
+	// Scheduler routing: formula-on-bead + scheduler
+	// gt sling mol-review --on gt-abc gastown --scheduler capacity
+	if useScheduler && slingOnTarget != "" && len(args) >= 2 {
 		rigName, isRig := IsRigName(args[len(args)-1])
 		if !isRig {
-			return fmt.Errorf("--queue requires a rig target (got %q)", args[len(args)-1])
+			return fmt.Errorf("--scheduler requires a rig target (got %q)", args[len(args)-1])
 		}
 		formulaName := args[0]
 		if slingHookRawBead {
 			formulaName = ""
 		}
 		beadID := slingOnTarget
-		return enqueueBead(beadID, rigName, EnqueueOptions{
+		return scheduleBead(beadID, rigName, ScheduleOptions{
 			Formula:     formulaName,
 			Args:        slingArgs,
 			Vars:        slingVars,
@@ -284,44 +290,92 @@ func runSling(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	// Queue routing for single bead: gt sling gt-abc gastown --queue
-	// Guard: standalone formulas cannot be queued — catch before enqueueBead
-	if slingQueue && len(args) == 2 {
+	// Scheduler routing for single bead + rig: gt sling gt-abc gastown --scheduler capacity
+	// Also handles 2-arg case where second is NOT a rig (mixed type detection, error).
+	if useScheduler && len(args) == 2 {
 		rigName, isRig := IsRigName(args[1])
-		if !isRig {
-			return fmt.Errorf("--queue requires a rig target (got %q)", args[1])
-		}
-		// If the first arg is a formula (not a bead), reject early
-		if verifyBeadExists(args[0]) != nil {
-			if verifyFormulaExists(args[0]) == nil {
-				return fmt.Errorf("standalone formula cannot be queued (use --on <bead>)")
+		if isRig {
+			// Reject epic/convoy IDs — they must be scheduled without a rig
+			// (children auto-resolve their rigs)
+			idType, err := detectSchedulerIDType(args[0])
+			if err == nil && idType != "task" {
+				return fmt.Errorf("%s cannot be scheduled with an explicit rig\nUse: gt sling %s --scheduler capacity (children auto-resolve rigs)",
+					idType, args[0])
 			}
+			if verifyBeadExists(args[0]) != nil {
+				if verifyFormulaExists(args[0]) == nil {
+					return fmt.Errorf("standalone formula cannot be scheduled (use --on <bead>)")
+				}
+			}
+			beadID := args[0]
+			formula := resolveFormula(slingFormula, slingHookRawBead)
+			return scheduleBead(beadID, rigName, ScheduleOptions{
+				Formula:     formula,
+				Args:        slingArgs,
+				Vars:        slingVars,
+				Merge:       slingMerge,
+				BaseBranch:  slingBaseBranch,
+				NoConvoy:    slingNoConvoy,
+				Owned:       slingOwned,
+				DryRun:      slingDryRun,
+				Force:       slingForce,
+				NoMerge:     slingNoMerge,
+				Account:     slingAccount,
+				Agent:       slingAgent,
+				HookRawBead: slingHookRawBead,
+				Ralph:       slingRalph,
+			})
 		}
-		beadID := args[0]
-		// Auto-apply formula unless --hook-raw-bead
-		formula := resolveFormula(slingFormula, slingHookRawBead)
-		return enqueueBead(beadID, rigName, EnqueueOptions{
-			Formula:     formula,
-			Args:        slingArgs,
-			Vars:        slingVars,
-			Merge:       slingMerge,
-			BaseBranch:  slingBaseBranch,
-			NoConvoy:    slingNoConvoy,
-			Owned:       slingOwned,
-			DryRun:      slingDryRun,
-			Force:       slingForce,
-			NoMerge:     slingNoMerge,
-			Account:     slingAccount,
-			Agent:       slingAgent,
-			HookRawBead: slingHookRawBead,
-			Ralph:       slingRalph,
-		})
+		// Second arg is not a rig — check for mixed ID types
+		idType2, err := detectSchedulerIDType(args[1])
+		if err == nil && idType2 != "task" {
+			return fmt.Errorf("mixed ID types in batch: '%s' is a %s, not a task bead\nConvoys and epics must be scheduled individually: gt sling %s --scheduler capacity",
+				args[1], idType2, args[1])
+		}
+		return fmt.Errorf("--scheduler requires a rig target (e.g., gt sling %s <rig> --scheduler capacity)", args[0])
 	}
 
-	// Catch-all: --queue requires a rig target. If we reach here, no queue
-	// routing matched — the user likely forgot the rig argument.
-	if slingQueue {
-		return fmt.Errorf("--queue requires a rig target (e.g., gt sling %s <rig> --queue)", args[0])
+	// Scheduler: epic/convoy auto-detection when single arg given (no rig target)
+	// gt sling <epic-id> --scheduler capacity
+	// gt sling <convoy-id> --scheduler capacity
+	if useScheduler && len(args) == 1 {
+		idType, err := detectSchedulerIDType(args[0])
+		if err != nil {
+			return err
+		}
+
+		formula := resolveFormula(slingFormula, slingHookRawBead)
+
+		switch idType {
+		case "convoy":
+			if err := validateNoTaskOnlySchedulerFlags(cmd, "convoy"); err != nil {
+				return err
+			}
+			return runConvoyScheduleByID(args[0], convoyScheduleOpts{
+				Formula:     formula,
+				HookRawBead: slingHookRawBead,
+				Force:       slingForce,
+				DryRun:      slingDryRun,
+			})
+		case "epic":
+			if err := validateNoTaskOnlySchedulerFlags(cmd, "epic"); err != nil {
+				return err
+			}
+			return runEpicScheduleByID(args[0], epicScheduleOpts{
+				Formula:     formula,
+				HookRawBead: slingHookRawBead,
+				Force:       slingForce,
+				DryRun:      slingDryRun,
+			})
+		default:
+			// Task bead without rig — can't schedule without knowing the target rig
+			return fmt.Errorf("--scheduler requires a rig target for task beads (e.g., gt sling %s <rig> --scheduler capacity)", args[0])
+		}
+	}
+
+	// Catch-all: --scheduler with 3+ args but no rig
+	if useScheduler {
+		return fmt.Errorf("--scheduler requires a rig target (e.g., gt sling %s <rig> --scheduler capacity)", args[0])
 	}
 
 	// Determine mode based on flags and argument types
@@ -352,8 +406,8 @@ func runSling(cmd *cobra.Command, args []string) error {
 			// Not a verified bead - try as standalone formula
 			if err := verifyFormulaExists(firstArg); err == nil {
 				// Standalone formula mode: gt sling <formula> [target]
-				// Note: --queue is already caught by the catch-all guard above,
-				// so no slingQueue check needed here.
+				// Note: --scheduler is already caught by the catch-all guard above,
+				// so no scheduler check needed here.
 				return runSlingFormula(args)
 			}
 			// Not a formula either - check if it looks like a bead ID (routing issue workaround).

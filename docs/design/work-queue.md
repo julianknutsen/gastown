@@ -1,5 +1,11 @@
 # Work Queue Architecture
 
+> **NOTE:** This document describes the original `gt queue` / `--queue` CLI surface.
+> The implementation has been renamed to `gt scheduler capacity` / `--scheduler capacity`.
+> Code now lives in `internal/scheduler/capacity/` (types/pure functions) and
+> `internal/cmd/scheduler*.go` / `sling_schedule.go` (orchestration).
+> Config keys use `scheduler.*` instead of `queue.*`.
+
 > Capacity-controlled polecat dispatch for batched work.
 
 ## Quick Start

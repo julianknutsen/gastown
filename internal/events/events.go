@@ -69,10 +69,10 @@ const (
 	TypeMergeFailed  = "merge_failed"
 	TypeMergeSkipped = "merge_skipped"
 
-	// Work queue events
-	TypeQueueEnqueue        = "queue_enqueue"         // Bead queued for deferred dispatch
-	TypeQueueDispatch       = "queue_dispatch"        // Bead dispatched from queue
-	TypeQueueDispatchFailed = "queue_dispatch_failed" // Bead dispatch failed (requeued)
+	// Scheduler events
+	TypeSchedulerEnqueue        = "scheduler_enqueue"         // Bead scheduled for deferred dispatch
+	TypeSchedulerDispatch       = "scheduler_dispatch"        // Bead dispatched from scheduler
+	TypeSchedulerDispatchFailed = "scheduler_dispatch_failed" // Bead dispatch failed (requeued)
 )
 
 // EventsFile is the name of the raw events log.
@@ -338,16 +338,16 @@ func SessionPayload(sessionID, role, topic, cwd string) map[string]interface{} {
 	return p
 }
 
-// QueueEnqueuePayload creates a payload for queue enqueue events.
-func QueueEnqueuePayload(beadID, rig string) map[string]interface{} {
+// SchedulerEnqueuePayload creates a payload for scheduler enqueue events.
+func SchedulerEnqueuePayload(beadID, rig string) map[string]interface{} {
 	return map[string]interface{}{
 		"bead": beadID,
 		"rig":  rig,
 	}
 }
 
-// QueueDispatchPayload creates a payload for queue dispatch events.
-func QueueDispatchPayload(beadID, rig, polecat string) map[string]interface{} {
+// SchedulerDispatchPayload creates a payload for scheduler dispatch events.
+func SchedulerDispatchPayload(beadID, rig, polecat string) map[string]interface{} {
 	return map[string]interface{}{
 		"bead":    beadID,
 		"rig":     rig,
@@ -355,8 +355,8 @@ func QueueDispatchPayload(beadID, rig, polecat string) map[string]interface{} {
 	}
 }
 
-// QueueDispatchFailedPayload creates a payload for queue dispatch failure events.
-func QueueDispatchFailedPayload(beadID, rig, errMsg string) map[string]interface{} {
+// SchedulerDispatchFailedPayload creates a payload for scheduler dispatch failure events.
+func SchedulerDispatchFailedPayload(beadID, rig, errMsg string) map[string]interface{} {
 	return map[string]interface{}{
 		"bead":  beadID,
 		"rig":   rig,

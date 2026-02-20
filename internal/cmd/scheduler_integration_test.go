@@ -1,7 +1,7 @@
 //go:build integration
 
-// Package cmd contains integration tests for the work queue subsystem.
-// These tests exercise queue CLI operations (enqueue, list, status, dispatch
+// Package cmd contains integration tests for the capacity scheduler subsystem.
+// These tests exercise scheduler CLI operations (schedule, list, status, dispatch
 // dry-run, circuit breaker) against a Dolt-server-backed beads DB. No Claude
 // credentials, no agent sessions.
 //
@@ -9,7 +9,7 @@
 //
 // Run with:
 //
-//	go test -tags=integration -run 'TestQueue' -timeout 5m -count=1 -v ./internal/cmd/
+//	go test -tags=integration -run 'TestScheduler' -timeout 5m -count=1 -v ./internal/cmd/
 package cmd
 
 import (
@@ -24,12 +24,13 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 )
 
-// queueTestCounter generates unique prefixes for each test to isolate Dolt
+// schedulerTestCounter generates unique prefixes for each test to isolate Dolt
 // databases on the shared server. Without this, beads from earlier tests
 // leak into later tests (all using the same database).
-var queueTestCounter atomic.Int32
+var schedulerTestCounter atomic.Int32
 
 // initBeadsDBForServer initializes a beads DB that can operate against the
 // shared Dolt test server on port 3307. Uses local init (bd init --prefix)
@@ -57,16 +58,16 @@ func initBeadsDBForServer(t *testing.T, dir, prefix string) {
 	}
 }
 
-// setupQueueIntegrationTown creates a minimal town filesystem for queue tests.
+// setupSchedulerIntegrationTown creates a minimal town filesystem for scheduler tests.
 // Uses the shared Dolt test server on port 3307 (managed by requireDoltServer)
 // for beads databases. No gt install, no Claude credentials, no agent sessions.
 //
 // Returns (hqPath, rigPath, gtBinary, env).
-func setupQueueIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary string, env []string) {
+func setupSchedulerIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary string, env []string) {
 	t.Helper()
 
 	if _, err := exec.LookPath("bd"); err != nil {
-		t.Skip("bd not installed, skipping queue integration test")
+		t.Skip("bd not installed, skipping scheduler integration test")
 	}
 
 	requireDoltServer(t)
@@ -84,7 +85,7 @@ func setupQueueIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary string, 
 
 	// Generate unique prefixes per test to avoid cross-test data leakage on
 	// the shared Dolt server. Each test gets its own databases (e.g., beads_h3, beads_r3).
-	n := queueTestCounter.Add(1)
+	n := schedulerTestCounter.Add(1)
 	hqPrefix := fmt.Sprintf("h%d", n)
 	rigPrefix := fmt.Sprintf("r%d", n)
 
@@ -117,7 +118,7 @@ func setupQueueIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary string, 
 		t.Fatalf("save rigs.json: %v", err)
 	}
 
-	// --- settings/ (written later by configureQueue, create dir now) ---
+	// --- settings/ (written later by configureScheduler, create dir now) ---
 	if err := os.MkdirAll(filepath.Join(hqPath, "settings"), 0755); err != nil {
 		t.Fatalf("mkdir settings: %v", err)
 	}
@@ -137,7 +138,6 @@ func setupQueueIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary string, 
 	initBeadsDBForServer(t, hqPath, hqPrefix)
 
 	// --- testrig directory (loadRig checks os.Stat on townRoot/<rigName>) ---
-	rigDir := filepath.Join(hqPath, "testrig")
 	if err := os.MkdirAll(rigPath, 0755); err != nil {
 		t.Fatalf("mkdir rigPath: %v", err)
 	}
@@ -146,7 +146,7 @@ func setupQueueIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary string, 
 	// Redirect: testrig/.beads/ → mayor/rig/.beads
 	// beadsSearchDirs scans townRoot/<dir>/.beads — the redirect lets bd commands
 	// from testrig/ resolve to the actual rig beads DB.
-	rigBeadsRedirect := filepath.Join(rigDir, ".beads")
+	rigBeadsRedirect := filepath.Join(hqPath, "testrig", ".beads")
 	if err := os.MkdirAll(rigBeadsRedirect, 0755); err != nil {
 		t.Fatalf("mkdir rig .beads redirect: %v", err)
 	}
@@ -155,10 +155,10 @@ func setupQueueIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary string, 
 	}
 
 	// --- Environment ---
-	env = cleanQueueTestEnv(tmpDir)
+	env = cleanSchedulerTestEnv(tmpDir)
 
-	// Configure queue with defaults
-	configureQueue(t, hqPath, true, 10, 3)
+	// Configure scheduler with defaults
+	configureScheduler(t, hqPath, true, 10, 3)
 
 	return hqPath, rigPath, gtBinary, env
 }
@@ -167,59 +167,59 @@ func setupQueueIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary string, 
 // Tests
 // --------------------------------------------------------------------------
 
-// TestQueueCircuitBreakerExclusion verifies that a bead with dispatch_failures
-// >= maxDispatchFailures is excluded from queue list and dry-run dispatch.
-func TestQueueCircuitBreakerExclusion(t *testing.T) {
-	hqPath, rigPath, gtBinary, env := setupQueueIntegrationTown(t)
+// TestSchedulerCircuitBreakerExclusion verifies that a bead with dispatch_failures
+// >= maxDispatchFailures is excluded from scheduler list and dry-run dispatch.
+func TestSchedulerCircuitBreakerExclusion(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
 
 	// Create a bead and manually set it up as circuit-broken.
 	beadID := createTestBead(t, rigPath, "Circuit breaker test")
 
 	// Add gt:queued label
-	addBeadLabel(t, beadID, LabelQueued, rigPath)
+	addBeadLabel(t, beadID, capacity.LabelScheduled, rigPath)
 
-	// Write queue metadata with dispatch_failures=3 (circuit-broken)
-	meta := NewQueueMetadata("testrig")
+	// Write scheduler metadata with dispatch_failures=3 (circuit-broken)
+	meta := capacity.NewMetadata("testrig")
 	meta.DispatchFailures = maxDispatchFailures // 3
 	meta.LastFailure = "simulated failure"
-	desc := FormatQueueMetadata(meta)
+	desc := capacity.FormatMetadata(meta)
 	updateBeadDescription(t, beadID, desc, rigPath)
 
-	// Verify: queue list should exclude this bead
-	listed := getQueueList(t, gtBinary, hqPath, env)
+	// Verify: scheduler list should exclude this bead
+	listed := getSchedulerList(t, gtBinary, hqPath, env)
 	for _, item := range listed {
 		if item["id"] == beadID {
-			t.Errorf("circuit-broken bead %s should be excluded from queue list", beadID)
+			t.Errorf("circuit-broken bead %s should be excluded from scheduler list", beadID)
 		}
 	}
 
-	// Verify: queue status should not count this bead
-	status := getQueueStatus(t, gtBinary, hqPath, env)
+	// Verify: scheduler status should not count this bead
+	status := getSchedulerStatus(t, gtBinary, hqPath, env)
 	total := int(status["queued_total"].(float64))
 	if total != 0 {
 		t.Errorf("queued_total = %d, want 0 (circuit-broken bead excluded)", total)
 	}
 
 	// Verify: dry-run dispatch should not pick this bead
-	out := runGTCmdOutput(t, gtBinary, hqPath, env, "queue", "run", "--dry-run")
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "capacity", "run", "--dry-run")
 	if strings.Contains(out, beadID) {
 		t.Errorf("dry-run dispatch should not mention circuit-broken bead %s", beadID)
 	}
 }
 
-// TestQueueMissingMetadataQuarantine verifies that a bead with gt:queued
-// but no queue metadata gets gt:dispatch-failed on dispatch attempt.
-func TestQueueMissingMetadataQuarantine(t *testing.T) {
-	hqPath, rigPath, gtBinary, env := setupQueueIntegrationTown(t)
+// TestSchedulerMissingMetadataQuarantine verifies that a bead with gt:queued
+// but no scheduler metadata gets gt:dispatch-failed on dispatch attempt.
+func TestSchedulerMissingMetadataQuarantine(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
 
-	// Create a bead with gt:queued but NO queue metadata (simulating a
-	// manually-labeled bead that bypassed gt sling --queue).
+	// Create a bead with gt:queued but NO scheduler metadata (simulating a
+	// manually-labeled bead that bypassed gt sling --scheduler capacity).
 	beadID := createTestBead(t, rigPath, "Missing metadata test")
-	addBeadLabel(t, beadID, LabelQueued, rigPath)
+	addBeadLabel(t, beadID, capacity.LabelScheduled, rigPath)
 
 	// Run dispatch (non-dry-run). The bead has no metadata so dispatch
 	// should quarantine it with gt:dispatch-failed.
-	runGTCmdMayFail(t, gtBinary, hqPath, env, "queue", "run", "--batch", "1")
+	runGTCmdMayFail(t, gtBinary, hqPath, env, "scheduler", "capacity", "run", "--batch", "1")
 
 	// Verify: bead should now have gt:dispatch-failed label
 	if !beadHasLabel(t, beadID, "gt:dispatch-failed", rigPath) {
@@ -227,33 +227,33 @@ func TestQueueMissingMetadataQuarantine(t *testing.T) {
 	}
 }
 
-// TestQueueAutoConvoyCreation verifies that gt sling --queue creates an
-// auto-convoy, stores the convoy ID in queue metadata, and the convoy is
-// resolvable via bd show.
-func TestQueueAutoConvoyCreation(t *testing.T) {
-	hqPath, rigPath, gtBinary, env := setupQueueIntegrationTown(t)
+// TestSchedulerAutoConvoyCreation verifies that gt sling --scheduler capacity
+// creates an auto-convoy, stores the convoy ID in scheduler metadata, and the
+// convoy is resolvable via bd show.
+func TestSchedulerAutoConvoyCreation(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
 
 	beadID := createTestBead(t, rigPath, "Auto convoy test")
 
-	// Enqueue via gt sling --queue
-	slingToQueue(t, gtBinary, hqPath, env, beadID, "testrig")
+	// Schedule via gt sling --scheduler capacity
+	slingToScheduler(t, gtBinary, hqPath, env, beadID, "testrig")
 
 	// Verify: bead should have gt:queued label
-	if !beadHasLabel(t, beadID, LabelQueued, rigPath) {
-		t.Errorf("bead %s should have gt:queued label after sling --queue", beadID)
+	if !beadHasLabel(t, beadID, capacity.LabelScheduled, rigPath) {
+		t.Errorf("bead %s should have gt:queued label after sling --scheduler capacity", beadID)
 	}
 
-	// Verify: description should contain queue metadata with convoy ID
+	// Verify: description should contain scheduler metadata with convoy ID
 	desc := getBeadDescription(t, beadID, rigPath)
-	meta := ParseQueueMetadata(desc)
+	meta := capacity.ParseMetadata(desc)
 	if meta == nil {
-		t.Fatalf("bead %s has no queue metadata after sling --queue", beadID)
+		t.Fatalf("bead %s has no scheduler metadata after sling --scheduler capacity", beadID)
 	}
 	if meta.TargetRig != "testrig" {
 		t.Errorf("target_rig = %q, want %q", meta.TargetRig, "testrig")
 	}
 	if meta.Convoy == "" {
-		t.Fatalf("convoy ID not stored in queue metadata")
+		t.Fatalf("convoy ID not stored in scheduler metadata")
 	}
 
 	// Verify: convoy is resolvable via bd show from hq
@@ -303,27 +303,27 @@ func TestQueueAutoConvoyCreation(t *testing.T) {
 	}
 }
 
-// TestQueueBlockedStatusReporting verifies that queue list correctly reports
-// blocked:true/false and queue status reports correct queued_ready count.
-func TestQueueBlockedStatusReporting(t *testing.T) {
-	hqPath, rigPath, gtBinary, env := setupQueueIntegrationTown(t)
+// TestSchedulerBlockedStatusReporting verifies that scheduler list correctly reports
+// blocked:true/false and scheduler status reports correct queued_ready count.
+func TestSchedulerBlockedStatusReporting(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
 
 	// Create three beads: one to be ready, one to be blocked, one blocker
 	readyID := createTestBead(t, rigPath, "Ready bead")
 	blockedID := createTestBead(t, rigPath, "Blocked bead")
 	blockerID := createTestBead(t, rigPath, "Blocker bead")
 
-	// Enqueue ready and blocked beads via gt sling --queue
-	slingToQueue(t, gtBinary, hqPath, env, readyID, "testrig")
-	slingToQueue(t, gtBinary, hqPath, env, blockedID, "testrig")
+	// Schedule ready and blocked beads via gt sling --scheduler capacity
+	slingToScheduler(t, gtBinary, hqPath, env, readyID, "testrig")
+	slingToScheduler(t, gtBinary, hqPath, env, blockedID, "testrig")
 
 	// Add blocking dependency: blockerID blocks blockedID
 	addBeadDependency(t, blockedID, blockerID, rigPath)
 
-	// Verify: queue list should show both, with correct blocked status
-	listed := getQueueList(t, gtBinary, hqPath, env)
+	// Verify: scheduler list should show both, with correct blocked status
+	listed := getSchedulerList(t, gtBinary, hqPath, env)
 	if len(listed) < 2 {
-		t.Fatalf("queue list returned %d items, want >= 2", len(listed))
+		t.Fatalf("scheduler list returned %d items, want >= 2", len(listed))
 	}
 
 	foundReady := false
@@ -345,14 +345,14 @@ func TestQueueBlockedStatusReporting(t *testing.T) {
 		}
 	}
 	if !foundReady {
-		t.Errorf("ready bead %s not found in queue list", readyID)
+		t.Errorf("ready bead %s not found in scheduler list", readyID)
 	}
 	if !foundBlocked {
-		t.Errorf("blocked bead %s not found in queue list", blockedID)
+		t.Errorf("blocked bead %s not found in scheduler list", blockedID)
 	}
 
-	// Verify: queue status should report correct counts
-	status := getQueueStatus(t, gtBinary, hqPath, env)
+	// Verify: scheduler status should report correct counts
+	status := getSchedulerStatus(t, gtBinary, hqPath, env)
 	total := int(status["queued_total"].(float64))
 	ready := int(status["queued_ready"].(float64))
 	if total != 2 {
@@ -363,21 +363,21 @@ func TestQueueBlockedStatusReporting(t *testing.T) {
 	}
 }
 
-// TestQueueSlingDryRun verifies that gt sling --queue --dry-run has no side
-// effects: no label added, no metadata written, no convoy created.
-func TestQueueSlingDryRun(t *testing.T) {
-	hqPath, rigPath, gtBinary, env := setupQueueIntegrationTown(t)
+// TestSchedulerSlingDryRun verifies that gt sling --scheduler capacity --dry-run
+// has no side effects: no label added, no metadata written, no convoy created.
+func TestSchedulerSlingDryRun(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
 
 	beadID := createTestBead(t, rigPath, "Dry run test")
 
 	// Capture description before dry-run
 	descBefore := getBeadDescription(t, beadID, rigPath)
 
-	// Run sling --queue --dry-run
-	slingToQueue(t, gtBinary, hqPath, env, beadID, "testrig", "--dry-run")
+	// Run sling --scheduler capacity --dry-run
+	slingToScheduler(t, gtBinary, hqPath, env, beadID, "testrig", "--dry-run")
 
 	// Verify: no gt:queued label
-	if beadHasLabel(t, beadID, LabelQueued, rigPath) {
+	if beadHasLabel(t, beadID, capacity.LabelScheduled, rigPath) {
 		t.Errorf("dry-run should NOT add gt:queued label")
 	}
 
@@ -409,13 +409,13 @@ func TestQueueSlingDryRun(t *testing.T) {
 // Multi-rig tests
 // --------------------------------------------------------------------------
 
-// setupMultiRigQueueTown creates a town with TWO rigs for cross-rig tests.
+// setupMultiRigSchedulerTown creates a town with TWO rigs for cross-rig tests.
 // Returns (hqPath, rig1Path, rig2Path, gtBinary, env).
-func setupMultiRigQueueTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBinary string, env []string) {
+func setupMultiRigSchedulerTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBinary string, env []string) {
 	t.Helper()
 
 	if _, err := exec.LookPath("bd"); err != nil {
-		t.Skip("bd not installed, skipping queue integration test")
+		t.Skip("bd not installed, skipping scheduler integration test")
 	}
 
 	requireDoltServer(t)
@@ -430,7 +430,7 @@ func setupMultiRigQueueTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBinary 
 	configureTestGitIdentity(t, tmpDir)
 
 	// Unique prefixes: hN for HQ, rN for rig1, sN for rig2.
-	n := queueTestCounter.Add(1)
+	n := schedulerTestCounter.Add(1)
 	hqPrefix := fmt.Sprintf("h%d", n)
 	rig1Prefix := fmt.Sprintf("r%d", n)
 	rig2Prefix := fmt.Sprintf("s%d", n)
@@ -526,30 +526,30 @@ func setupMultiRigQueueTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBinary 
 	}
 
 	// --- Environment ---
-	env = cleanQueueTestEnv(tmpDir)
+	env = cleanSchedulerTestEnv(tmpDir)
 
-	// Configure queue with defaults
-	configureQueue(t, hqPath, true, 10, 3)
+	// Configure scheduler with defaults
+	configureScheduler(t, hqPath, true, 10, 3)
 
 	return hqPath, rig1Path, rig2Path, gtBinary, env
 }
 
-// TestQueueMultiRigDispatch verifies that queue list and status correctly
-// discover queued beads across multiple rigs. beadsSearchDirs scans all
+// TestSchedulerMultiRigDispatch verifies that scheduler list and status correctly
+// discover scheduled beads across multiple rigs. beadsSearchDirs scans all
 // rig directories under the town root.
-func TestQueueMultiRigDispatch(t *testing.T) {
-	hqPath, rig1Path, rig2Path, gtBinary, env := setupMultiRigQueueTown(t)
+func TestSchedulerMultiRigDispatch(t *testing.T) {
+	hqPath, rig1Path, rig2Path, gtBinary, env := setupMultiRigSchedulerTown(t)
 
 	// Create one bead in each rig.
 	bead1 := createTestBead(t, rig1Path, "Rig1 bead")
 	bead2 := createTestBead(t, rig2Path, "Rig2 bead")
 
-	// Enqueue both to their respective rigs.
-	slingToQueue(t, gtBinary, hqPath, env, bead1, "rig1")
-	slingToQueue(t, gtBinary, hqPath, env, bead2, "rig2")
+	// Schedule both to their respective rigs.
+	slingToScheduler(t, gtBinary, hqPath, env, bead1, "rig1")
+	slingToScheduler(t, gtBinary, hqPath, env, bead2, "rig2")
 
-	// Verify: queue list should find both beads.
-	listed := getQueueList(t, gtBinary, hqPath, env)
+	// Verify: scheduler list should find both beads.
+	listed := getSchedulerList(t, gtBinary, hqPath, env)
 	found := map[string]bool{}
 	for _, item := range listed {
 		if id, ok := item["id"].(string); ok {
@@ -557,14 +557,14 @@ func TestQueueMultiRigDispatch(t *testing.T) {
 		}
 	}
 	if !found[bead1] {
-		t.Errorf("bead %s (rig1) not found in queue list", bead1)
+		t.Errorf("bead %s (rig1) not found in scheduler list", bead1)
 	}
 	if !found[bead2] {
-		t.Errorf("bead %s (rig2) not found in queue list", bead2)
+		t.Errorf("bead %s (rig2) not found in scheduler list", bead2)
 	}
 
-	// Verify: queue status should report total=2, ready=2.
-	status := getQueueStatus(t, gtBinary, hqPath, env)
+	// Verify: scheduler status should report total=2, ready=2.
+	status := getSchedulerStatus(t, gtBinary, hqPath, env)
 	total := int(status["queued_total"].(float64))
 	ready := int(status["queued_ready"].(float64))
 	if total != 2 {
@@ -575,7 +575,7 @@ func TestQueueMultiRigDispatch(t *testing.T) {
 	}
 
 	// Verify: dry-run dispatch should mention both beads.
-	out := runGTCmdOutput(t, gtBinary, hqPath, env, "queue", "run", "--dry-run")
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "capacity", "run", "--dry-run")
 	if !strings.Contains(out, bead1) {
 		t.Errorf("dry-run should mention rig1 bead %s", bead1)
 	}
@@ -587,16 +587,16 @@ func TestQueueMultiRigDispatch(t *testing.T) {
 // --------------------------------------------------------------------------
 // Cross-rig container tests
 //
-// These tests verify that gt queue epic and gt convoy queue correctly
-// auto-resolve each child's target rig from its bead ID prefix, enabling
-// multi-rig epics and convoys.
+// These tests verify that gt sling --scheduler capacity correctly auto-resolves
+// each child's target rig from its bead ID prefix, enabling multi-rig epics
+// and convoys.
 // --------------------------------------------------------------------------
 
-// TestQueueMultiRigEpicAutoResolve verifies that gt queue epic auto-resolves
-// each child's target rig from its prefix. An epic in rig1 with children in
-// rig1 and rig2 should queue each child to its respective rig.
-func TestQueueMultiRigEpicAutoResolve(t *testing.T) {
-	hqPath, rig1Path, rig2Path, gtBinary, env := setupMultiRigQueueTown(t)
+// TestSchedulerMultiRigEpicAutoResolve verifies that gt sling <epic> --scheduler capacity
+// auto-resolves each child's target rig from its prefix. An epic in rig1 with
+// children in rig1 and rig2 should schedule each child to its respective rig.
+func TestSchedulerMultiRigEpicAutoResolve(t *testing.T) {
+	hqPath, rig1Path, rig2Path, gtBinary, env := setupMultiRigSchedulerTown(t)
 
 	// Create an epic in rig1.
 	epicID := createTestBeadOfType(t, rig1Path, "Multi-rig epic", "epic")
@@ -613,7 +613,7 @@ func TestQueueMultiRigEpicAutoResolve(t *testing.T) {
 
 	// Dry-run: verify auto-rig-resolution routes each child correctly.
 	// Uses --dry-run to avoid needing formula infrastructure (mol-polecat-work).
-	out := runGTCmdOutput(t, gtBinary, hqPath, env, "queue", epicID, "--dry-run")
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "sling", epicID, "--scheduler", "capacity", "--dry-run")
 
 	// Verify: child1 should be routed to rig1
 	expected1 := fmt.Sprintf("%s -> rig1", child1)
@@ -627,52 +627,52 @@ func TestQueueMultiRigEpicAutoResolve(t *testing.T) {
 		t.Errorf("epic dry-run should route %s -> rig2\noutput: %s", child2, out)
 	}
 
-	// Non-dry-run: actually enqueue each child to its auto-resolved rig.
+	// Non-dry-run: actually schedule each child to its auto-resolved rig.
 	// Use gt sling per-child (with --hook-raw-bead to skip formula) to verify
-	// end-to-end queuing works for beads from different rigs.
-	slingToQueue(t, gtBinary, hqPath, env, child1, "rig1")
-	slingToQueue(t, gtBinary, hqPath, env, child2, "rig2")
+	// end-to-end scheduling works for beads from different rigs.
+	slingToScheduler(t, gtBinary, hqPath, env, child1, "rig1")
+	slingToScheduler(t, gtBinary, hqPath, env, child2, "rig2")
 
 	// Verify: both children should have gt:queued label
-	if !beadHasLabel(t, child1, LabelQueued, rig1Path) {
+	if !beadHasLabel(t, child1, capacity.LabelScheduled, rig1Path) {
 		t.Errorf("child1 %s should have gt:queued label", child1)
 	}
-	if !beadHasLabel(t, child2, LabelQueued, rig2Path) {
+	if !beadHasLabel(t, child2, capacity.LabelScheduled, rig2Path) {
 		t.Errorf("child2 %s should have gt:queued label", child2)
 	}
 
-	// Verify: queue metadata should show correct target rigs
+	// Verify: scheduler metadata should show correct target rigs
 	desc1 := getBeadDescription(t, child1, rig1Path)
-	meta1 := ParseQueueMetadata(desc1)
+	meta1 := capacity.ParseMetadata(desc1)
 	if meta1 == nil || meta1.TargetRig != "rig1" {
 		t.Errorf("child1 target_rig = %v, want rig1", meta1)
 	}
 	desc2 := getBeadDescription(t, child2, rig2Path)
-	meta2 := ParseQueueMetadata(desc2)
+	meta2 := capacity.ParseMetadata(desc2)
 	if meta2 == nil || meta2.TargetRig != "rig2" {
 		t.Errorf("child2 target_rig = %v, want rig2", meta2)
 	}
 
-	// Verify: queue status should find both children
-	status := getQueueStatus(t, gtBinary, hqPath, env)
+	// Verify: scheduler status should find both children
+	status := getSchedulerStatus(t, gtBinary, hqPath, env)
 	total := int(status["queued_total"].(float64))
 	if total != 2 {
 		t.Errorf("queued_total = %d, want 2", total)
 	}
 }
 
-// TestQueueUnifiedConvoyFlagRejection verifies that task-only flags are rejected
-// when gt queue auto-detects a convoy ID.
-func TestQueueUnifiedConvoyFlagRejection(t *testing.T) {
-	hqPath, _, _, gtBinary, env := setupMultiRigQueueTown(t)
+// TestSchedulerConvoyFlagRejection verifies that task-only flags are rejected
+// when gt sling --scheduler capacity auto-detects a convoy ID.
+func TestSchedulerConvoyFlagRejection(t *testing.T) {
+	hqPath, _, _, gtBinary, env := setupMultiRigSchedulerTown(t)
 
 	// Create a convoy in HQ.
 	convoyID := createTestBeadOfType(t, hqPath, "Flag rejection convoy", "convoy")
 
-	// Attempt to queue convoy with task-only flag --ralph.
-	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "queue", convoyID, "--ralph")
+	// Attempt to schedule convoy with task-only flag --ralph.
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "sling", convoyID, "--scheduler", "capacity", "--ralph")
 	if err == nil {
-		t.Fatalf("gt queue %s --ralph should fail, but succeeded:\n%s", convoyID, out)
+		t.Fatalf("gt sling %s --scheduler capacity --ralph should fail, but succeeded:\n%s", convoyID, out)
 	}
 	if !strings.Contains(out, "convoy mode does not support") {
 		t.Errorf("expected 'convoy mode does not support' error, got:\n%s", out)
@@ -682,21 +682,21 @@ func TestQueueUnifiedConvoyFlagRejection(t *testing.T) {
 	}
 }
 
-// TestQueueUnifiedEpicFlagRejection verifies that task-only flags are rejected
-// when gt queue auto-detects an epic ID.
-func TestQueueUnifiedEpicFlagRejection(t *testing.T) {
-	hqPath, rig1Path, _, gtBinary, env := setupMultiRigQueueTown(t)
+// TestSchedulerEpicFlagRejection verifies that task-only flags are rejected
+// when gt sling --scheduler capacity auto-detects an epic ID.
+func TestSchedulerEpicFlagRejection(t *testing.T) {
+	hqPath, rig1Path, _, gtBinary, env := setupMultiRigSchedulerTown(t)
 
 	// Create an epic in rig1.
 	epicID := createTestBeadOfType(t, rig1Path, "Flag rejection epic", "epic")
-	// Create a child so the epic has something to queue.
+	// Create a child so the epic has something to schedule.
 	child := createTestBead(t, rig1Path, "Epic child")
 	addBeadDependencyOfType(t, epicID, child, "depends_on", rig1Path)
 
-	// Attempt to queue epic with task-only flag --account.
-	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "queue", epicID, "--account", "foo")
+	// Attempt to schedule epic with task-only flag --account.
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "sling", epicID, "--scheduler", "capacity", "--account", "foo")
 	if err == nil {
-		t.Fatalf("gt queue %s --account foo should fail, but succeeded:\n%s", epicID, out)
+		t.Fatalf("gt sling %s --scheduler capacity --account foo should fail, but succeeded:\n%s", epicID, out)
 	}
 	if !strings.Contains(out, "epic mode does not support") {
 		t.Errorf("expected 'epic mode does not support' error, got:\n%s", out)
@@ -706,10 +706,10 @@ func TestQueueUnifiedEpicFlagRejection(t *testing.T) {
 	}
 }
 
-// TestQueueUnifiedEpicDetection verifies that gt queue <epic-id> auto-detects
-// the epic and routes to the epic handler (dry-run).
-func TestQueueUnifiedEpicDetection(t *testing.T) {
-	hqPath, rig1Path, rig2Path, gtBinary, env := setupMultiRigQueueTown(t)
+// TestSchedulerEpicDetection verifies that gt sling <epic-id> --scheduler capacity
+// auto-detects the epic and routes to the epic handler (dry-run).
+func TestSchedulerEpicDetection(t *testing.T) {
+	hqPath, rig1Path, rig2Path, gtBinary, env := setupMultiRigSchedulerTown(t)
 
 	// Create an epic with cross-rig children.
 	epicID := createTestBeadOfType(t, rig1Path, "Detection epic", "epic")
@@ -718,8 +718,8 @@ func TestQueueUnifiedEpicDetection(t *testing.T) {
 	addBeadDependencyOfType(t, epicID, child1, "depends_on", rig1Path)
 	addBeadDependencyOfType(t, epicID, child2, "depends_on", rig1Path)
 
-	// gt queue <epic-id> --dry-run should auto-detect epic and list children.
-	out := runGTCmdOutput(t, gtBinary, hqPath, env, "queue", epicID, "--dry-run")
+	// gt sling <epic-id> --scheduler capacity --dry-run should auto-detect epic and list children.
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "sling", epicID, "--scheduler", "capacity", "--dry-run")
 
 	// Should show both children with rig resolution.
 	if !strings.Contains(out, child1) {
@@ -728,24 +728,25 @@ func TestQueueUnifiedEpicDetection(t *testing.T) {
 	if !strings.Contains(out, child2) {
 		t.Errorf("epic dry-run should mention child2 %s\noutput: %s", child2, out)
 	}
-	if !strings.Contains(out, "Would queue") {
-		t.Errorf("epic dry-run should show 'Would queue'\noutput: %s", out)
+	if !strings.Contains(out, "Would schedule") {
+		t.Errorf("epic dry-run should show 'Would schedule'\noutput: %s", out)
 	}
 }
 
-// TestQueueMixedBatchRejection verifies that gt queue rejects batches containing
-// mixed ID types (e.g., a task bead + an epic in the same batch).
-func TestQueueMixedBatchRejection(t *testing.T) {
-	hqPath, rig1Path, _, gtBinary, env := setupMultiRigQueueTown(t)
+// TestSchedulerMixedBatchRejection verifies that gt sling --scheduler capacity
+// rejects batches containing mixed ID types (e.g., a task bead + an epic in the
+// same batch).
+func TestSchedulerMixedBatchRejection(t *testing.T) {
+	hqPath, rig1Path, _, gtBinary, env := setupMultiRigSchedulerTown(t)
 
 	// Create a task bead and an epic in rig1.
 	taskID := createTestBead(t, rig1Path, "Task bead")
 	epicID := createTestBeadOfType(t, rig1Path, "Epic bead", "epic")
 
-	// Attempt to batch-queue a task + epic together.
-	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "queue", taskID, epicID, "--dry-run")
+	// Attempt to batch-schedule a task + epic together.
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "sling", taskID, epicID, "--scheduler", "capacity", "--dry-run")
 	if err == nil {
-		t.Fatalf("gt queue %s %s should fail (mixed types), but succeeded:\n%s", taskID, epicID, out)
+		t.Fatalf("gt sling %s %s --scheduler capacity should fail (mixed types), but succeeded:\n%s", taskID, epicID, out)
 	}
 	if !strings.Contains(out, "mixed ID types") {
 		t.Errorf("expected 'mixed ID types' error, got:\n%s", out)
@@ -755,11 +756,11 @@ func TestQueueMixedBatchRejection(t *testing.T) {
 	}
 }
 
-// TestQueueMultiRigConvoyAutoResolve verifies that gt convoy queue auto-resolves
-// each tracked issue's target rig from its prefix. A convoy in HQ tracking beads
-// in rig1 and rig2 should queue each bead to its respective rig.
-func TestQueueMultiRigConvoyAutoResolve(t *testing.T) {
-	hqPath, rig1Path, rig2Path, gtBinary, env := setupMultiRigQueueTown(t)
+// TestSchedulerMultiRigConvoyAutoResolve verifies that gt sling <convoy> --scheduler capacity
+// auto-resolves each tracked issue's target rig from its prefix. A convoy in HQ
+// tracking beads in rig1 and rig2 should schedule each bead to its respective rig.
+func TestSchedulerMultiRigConvoyAutoResolve(t *testing.T) {
+	hqPath, rig1Path, rig2Path, gtBinary, env := setupMultiRigSchedulerTown(t)
 
 	// Create a convoy in HQ (the typical location for convoys).
 	convoyID := createTestBeadOfType(t, hqPath, "Multi-rig convoy", "convoy")
@@ -774,7 +775,7 @@ func TestQueueMultiRigConvoyAutoResolve(t *testing.T) {
 	addBeadDependencyOfType(t, convoyID, bead2, "tracks", hqPath)
 
 	// Dry-run: verify auto-rig-resolution routes each bead correctly.
-	out := runGTCmdOutput(t, gtBinary, hqPath, env, "queue", convoyID, "--dry-run")
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "sling", convoyID, "--scheduler", "capacity", "--dry-run")
 
 	// Verify: bead1 should be routed to rig1
 	expected1 := fmt.Sprintf("%s -> rig1", bead1)
@@ -788,32 +789,32 @@ func TestQueueMultiRigConvoyAutoResolve(t *testing.T) {
 		t.Errorf("convoy dry-run should route %s -> rig2\noutput: %s", bead2, out)
 	}
 
-	// Non-dry-run: actually enqueue each bead to its auto-resolved rig.
-	slingToQueue(t, gtBinary, hqPath, env, bead1, "rig1")
-	slingToQueue(t, gtBinary, hqPath, env, bead2, "rig2")
+	// Non-dry-run: actually schedule each bead to its auto-resolved rig.
+	slingToScheduler(t, gtBinary, hqPath, env, bead1, "rig1")
+	slingToScheduler(t, gtBinary, hqPath, env, bead2, "rig2")
 
 	// Verify: both beads should have gt:queued label
-	if !beadHasLabel(t, bead1, LabelQueued, rig1Path) {
+	if !beadHasLabel(t, bead1, capacity.LabelScheduled, rig1Path) {
 		t.Errorf("bead1 %s should have gt:queued label", bead1)
 	}
-	if !beadHasLabel(t, bead2, LabelQueued, rig2Path) {
+	if !beadHasLabel(t, bead2, capacity.LabelScheduled, rig2Path) {
 		t.Errorf("bead2 %s should have gt:queued label", bead2)
 	}
 
-	// Verify: queue metadata should show correct target rigs
+	// Verify: scheduler metadata should show correct target rigs
 	desc1 := getBeadDescription(t, bead1, rig1Path)
-	meta1 := ParseQueueMetadata(desc1)
+	meta1 := capacity.ParseMetadata(desc1)
 	if meta1 == nil || meta1.TargetRig != "rig1" {
 		t.Errorf("bead1 target_rig = %v, want rig1", meta1)
 	}
 	desc2 := getBeadDescription(t, bead2, rig2Path)
-	meta2 := ParseQueueMetadata(desc2)
+	meta2 := capacity.ParseMetadata(desc2)
 	if meta2 == nil || meta2.TargetRig != "rig2" {
 		t.Errorf("bead2 target_rig = %v, want rig2", meta2)
 	}
 
-	// Verify: queue status should find both beads
-	status := getQueueStatus(t, gtBinary, hqPath, env)
+	// Verify: scheduler status should find both beads
+	status := getSchedulerStatus(t, gtBinary, hqPath, env)
 	total := int(status["queued_total"].(float64))
 	if total != 2 {
 		t.Errorf("queued_total = %d, want 2", total)

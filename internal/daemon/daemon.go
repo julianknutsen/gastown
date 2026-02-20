@@ -445,8 +445,8 @@ func (d *Daemon) heartbeat(state *State) {
 	// branches persist indefinitely. This cleans them up periodically.
 	d.pruneStaleBranches()
 
-	// 14. Dispatch queued work (capacity-controlled polecat dispatch).
-	// Shells out to `gt queue run` to avoid circular import between daemon and cmd.
+	// 14. Dispatch scheduled work (capacity-controlled polecat dispatch).
+	// Shells out to `gt scheduler capacity run` to avoid circular import between daemon and cmd.
 	d.dispatchQueuedWork()
 
 	// Update state
@@ -1731,21 +1731,21 @@ func (d *Daemon) pruneStaleBranches() {
 	pruneInDir(d.config.TownRoot, "town-root")
 }
 
-// dispatchQueuedWork shells out to `gt queue run` to dispatch queued beads.
+// dispatchQueuedWork shells out to `gt scheduler capacity run` to dispatch scheduled beads.
 // This avoids circular import between the daemon and cmd packages.
 // Uses a 5m timeout to allow multi-bead dispatch with formula cooking and hook retries.
 func (d *Daemon) dispatchQueuedWork() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gt", "queue", "run")
+	cmd := exec.CommandContext(ctx, "gt", "scheduler", "capacity", "run")
 	cmd.Dir = d.config.TownRoot
 	cmd.Env = append(os.Environ(), "GT_DAEMON=1", "BD_DOLT_AUTO_COMMIT=off")
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		d.logger.Printf("Queue dispatch timed out after 5m")
+		d.logger.Printf("Scheduler dispatch timed out after 5m")
 	} else if err != nil {
-		d.logger.Printf("Queue dispatch failed: %v (output: %s)", err, string(out))
+		d.logger.Printf("Scheduler dispatch failed: %v (output: %s)", err, string(out))
 	} else if len(out) > 0 {
-		d.logger.Printf("Queue dispatch: %s", string(out))
+		d.logger.Printf("Scheduler dispatch: %s", string(out))
 	}
 }

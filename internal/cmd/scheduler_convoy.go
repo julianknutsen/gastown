@@ -9,28 +9,25 @@ import (
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
-// convoyQueueOpts holds options for convoy queue operations.
-type convoyQueueOpts struct {
+// convoyScheduleOpts holds options for convoy schedule operations.
+type convoyScheduleOpts struct {
 	Formula     string
 	HookRawBead bool
 	Force       bool
 	DryRun      bool
 }
 
-// runConvoyQueueByID queues all open tracked issues of a convoy.
-// Called from `gt queue <convoy-id>`.
-func runConvoyQueueByID(convoyID string, opts convoyQueueOpts) error {
+// runConvoyScheduleByID schedules all open tracked issues of a convoy.
+func runConvoyScheduleByID(convoyID string, opts convoyScheduleOpts) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return err
 	}
 
-	// Validate convoy exists
 	if err := verifyBeadExists(convoyID); err != nil {
 		return fmt.Errorf("convoy '%s' not found", convoyID)
 	}
 
-	// Get tracked issues
 	townBeads := filepath.Join(townRoot, ".beads")
 	tracked, err := getTrackedIssues(townBeads, convoyID)
 	if err != nil {
@@ -42,43 +39,38 @@ func runConvoyQueueByID(convoyID string, opts convoyQueueOpts) error {
 		return nil
 	}
 
-	// Filter to queueable issues
-	type queueCandidate struct {
+	type scheduleCandidate struct {
 		ID      string
 		Title   string
 		RigName string
 	}
-	var candidates []queueCandidate
+	var candidates []scheduleCandidate
 	skippedClosed := 0
 	skippedAssigned := 0
-	skippedQueued := 0
+	skippedScheduled := 0
 	skippedNoRig := 0
 
 	for _, t := range tracked {
-		// Skip closed issues
 		if t.Status == "closed" || t.Status == "tombstone" {
 			skippedClosed++
 			continue
 		}
 
-		// Skip already assigned (hooked/in_progress) unless --force
 		if t.Assignee != "" && !opts.Force {
 			skippedAssigned++
 			continue
 		}
 
-		// Check if already queued (need to get labels)
 		info, err := getBeadInfo(t.ID)
 		if err != nil {
 			fmt.Printf("  %s Could not check %s: %v\n", style.Dim.Render("Warning:"), t.ID, err)
 			continue
 		}
-		if hasQueuedLabel(info.Labels) {
-			skippedQueued++
+		if hasScheduledLabel(info.Labels) {
+			skippedScheduled++
 			continue
 		}
 
-		// Resolve rig from bead prefix
 		rigName := resolveRigForBead(townRoot, t.ID)
 		if rigName == "" {
 			skippedNoRig++
@@ -88,14 +80,14 @@ func runConvoyQueueByID(convoyID string, opts convoyQueueOpts) error {
 			continue
 		}
 
-		candidates = append(candidates, queueCandidate{ID: t.ID, Title: t.Title, RigName: rigName})
+		candidates = append(candidates, scheduleCandidate{ID: t.ID, Title: t.Title, RigName: rigName})
 	}
 
 	if len(candidates) == 0 {
-		fmt.Printf("No issues to queue from convoy %s", convoyID)
-		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
-			fmt.Printf(" (%d closed, %d assigned, %d already queued, %d no rig)",
-				skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
+		fmt.Printf("No issues to schedule from convoy %s", convoyID)
+		if skippedClosed > 0 || skippedAssigned > 0 || skippedScheduled > 0 || skippedNoRig > 0 {
+			fmt.Printf(" (%d closed, %d assigned, %d already scheduled, %d no rig)",
+				skippedClosed, skippedAssigned, skippedScheduled, skippedNoRig)
 		}
 		fmt.Println()
 		return nil
@@ -104,7 +96,7 @@ func runConvoyQueueByID(convoyID string, opts convoyQueueOpts) error {
 	formula := opts.Formula
 
 	if opts.DryRun {
-		fmt.Printf("%s Would queue %d issue(s) from convoy %s:\n",
+		fmt.Printf("%s Would schedule %d issue(s) from convoy %s:\n",
 			style.Bold.Render("DRY-RUN"), len(candidates), convoyID)
 		if formula != "" {
 			fmt.Printf("  Formula: %s\n", formula)
@@ -112,21 +104,21 @@ func runConvoyQueueByID(convoyID string, opts convoyQueueOpts) error {
 			fmt.Printf("  Hook raw beads (no formula)\n")
 		}
 		for _, c := range candidates {
-			fmt.Printf("  Would queue: %s -> %s (%s)\n", c.ID, c.RigName, c.Title)
+			fmt.Printf("  Would schedule: %s -> %s (%s)\n", c.ID, c.RigName, c.Title)
 		}
-		if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
-			fmt.Printf("\nSkipped: %d closed, %d assigned, %d already queued, %d no rig\n",
-				skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
+		if skippedClosed > 0 || skippedAssigned > 0 || skippedScheduled > 0 || skippedNoRig > 0 {
+			fmt.Printf("\nSkipped: %d closed, %d assigned, %d already scheduled, %d no rig\n",
+				skippedClosed, skippedAssigned, skippedScheduled, skippedNoRig)
 		}
 		return nil
 	}
 
-	fmt.Printf("%s Queuing %d issue(s) from convoy %s...\n",
+	fmt.Printf("%s Scheduling %d issue(s) from convoy %s...\n",
 		style.Bold.Render("📋"), len(candidates), convoyID)
 
 	successCount := 0
 	for _, c := range candidates {
-		err := enqueueBead(c.ID, c.RigName, EnqueueOptions{
+		err := scheduleBead(c.ID, c.RigName, ScheduleOptions{
 			Formula:     formula,
 			NoConvoy:    true, // Already tracked by this convoy
 			Force:       opts.Force,
@@ -139,15 +131,15 @@ func runConvoyQueueByID(convoyID string, opts convoyQueueOpts) error {
 		successCount++
 	}
 
-	fmt.Printf("\n%s Queued %d/%d issue(s) from convoy %s\n",
+	fmt.Printf("\n%s Scheduled %d/%d issue(s) from convoy %s\n",
 		style.Bold.Render("📊"), successCount, len(candidates), convoyID)
-	if skippedClosed > 0 || skippedAssigned > 0 || skippedQueued > 0 || skippedNoRig > 0 {
-		fmt.Printf("  Skipped: %d closed, %d assigned, %d already queued, %d no rig\n",
-			skippedClosed, skippedAssigned, skippedQueued, skippedNoRig)
+	if skippedClosed > 0 || skippedAssigned > 0 || skippedScheduled > 0 || skippedNoRig > 0 {
+		fmt.Printf("  Skipped: %d closed, %d assigned, %d already scheduled, %d no rig\n",
+			skippedClosed, skippedAssigned, skippedScheduled, skippedNoRig)
 	}
 
 	if successCount == 0 {
-		return fmt.Errorf("all %d enqueue attempts failed for convoy %s", len(candidates), convoyID)
+		return fmt.Errorf("all %d schedule attempts failed for convoy %s", len(candidates), convoyID)
 	}
 	return nil
 }

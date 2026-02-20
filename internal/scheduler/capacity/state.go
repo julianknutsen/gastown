@@ -1,4 +1,4 @@
-package cmd
+package capacity
 
 import (
 	"encoding/json"
@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// QueueState represents the runtime operational state of the work queue.
-// Stored at <townRoot>/.runtime/queue-state.json.
+// SchedulerState represents the runtime operational state of the capacity scheduler.
+// Stored at <townRoot>/.runtime/scheduler-state.json.
 // Follows the pattern of deacon/redispatch-state.json for daemon operational state.
-type QueueState struct {
+type SchedulerState struct {
 	Paused            bool   `json:"paused"`
 	PausedBy          string `json:"paused_by,omitempty"`
 	PausedAt          string `json:"paused_at,omitempty"`
@@ -18,35 +18,51 @@ type QueueState struct {
 	LastDispatchCount int    `json:"last_dispatch_count,omitempty"`
 }
 
-// queueStateFile returns the path to the queue state file.
-func queueStateFile(townRoot string) string {
+// stateFile returns the path to the scheduler state file.
+func stateFile(townRoot string) string {
+	return filepath.Join(townRoot, ".runtime", "scheduler-state.json")
+}
+
+// legacyStateFile returns the path to the old queue state file for migration.
+func legacyStateFile(townRoot string) string {
 	return filepath.Join(townRoot, ".runtime", "queue-state.json")
 }
 
-// LoadQueueState loads the queue runtime state, returning a zero-value state if the file
+// LoadState loads the scheduler runtime state, returning a zero-value state if the file
 // doesn't exist. This is intentional: absence means "not paused, never dispatched."
-func LoadQueueState(townRoot string) (*QueueState, error) {
-	path := queueStateFile(townRoot)
+// Falls back to reading the legacy queue-state.json if the new file doesn't exist.
+func LoadState(townRoot string) (*SchedulerState, error) {
+	path := stateFile(townRoot)
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &QueueState{}, nil
+			// Try legacy path
+			legacyPath := legacyStateFile(townRoot)
+			data, err = os.ReadFile(legacyPath) //nolint:gosec // G304: path is constructed internally
+			if err != nil {
+				if os.IsNotExist(err) {
+					return &SchedulerState{}, nil
+				}
+				return nil, err
+			}
+			// Fall through to parse legacy data
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
-	var state QueueState
+	var state SchedulerState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
 	return &state, nil
 }
 
-// SaveQueueState writes the queue runtime state to disk atomically.
+// SaveState writes the scheduler runtime state to disk atomically.
 // Uses write-to-temp + rename to prevent corruption from concurrent writers
-// (e.g., dispatch RecordDispatch racing with gt queue pause).
-func SaveQueueState(townRoot string, state *QueueState) error {
-	path := queueStateFile(townRoot)
+// (e.g., dispatch RecordDispatch racing with gt scheduler capacity pause).
+func SaveState(townRoot string, state *SchedulerState) error {
+	path := stateFile(townRoot)
 	dir := filepath.Dir(path)
 
 	// Ensure .runtime directory exists
@@ -60,7 +76,7 @@ func SaveQueueState(townRoot string, state *QueueState) error {
 	}
 
 	// Atomic write: temp file + rename
-	tmp, err := os.CreateTemp(dir, ".queue-state-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".scheduler-state-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -81,22 +97,22 @@ func SaveQueueState(townRoot string, state *QueueState) error {
 	return nil
 }
 
-// SetPaused marks the queue as paused by the given actor.
-func (s *QueueState) SetPaused(by string) {
+// SetPaused marks the scheduler as paused by the given actor.
+func (s *SchedulerState) SetPaused(by string) {
 	s.Paused = true
 	s.PausedBy = by
 	s.PausedAt = time.Now().UTC().Format(time.RFC3339)
 }
 
-// SetResumed marks the queue as resumed (not paused).
-func (s *QueueState) SetResumed() {
+// SetResumed marks the scheduler as resumed (not paused).
+func (s *SchedulerState) SetResumed() {
 	s.Paused = false
 	s.PausedBy = ""
 	s.PausedAt = ""
 }
 
 // RecordDispatch records a dispatch event.
-func (s *QueueState) RecordDispatch(count int) {
+func (s *SchedulerState) RecordDispatch(count int) {
 	s.LastDispatchAt = time.Now().UTC().Format(time.RFC3339)
 	s.LastDispatchCount = count
 }

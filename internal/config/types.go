@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 )
 
 // TownConfig represents the main town identity (mayor/town.json).
@@ -87,8 +89,8 @@ type TownSettings struct {
 	// Values: "standard", "economy", "budget", or empty for custom configs.
 	CostTier string `json:"cost_tier,omitempty"`
 
-	// Queue configures the work queue for capacity-controlled polecat dispatch.
-	Queue *WorkQueueConfig `json:"queue,omitempty"`
+	// Scheduler configures the capacity scheduler for polecat dispatch.
+	Scheduler *capacity.SchedulerConfig `json:"scheduler,omitempty"`
 }
 
 // NewTownSettings creates a new TownSettings with defaults.
@@ -183,66 +185,6 @@ type ConvoyConfig struct {
 	// NotifyOnComplete controls whether convoy completion pushes a notification
 	// into the active Mayor session (in addition to mail). Opt-in; default false.
 	NotifyOnComplete bool `json:"notify_on_complete,omitempty"`
-}
-
-// WorkQueueConfig configures the work queue for capacity-controlled polecat dispatch.
-// This is a town-wide setting (not per-rig) because capacity control is host-wide:
-// API rate limits, memory, and CPU are shared resources across all rigs.
-type WorkQueueConfig struct {
-	// Enabled controls whether the daemon auto-dispatches queued work.
-	// Default: false (must opt in).
-	Enabled bool `json:"enabled"`
-
-	// MaxPolecats is the max concurrent polecats across ALL rigs.
-	// Includes both queue-dispatched and directly-slung polecats.
-	// nil/absent = default (10). Explicit 0 = unlimited (no cap).
-	MaxPolecats *int `json:"max_polecats,omitempty"`
-
-	// BatchSize is the number of beads to dispatch per heartbeat tick.
-	// Limits spawn rate per 3-minute cycle.
-	// nil/absent = default (3). Explicit 0 is rejected by config setter.
-	BatchSize *int `json:"batch_size,omitempty"`
-
-	// SpawnDelay is the delay between spawns to prevent Dolt lock contention.
-	// Default: "2s".
-	SpawnDelay string `json:"spawn_delay,omitempty"`
-}
-
-// DefaultWorkQueueConfig returns a WorkQueueConfig with sensible defaults.
-func DefaultWorkQueueConfig() *WorkQueueConfig {
-	defaultMax := 10
-	defaultBatch := 3
-	return &WorkQueueConfig{
-		Enabled:     false,
-		MaxPolecats: &defaultMax,
-		BatchSize:   &defaultBatch,
-		SpawnDelay:  "2s",
-	}
-}
-
-// GetMaxPolecats returns MaxPolecats or the default (10) if unset.
-// Returns 0 if explicitly set to 0 (unlimited).
-func (c *WorkQueueConfig) GetMaxPolecats() int {
-	if c == nil || c.MaxPolecats == nil {
-		return 10
-	}
-	return *c.MaxPolecats
-}
-
-// GetBatchSize returns BatchSize or the default (3) if unset.
-func (c *WorkQueueConfig) GetBatchSize() int {
-	if c == nil || c.BatchSize == nil {
-		return 3
-	}
-	return *c.BatchSize
-}
-
-// GetSpawnDelay returns SpawnDelay as a duration, defaulting to 2s.
-func (c *WorkQueueConfig) GetSpawnDelay() time.Duration {
-	if c == nil || c.SpawnDelay == "" {
-		return 2 * time.Second
-	}
-	return ParseDurationOrDefault(c.SpawnDelay, 2*time.Second)
 }
 
 // ParseDurationOrDefault parses a Go duration string, returning fallback on error or empty input.

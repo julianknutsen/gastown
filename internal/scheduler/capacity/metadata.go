@@ -1,4 +1,4 @@
-package cmd
+package capacity
 
 import (
 	"fmt"
@@ -7,22 +7,22 @@ import (
 	"time"
 )
 
-// QueueMetadata holds queue dispatch parameters stored in a bead's description.
-// Delimited by ---gt:queue:v1--- so it can be cleanly parsed without conflicting
+// SchedulerMetadata holds scheduler dispatch parameters stored in a bead's description.
+// Delimited by ---gt:scheduler:v1--- so it can be cleanly parsed without conflicting
 // with existing description content. The namespaced delimiter avoids collision
 // with user content that might contain generic markdown separators.
-type QueueMetadata struct {
-	TargetRig   string `json:"target_rig"`
-	Formula     string `json:"formula,omitempty"`
-	Args        string `json:"args,omitempty"`
-	Vars        string `json:"vars,omitempty"` // newline-separated key=value pairs
-	EnqueuedAt  string `json:"enqueued_at"`
-	Merge       string `json:"merge,omitempty"`
-	Convoy      string `json:"convoy,omitempty"`
-	BaseBranch  string `json:"base_branch,omitempty"`
-	NoMerge     bool   `json:"no_merge,omitempty"`
-	Account     string `json:"account,omitempty"`
-	Agent       string `json:"agent,omitempty"`
+type SchedulerMetadata struct {
+	TargetRig        string `json:"target_rig"`
+	Formula          string `json:"formula,omitempty"`
+	Args             string `json:"args,omitempty"`
+	Vars             string `json:"vars,omitempty"` // newline-separated key=value pairs
+	EnqueuedAt       string `json:"enqueued_at"`
+	Merge            string `json:"merge,omitempty"`
+	Convoy           string `json:"convoy,omitempty"`
+	BaseBranch       string `json:"base_branch,omitempty"`
+	NoMerge          bool   `json:"no_merge,omitempty"`
+	Account          string `json:"account,omitempty"`
+	Agent            string `json:"agent,omitempty"`
 	HookRawBead      bool   `json:"hook_raw_bead,omitempty"`
 	Owned            bool   `json:"owned,omitempty"`
 	Mode             string `json:"mode,omitempty"`
@@ -30,12 +30,20 @@ type QueueMetadata struct {
 	LastFailure      string `json:"last_failure,omitempty"`
 }
 
-const queueMetadataDelimiter = "---gt:queue:v1---"
+// MetadataDelimiter is the versioned delimiter for scheduler metadata blocks.
+const MetadataDelimiter = "---gt:scheduler:v1---"
 
-// FormatQueueMetadata formats metadata as key-value lines for bead description.
-func FormatQueueMetadata(m *QueueMetadata) string {
+// LegacyMetadataDelimiter is the old queue metadata delimiter, supported for
+// backward compatibility during migration from gt queue to gt scheduler.
+const LegacyMetadataDelimiter = "---gt:queue:v1---"
+
+// LabelScheduled marks a bead as scheduled for dispatch.
+const LabelScheduled = "gt:queued"
+
+// FormatMetadata formats metadata as key-value lines for bead description.
+func FormatMetadata(m *SchedulerMetadata) string {
 	var lines []string
-	lines = append(lines, queueMetadataDelimiter)
+	lines = append(lines, MetadataDelimiter)
 
 	if m.TargetRig != "" {
 		lines = append(lines, fmt.Sprintf("target_rig: %s", m.TargetRig))
@@ -94,16 +102,23 @@ func FormatQueueMetadata(m *QueueMetadata) string {
 	return strings.Join(lines, "\n")
 }
 
-// ParseQueueMetadata extracts queue metadata from a bead description.
-// Returns nil if no ---queue--- section is found.
-func ParseQueueMetadata(description string) *QueueMetadata {
-	idx := strings.Index(description, queueMetadataDelimiter)
+// ParseMetadata extracts scheduler metadata from a bead description.
+// Returns nil if no metadata section is found. Supports both the current
+// ---gt:scheduler:v1--- and legacy ---gt:queue:v1--- delimiters.
+func ParseMetadata(description string) *SchedulerMetadata {
+	// Try current delimiter first, then legacy
+	delimiter := MetadataDelimiter
+	idx := strings.Index(description, delimiter)
 	if idx < 0 {
-		return nil
+		delimiter = LegacyMetadataDelimiter
+		idx = strings.Index(description, delimiter)
+		if idx < 0 {
+			return nil
+		}
 	}
 
-	section := description[idx+len(queueMetadataDelimiter):]
-	m := &QueueMetadata{}
+	section := description[idx+len(delimiter):]
+	m := &SchedulerMetadata{}
 	var varLines []string
 
 	for _, line := range strings.Split(section, "\n") {
@@ -112,7 +127,7 @@ func ParseQueueMetadata(description string) *QueueMetadata {
 			continue
 		}
 		// Stop at a second delimiter or non-kv line
-		if line == queueMetadataDelimiter {
+		if line == MetadataDelimiter || line == LegacyMetadataDelimiter {
 			break
 		}
 
@@ -163,7 +178,7 @@ func ParseQueueMetadata(description string) *QueueMetadata {
 			}
 			// On parse error, DispatchFailures stays 0. The gt:dispatch-failed
 			// label (added when counter hits max) acts as an independent guard
-			// since quarantine also removes gt:queued.
+			// since quarantine also removes the scheduled label.
 		case "last_failure":
 			m.LastFailure = val
 		}
@@ -176,19 +191,24 @@ func ParseQueueMetadata(description string) *QueueMetadata {
 	return m
 }
 
-// StripQueueMetadata removes the ---queue--- section from a bead description.
-// Used when dequeuing a bead for dispatch (clean up the metadata).
-func StripQueueMetadata(description string) string {
-	idx := strings.Index(description, queueMetadataDelimiter)
+// StripMetadata removes the scheduler metadata section from a bead description.
+// Used when descheduling a bead for dispatch (clean up the metadata).
+// Supports both current and legacy delimiters.
+func StripMetadata(description string) string {
+	// Try current delimiter first, then legacy
+	idx := strings.Index(description, MetadataDelimiter)
 	if idx < 0 {
-		return description
+		idx = strings.Index(description, LegacyMetadataDelimiter)
+		if idx < 0 {
+			return description
+		}
 	}
 	return strings.TrimRight(description[:idx], "\n")
 }
 
-// NewQueueMetadata creates a QueueMetadata with the current timestamp.
-func NewQueueMetadata(rigName string) *QueueMetadata {
-	return &QueueMetadata{
+// NewMetadata creates a SchedulerMetadata with the current timestamp.
+func NewMetadata(rigName string) *SchedulerMetadata {
+	return &SchedulerMetadata{
 		TargetRig:  rigName,
 		EnqueuedAt: time.Now().UTC().Format(time.RFC3339),
 	}
