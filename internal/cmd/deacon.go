@@ -1171,11 +1171,17 @@ func runDeaconPending(cmd *cobra.Command, args []string) error {
 	// With session argument: clear from pending list
 	if len(args) == 1 {
 		sessionName := args[0]
-		if err := polecat.ClearPendingSpawn(townRoot, sessionName); err != nil {
+		cleared, err := polecat.ClearPendingSpawn(townRoot, sessionName)
+		if err != nil {
 			return fmt.Errorf("clearing pending spawn: %w", err)
 		}
-		fmt.Printf("%s Cleared pending spawn for session %s\n",
-			style.Bold.Render("✓"), sessionName)
+		if cleared > 0 {
+			fmt.Printf("%s Cleared %d pending spawn(s) for session %s\n",
+				style.Bold.Render("✓"), cleared, sessionName)
+		} else {
+			fmt.Printf("%s No pending spawn found for session %s\n",
+				style.Dim.Render("○"), sessionName)
+		}
 		return nil
 	}
 
@@ -1226,7 +1232,10 @@ func runDeaconPending(cmd *cobra.Command, args []string) error {
 	}
 
 	// Prune stale pending spawns (older than 5 minutes)
-	pruned, _ := polecat.PruneStalePending(townRoot, 5*time.Minute)
+	pruned, pruneErr := polecat.PruneStalePending(townRoot, 5*time.Minute)
+	if pruneErr != nil {
+		style.PrintWarning("pruning stale spawns: %v", pruneErr)
+	}
 	if pruned > 0 {
 		fmt.Printf("%s Pruned %d stale spawn(s)\n", style.Dim.Render("○"), pruned)
 	}

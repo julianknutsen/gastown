@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,7 +55,7 @@ func readArchiveMessages(t *testing.T, dir string) []*mail.Message {
 	}
 
 	var msgs []*mail.Message
-	for _, line := range splitLines(string(data)) {
+	for _, line := range strings.Split(string(data), "\n") {
 		if line == "" {
 			continue
 		}
@@ -65,21 +66,6 @@ func readArchiveMessages(t *testing.T, dir string) []*mail.Message {
 		msgs = append(msgs, &msg)
 	}
 	return msgs
-}
-
-func splitLines(s string) []string {
-	var lines []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			lines = append(lines, s[start:i])
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		lines = append(lines, s[start:])
-	}
-	return lines
 }
 
 // makePendingSpawn creates a PendingSpawn with a legacy mailbox for testing.
@@ -111,9 +97,12 @@ func TestClearPendingFromList_ArchivesSingleMatch(t *testing.T) {
 		makePendingSpawn(mb, "gt-gastown-fury", "msg-2", 0),
 	}
 
-	err := clearPendingFromList(pending, "gt-gastown-max")
+	cleared, err := clearPendingFromList(pending, "gt-gastown-max")
 	if err != nil {
 		t.Fatalf("clearPendingFromList: %v", err)
+	}
+	if cleared != 1 {
+		t.Fatalf("expected 1 cleared, got %d", cleared)
 	}
 
 	// Verify msg-1 was archived
@@ -154,9 +143,12 @@ func TestClearPendingFromList_ArchivesAllMatchingSessions(t *testing.T) {
 		makePendingSpawn(mb, "gt-gastown-fury", "msg-3", 0),
 	}
 
-	err := clearPendingFromList(pending, "gt-gastown-max")
+	cleared, err := clearPendingFromList(pending, "gt-gastown-max")
 	if err != nil {
 		t.Fatalf("clearPendingFromList: %v", err)
+	}
+	if cleared != 2 {
+		t.Fatalf("expected 2 cleared, got %d", cleared)
 	}
 
 	// Both msg-1 and msg-2 should be archived
@@ -190,9 +182,12 @@ func TestClearPendingFromList_IdempotentWhenNotFound(t *testing.T) {
 	}
 
 	// Clear a non-existent session - should succeed (idempotent)
-	err := clearPendingFromList(pending, "gt-gastown-nonexistent")
+	cleared, err := clearPendingFromList(pending, "gt-gastown-nonexistent")
 	if err != nil {
 		t.Fatalf("expected nil error for non-existent session, got: %v", err)
+	}
+	if cleared != 0 {
+		t.Fatalf("expected 0 cleared, got %d", cleared)
 	}
 
 	// Nothing should be archived
@@ -211,9 +206,44 @@ func TestClearPendingFromList_NilMailboxReturnsError(t *testing.T) {
 		},
 	}
 
-	err := clearPendingFromList(pending, "gt-gastown-max")
+	_, err := clearPendingFromList(pending, "gt-gastown-max")
 	if err == nil {
 		t.Fatal("expected error for nil mailbox, got nil")
+	}
+}
+
+func TestClearPendingFromList_AlreadyArchivedIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+
+	msgs := []*mail.Message{
+		{ID: "msg-1", Subject: "POLECAT_STARTED gastown/max", Body: "Session: gt-gastown-max", Timestamp: time.Now()},
+	}
+	writeInboxMessages(t, dir, msgs)
+
+	mb := mail.NewMailbox(dir)
+
+	pending := []*PendingSpawn{
+		makePendingSpawn(mb, "gt-gastown-max", "msg-1", 0),
+	}
+
+	// First clear succeeds
+	cleared, err := clearPendingFromList(pending, "gt-gastown-max")
+	if err != nil {
+		t.Fatalf("first clear: %v", err)
+	}
+	if cleared != 1 {
+		t.Fatalf("expected 1 cleared on first pass, got %d", cleared)
+	}
+
+	// Second clear on same pending list (simulates race: another process archived
+	// between our list and archive calls). Should not error — ErrMessageNotFound
+	// is treated as non-fatal.
+	cleared, err = clearPendingFromList(pending, "gt-gastown-max")
+	if err != nil {
+		t.Fatalf("second clear (race simulation) should not error, got: %v", err)
+	}
+	if cleared != 0 {
+		t.Fatalf("expected 0 cleared on second pass, got %d", cleared)
 	}
 }
 
@@ -302,5 +332,38 @@ func TestPruneStalePendingFromList_NilMailboxReturnsError(t *testing.T) {
 	_, err := pruneStalePendingFromList(pending, 5*time.Minute)
 	if err == nil {
 		t.Fatal("expected error for nil mailbox, got nil")
+	}
+}
+
+func TestPruneStalePendingFromList_AlreadyArchivedIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+
+	msgs := []*mail.Message{
+		{ID: "msg-old", Subject: "POLECAT_STARTED gastown/max", Body: "Session: gt-gastown-max", Timestamp: time.Now().Add(-10 * time.Minute)},
+	}
+	writeInboxMessages(t, dir, msgs)
+
+	mb := mail.NewMailbox(dir)
+
+	pending := []*PendingSpawn{
+		makePendingSpawn(mb, "gt-gastown-max", "msg-old", 10*time.Minute),
+	}
+
+	// First prune succeeds
+	pruned, err := pruneStalePendingFromList(pending, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("first prune: %v", err)
+	}
+	if pruned != 1 {
+		t.Fatalf("expected 1 pruned on first pass, got %d", pruned)
+	}
+
+	// Second prune on same list (simulates race). Should not error.
+	pruned, err = pruneStalePendingFromList(pending, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("second prune (race simulation) should not error, got: %v", err)
+	}
+	if pruned != 0 {
+		t.Fatalf("expected 0 pruned on second pass, got %d", pruned)
 	}
 }
