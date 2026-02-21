@@ -82,7 +82,7 @@ func BlockerAware(readyIDs map[string]bool) ReadinessFilter {
 }
 
 // PlanDispatch computes which beads to dispatch given capacity constraints.
-// availableCapacity: free slots (0 = unlimited, negative = no capacity).
+// availableCapacity: free slots (positive = that many slots, <= 0 = no capacity).
 // batchSize: max beads per cycle.
 // ready: beads that passed readiness filtering.
 func PlanDispatch(availableCapacity, batchSize int, ready []PendingBead) DispatchPlan {
@@ -90,28 +90,27 @@ func PlanDispatch(availableCapacity, batchSize int, ready []PendingBead) Dispatc
 		return DispatchPlan{Reason: "none"}
 	}
 
-	capacity := availableCapacity
-	if capacity < 0 {
+	if availableCapacity <= 0 {
 		return DispatchPlan{
 			Skipped: len(ready),
 			Reason:  "capacity",
 		}
 	}
 
-	// Dispatch up to the smallest of capacity (if set), batchSize, and readyBeads count
+	// Dispatch up to the smallest of capacity, batchSize, and readyBeads count
 	toDispatch := batchSize
-	if capacity > 0 && capacity < toDispatch {
-		toDispatch = capacity
+	if availableCapacity < toDispatch {
+		toDispatch = availableCapacity
 	}
 	if len(ready) < toDispatch {
 		toDispatch = len(ready)
 	}
 
 	reason := "batch"
-	if capacity > 0 && capacity < batchSize && capacity < len(ready) {
+	if availableCapacity < batchSize && availableCapacity < len(ready) {
 		reason = "capacity"
 	}
-	if len(ready) < batchSize && (capacity == 0 || len(ready) < capacity) {
+	if len(ready) < batchSize && len(ready) < availableCapacity {
 		reason = "ready"
 	}
 

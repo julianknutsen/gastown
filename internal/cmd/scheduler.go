@@ -297,20 +297,31 @@ func runSchedulerClear(cmd *cobra.Command, args []string) error {
 	townBeads := beads.NewWithBeadsDir(townRoot, filepath.Join(townRoot, ".beads"))
 
 	if schedulerClearBead != "" {
-		// Close any sling context for this specific work bead
-		ctx, _, findErr := townBeads.FindOpenSlingContext(schedulerClearBead)
-		if findErr != nil {
-			return fmt.Errorf("finding context for %s: %w", schedulerClearBead, findErr)
+		// Close ALL sling contexts for this specific work bead (there may be
+		// duplicates if concurrent scheduleBead calls raced past idempotency).
+		contexts, listErr := townBeads.ListOpenSlingContexts()
+		if listErr != nil {
+			return fmt.Errorf("listing contexts: %w", listErr)
 		}
-		if ctx == nil {
+
+		closed := 0
+		for _, ctx := range contexts {
+			fields := beads.ParseSlingContextFields(ctx.Description)
+			if fields != nil && fields.WorkBeadID == schedulerClearBead {
+				if err := townBeads.CloseSlingContext(ctx.ID, "cleared"); err != nil {
+					fmt.Printf("  %s Could not close context %s: %v\n", style.Dim.Render("Warning:"), ctx.ID, err)
+					continue
+				}
+				closed++
+			}
+		}
+
+		if closed == 0 {
 			fmt.Printf("%s No sling context found for %s\n", style.Dim.Render("○"), schedulerClearBead)
-			return nil
+		} else {
+			fmt.Printf("%s Removed %s from scheduler (closed %d context(s))\n",
+				style.Bold.Render("✓"), schedulerClearBead, closed)
 		}
-		if err := townBeads.CloseSlingContext(ctx.ID, "cleared"); err != nil {
-			return fmt.Errorf("closing context %s: %w", ctx.ID, err)
-		}
-		fmt.Printf("%s Removed %s from scheduler (closed context %s)\n",
-			style.Bold.Render("✓"), schedulerClearBead, ctx.ID)
 		return nil
 	}
 

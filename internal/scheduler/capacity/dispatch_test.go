@@ -62,7 +62,7 @@ func TestDispatchCycle_Run_AllSuccess(t *testing.T) {
 	successCalled := []string{}
 
 	cycle := &DispatchCycle{
-		AvailableCapacity: func() (int, error) { return 0, nil },
+		AvailableCapacity: func() (int, error) { return 100, nil },
 		QueryPending: func() ([]PendingBead, error) {
 			return []PendingBead{
 				{ID: "a", WorkBeadID: "wa"},
@@ -105,7 +105,7 @@ func TestDispatchCycle_Run_WithFailures(t *testing.T) {
 	failuresCalled := []string{}
 
 	cycle := &DispatchCycle{
-		AvailableCapacity: func() (int, error) { return 0, nil },
+		AvailableCapacity: func() (int, error) { return 100, nil },
 		QueryPending: func() ([]PendingBead, error) {
 			return []PendingBead{
 				{ID: "a"},
@@ -168,7 +168,7 @@ func TestDispatchCycle_Run_OnSuccessError(t *testing.T) {
 	failureCalled := []string{}
 
 	cycle := &DispatchCycle{
-		AvailableCapacity: func() (int, error) { return 0, nil },
+		AvailableCapacity: func() (int, error) { return 100, nil },
 		QueryPending: func() ([]PendingBead, error) {
 			return []PendingBead{
 				{ID: "a", WorkBeadID: "wa"},
@@ -212,7 +212,7 @@ func TestDispatchCycle_Run_OnSuccessRetry(t *testing.T) {
 	attempts := map[string]int{}
 
 	cycle := &DispatchCycle{
-		AvailableCapacity: func() (int, error) { return 0, nil },
+		AvailableCapacity: func() (int, error) { return 100, nil },
 		QueryPending: func() ([]PendingBead, error) {
 			return []PendingBead{{ID: "a", WorkBeadID: "wa"}}, nil
 		},
@@ -245,7 +245,7 @@ func TestDispatchCycle_Run_OnSuccessRetry(t *testing.T) {
 func TestDispatchCycle_Run_SpawnDelay(t *testing.T) {
 	start := time.Now()
 	cycle := &DispatchCycle{
-		AvailableCapacity: func() (int, error) { return 0, nil },
+		AvailableCapacity: func() (int, error) { return 100, nil },
 		QueryPending: func() ([]PendingBead, error) {
 			return []PendingBead{{ID: "a"}, {ID: "b"}, {ID: "c"}}, nil
 		},

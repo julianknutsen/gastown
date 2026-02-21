@@ -9,7 +9,7 @@ import (
 // The core loop is generic — all domain logic is injected via callbacks.
 type DispatchCycle struct {
 	// AvailableCapacity returns the number of free dispatch slots.
-	// Return 0 for unlimited capacity.
+	// Positive = that many slots available. Zero or negative = no capacity.
 	AvailableCapacity func() (int, error)
 
 	// QueryPending returns work items eligible for dispatch.

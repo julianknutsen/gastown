@@ -241,7 +241,9 @@ func runBatchSchedule(beadIDs []string, rigName string) error {
 	return nil
 }
 
-// closeSlingContextForBead finds and closes any open sling context for a work bead.
+// closeSlingContextForBead finds and closes ALL open sling contexts for a work bead.
+// Multiple contexts can exist if concurrent scheduleBead calls raced past the
+// idempotency check. This ensures no orphaned contexts remain.
 func closeSlingContextForBead(beadID string) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
@@ -249,15 +251,21 @@ func closeSlingContextForBead(beadID string) error {
 	}
 
 	townBeads := beads.NewWithBeadsDir(townRoot, filepath.Join(townRoot, ".beads"))
-	ctx, _, findErr := townBeads.FindOpenSlingContext(beadID)
-	if findErr != nil {
-		return findErr
-	}
-	if ctx == nil {
-		return nil // No context to close
+	contexts, listErr := townBeads.ListOpenSlingContexts()
+	if listErr != nil {
+		return listErr
 	}
 
-	return townBeads.CloseSlingContext(ctx.ID, "cleared")
+	var lastErr error
+	for _, ctx := range contexts {
+		fields := beads.ParseSlingContextFields(ctx.Description)
+		if fields != nil && fields.WorkBeadID == beadID {
+			if err := townBeads.CloseSlingContext(ctx.ID, "cleared"); err != nil {
+				lastErr = err
+			}
+		}
+	}
+	return lastErr
 }
 
 // resolveRigForBead determines the rig that owns a bead from its ID prefix.
@@ -282,7 +290,8 @@ func resolveFormula(explicit string, hookRawBead bool) string {
 
 // areScheduled returns a set of bead IDs that have open sling contexts.
 // Does a single ListOpenSlingContexts call and builds a lookup set.
-// Returns an empty map (not nil) on error to avoid false negatives.
+// On error, fails closed: treats ALL requested beads as scheduled to prevent
+// false stranded detection and duplicate scheduling attempts.
 func areScheduled(beadIDs []string) map[string]bool {
 	result := make(map[string]bool)
 	if len(beadIDs) == 0 {
@@ -291,13 +300,21 @@ func areScheduled(beadIDs []string) map[string]bool {
 
 	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
+		// Can't determine town root — fail closed (treat all as scheduled)
+		for _, id := range beadIDs {
+			result[id] = true
+		}
 		return result
 	}
 
 	contexts, err := listAllSlingContexts(townRoot)
 	if err != nil {
-		fmt.Printf("%s Warning: could not list sling contexts: %v\n",
+		fmt.Printf("%s Warning: could not list sling contexts: %v (treating all as scheduled)\n",
 			style.Dim.Render("⚠"), err)
+		// Fail closed: treat all as scheduled to avoid duplicate scheduling
+		for _, id := range beadIDs {
+			result[id] = true
+		}
 		return result
 	}
 

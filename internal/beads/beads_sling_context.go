@@ -117,8 +117,12 @@ func (b *Beads) ListOpenSlingContexts() ([]*Issue, error) {
 }
 
 // CloseSlingContext closes a sling context bead with a reason.
+// Idempotent: suppresses "already closed" errors so retries are safe.
 func (b *Beads) CloseSlingContext(contextID, reason string) error {
 	_, err := b.run("close", contextID, "--reason="+reason)
+	if err != nil && strings.Contains(err.Error(), "already closed") {
+		return nil // Idempotent — already in desired state
+	}
 	return err
 }
 

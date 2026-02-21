@@ -95,7 +95,11 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 	cycle := &capacity.DispatchCycle{
 		AvailableCapacity: func() (int, error) {
 			active := countActivePolecats()
-			return maxPolecats - active, nil
+			cap := maxPolecats - active
+			if cap <= 0 {
+				return 0, nil // No free slots — PlanDispatch treats <= 0 as no capacity
+			}
+			return cap, nil
 		},
 		QueryPending: func() ([]capacity.PendingBead, error) {
 			return getReadySlingContexts(townRoot)
@@ -105,17 +109,19 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 			if err != nil {
 				return err
 			}
+			// Track side effects here (Execute runs exactly once, never retried).
 			if result != nil && result.PolecatName != "" {
 				polecatNames[b.ID] = result.PolecatName
 			}
-			return nil
-		},
-		OnSuccess: func(b capacity.PendingBead) error {
 			if b.TargetRig != "" {
 				successfulRigs[b.TargetRig] = true
 			}
 			_ = events.LogFeed(events.TypeSchedulerDispatch, actor,
 				events.SchedulerDispatchPayload(b.WorkBeadID, b.TargetRig, polecatNames[b.ID]))
+			return nil
+		},
+		OnSuccess: func(b capacity.PendingBead) error {
+			// OnSuccess may be retried — only do the close here, no side effects.
 			return townBeads.CloseSlingContext(b.ID, "dispatched")
 		},
 		OnFailure: func(b capacity.PendingBead, err error) {
@@ -215,6 +221,13 @@ func cleanupStaleContexts(townRoot string) {
 			continue
 		}
 
+		// Circuit-broken cleanup: close contexts that hit the failure threshold
+		// but whose previous close attempt failed.
+		if fields.DispatchFailures >= maxDispatchFailures {
+			_ = townBeads.CloseSlingContext(ctx.ID, "circuit-broken")
+			continue
+		}
+
 		// Stale cleanup: if work bead is hooked/in_progress/closed, close context
 		workInfo, err := getBeadInfo(fields.WorkBeadID)
 		if err == nil {
@@ -280,7 +293,10 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 		}
 	}
 
-	// 3. Build PendingBead list — pure filtering, no mutations
+	// 3. Build PendingBead list — pure filtering, no mutations.
+	// Deduplicate by WorkBeadID: keep the oldest context (first seen) to prevent
+	// duplicate dispatches if concurrent scheduleBead calls created multiple contexts.
+	seenWork := make(map[string]bool)
 	var result []capacity.PendingBead
 	for _, ctx := range allContexts {
 		fields := beads.ParseSlingContextFields(ctx.Description)
@@ -297,6 +313,12 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 		if !readyWorkIDs[fields.WorkBeadID] {
 			continue
 		}
+
+		// Deduplicate: one dispatch per work bead (keep first/oldest context)
+		if seenWork[fields.WorkBeadID] {
+			continue
+		}
+		seenWork[fields.WorkBeadID] = true
 
 		result = append(result, capacity.PendingBead{
 			ID:          ctx.ID,
