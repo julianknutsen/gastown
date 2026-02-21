@@ -198,39 +198,35 @@ func TestAgentEnv_WithoutAgentOverride(t *testing.T) {
 	assertNotSet(t, env, "GT_AGENT")
 }
 
-// TestAgentEnv_WithoutAgentOverride_RequiresFallback documents that callers
-// must set GT_AGENT from RuntimeConfig.ResolvedAgent when AgentEnvConfig.Agent
-// is empty. AgentEnv intentionally omits GT_AGENT without an explicit override,
-// but tmux session table consumers (IsAgentAlive, GT_AGENT validation) need it.
-// Regression test for PR #1776 which removed the session_manager.go fallback.
-func TestAgentEnv_WithoutAgentOverride_RequiresFallback(t *testing.T) {
+// TestAgentEnv_WithoutAgentOverride_UsesResolvedAgent verifies that AgentEnv
+// sets GT_AGENT from ResolvedAgent when Agent (explicit --agent override) is
+// empty. This consolidates the fallback into AgentEnv instead of requiring
+// each caller to compensate separately.
+// Fix for gt-nwgd5 which centralized the ResolvedAgent fallback.
+func TestAgentEnv_WithoutAgentOverride_UsesResolvedAgent(t *testing.T) {
 	t.Parallel()
 
-	// Simulate the default polecat dispatch path (no --agent flag).
-	// This is what session_manager.go calls when gt queue run / gt sling dispatches.
+	// Simulate the default dispatch path (no --agent flag) with a resolved agent.
 	env := AgentEnv(AgentEnvConfig{
-		Role:      "polecat",
-		Rig:       "myrig",
-		AgentName: "Toast",
-		TownRoot:  "/town",
-		Agent:     "", // no explicit override — the common case
+		Role:          "polecat",
+		Rig:           "myrig",
+		AgentName:     "Toast",
+		TownRoot:      "/town",
+		Agent:         "",       // no explicit override
+		ResolvedAgent: "gemini", // from rig/town config
 	})
 
-	// GT_AGENT must NOT be in the map — this confirms callers need a fallback.
-	// session_manager.go must compensate by writing runtimeConfig.ResolvedAgent
-	// to the tmux session table via SetEnvironment.
-	if _, ok := env["GT_AGENT"]; ok {
-		t.Error("AgentEnv should NOT set GT_AGENT when Agent is empty; " +
-			"callers must fall back to runtimeConfig.ResolvedAgent")
-	}
+	// GT_AGENT IS set from ResolvedAgent — callers no longer need to compensate.
+	assertEnv(t, env, "GT_AGENT", "gemini")
 
-	// With an explicit override, GT_AGENT IS set.
+	// With an explicit override, Agent takes precedence over ResolvedAgent.
 	envWithOverride := AgentEnv(AgentEnvConfig{
-		Role:      "polecat",
-		Rig:       "myrig",
-		AgentName: "Toast",
-		TownRoot:  "/town",
-		Agent:     "codex",
+		Role:          "polecat",
+		Rig:           "myrig",
+		AgentName:     "Toast",
+		TownRoot:      "/town",
+		Agent:         "codex",
+		ResolvedAgent: "gemini",
 	})
 	assertEnv(t, envWithOverride, "GT_AGENT", "codex")
 }

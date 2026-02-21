@@ -379,32 +379,46 @@ func TestSessionManager_resolveBeadsDir(t *testing.T) {
 // and the post-startup validation kills the session with:
 //   "GT_AGENT not set in session ... witness patrol will misidentify this polecat"
 //
-// Regression test for the bug introduced in PR #1776 which removed the
-// unconditional runtimeConfig.ResolvedAgent → SetEnvironment("GT_AGENT") logic
-// and replaced it with an AgentEnv-only path that requires opts.Agent to be set.
-func TestAgentEnvOmitsGTAgent_FallbackRequired(t *testing.T) {
+// TestAgentEnvGTAgent_ResolvedFallback verifies GT_AGENT behavior in AgentEnv
+// for the polecat dispatch path. GT_AGENT is set from Agent (explicit override),
+// ResolvedAgent (config fallback), or omitted if both are empty.
+// Updated for gt-nwgd5: ResolvedAgent fallback is now handled inside AgentEnv.
+func TestAgentEnvGTAgent_ResolvedFallback(t *testing.T) {
 	t.Parallel()
 
-	// Simulate what session_manager.Start calls for each dispatch scenario.
 	cases := []struct {
-		name       string
-		agent      string // opts.Agent value
-		wantGTAgent bool  // whether GT_AGENT should be in AgentEnv output
+		name          string
+		agent         string // opts.Agent value (explicit --agent flag)
+		resolvedAgent string // runtimeConfig.ResolvedAgent
+		wantGTAgent   bool   // whether GT_AGENT should be in AgentEnv output
+		wantValue     string // expected GT_AGENT value if present
 	}{
 		{
-			name:       "default dispatch (no --agent flag)",
-			agent:      "",
-			wantGTAgent: false, // fallback needed
+			name:          "no override no resolved — GT_AGENT absent",
+			agent:         "",
+			resolvedAgent: "",
+			wantGTAgent:   false,
 		},
 		{
-			name:       "explicit --agent codex",
-			agent:      "codex",
-			wantGTAgent: true,
+			name:          "resolved agent only — uses fallback",
+			agent:         "",
+			resolvedAgent: "gemini",
+			wantGTAgent:   true,
+			wantValue:     "gemini",
 		},
 		{
-			name:       "explicit --agent gemini",
-			agent:      "gemini",
-			wantGTAgent: true,
+			name:          "explicit --agent codex",
+			agent:         "codex",
+			resolvedAgent: "",
+			wantGTAgent:   true,
+			wantValue:     "codex",
+		},
+		{
+			name:          "explicit override takes precedence over resolved",
+			agent:         "codex",
+			resolvedAgent: "gemini",
+			wantGTAgent:   true,
+			wantValue:     "codex",
 		},
 	}
 
@@ -412,16 +426,21 @@ func TestAgentEnvOmitsGTAgent_FallbackRequired(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			env := config.AgentEnv(config.AgentEnvConfig{
-				Role:      "polecat",
-				Rig:       "gastown",
-				AgentName: "Toast",
-				TownRoot:  "/tmp/town",
-				Agent:     tc.agent,
+				Role:          "polecat",
+				Rig:           "gastown",
+				AgentName:     "Toast",
+				TownRoot:      "/tmp/town",
+				Agent:         tc.agent,
+				ResolvedAgent: tc.resolvedAgent,
 			})
-			_, hasGTAgent := env["GT_AGENT"]
+			val, hasGTAgent := env["GT_AGENT"]
 			if hasGTAgent != tc.wantGTAgent {
-				t.Errorf("AgentEnv(Agent=%q): GT_AGENT present=%v, want %v",
-					tc.agent, hasGTAgent, tc.wantGTAgent)
+				t.Errorf("AgentEnv(Agent=%q, ResolvedAgent=%q): GT_AGENT present=%v, want %v",
+					tc.agent, tc.resolvedAgent, hasGTAgent, tc.wantGTAgent)
+			}
+			if hasGTAgent && val != tc.wantValue {
+				t.Errorf("AgentEnv(Agent=%q, ResolvedAgent=%q): GT_AGENT=%q, want %q",
+					tc.agent, tc.resolvedAgent, val, tc.wantValue)
 			}
 		})
 	}
