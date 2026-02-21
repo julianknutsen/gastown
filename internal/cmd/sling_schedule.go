@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -299,7 +300,7 @@ func areScheduled(beadIDs []string) map[string]bool {
 	}
 
 	townRoot, err := workspace.FindFromCwd()
-	if err != nil {
+	if err != nil || townRoot == "" {
 		// Can't determine town root — fail closed (treat all as scheduled)
 		for _, id := range beadIDs {
 			result[id] = true
@@ -309,7 +310,7 @@ func areScheduled(beadIDs []string) map[string]bool {
 
 	contexts, err := listAllSlingContexts(townRoot)
 	if err != nil {
-		fmt.Printf("%s Warning: could not list sling contexts: %v (treating all as scheduled)\n",
+		fmt.Fprintf(os.Stderr, "%s Warning: could not list sling contexts: %v (treating all as scheduled)\n",
 			style.Dim.Render("⚠"), err)
 		// Fail closed: treat all as scheduled to avoid duplicate scheduling
 		for _, id := range beadIDs {

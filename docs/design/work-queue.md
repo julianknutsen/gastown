@@ -318,7 +318,7 @@ gt config set scheduler.spawn_delay 3s
 toDispatch = min(capacity, batchSize, readyCount)
 
 where:
-  capacity   = maxPolecats - activePolecats (0 = unlimited, negative = none)
+  capacity   = maxPolecats - activePolecats (positive = that many slots, 0 or negative = no capacity)
   batchSize  = scheduler.batch_size (default 1)
   readyCount = sling contexts whose work bead appears in bd ready
 ```

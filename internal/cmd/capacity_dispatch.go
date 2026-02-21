@@ -86,7 +86,10 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 	townBeads := beads.NewWithBeadsDir(townRoot, filepath.Join(townRoot, ".beads"))
 
 	// Clean up invalid/stale contexts before querying for ready beads.
-	cleanupStaleContexts(townRoot)
+	// Skip during dry-run to avoid mutating state.
+	if !dryRun {
+		cleanupStaleContexts(townRoot)
+	}
 
 	// Wire up the DispatchCycle
 	successfulRigs := make(map[string]bool)
@@ -228,7 +231,11 @@ func cleanupStaleContexts(townRoot string) {
 			continue
 		}
 
-		// Stale cleanup: if work bead is hooked/in_progress/closed, close context
+		// Stale cleanup: if work bead is hooked/closed/tombstone, close context.
+		// Note: in_progress is intentionally excluded — the work bead is being
+		// actively worked, and bd ready won't return it, so the dispatch query
+		// already prevents re-dispatch. The context stays open until the polecat
+		// finishes and the bead transitions to closed/tombstone.
 		workInfo, err := getBeadInfo(fields.WorkBeadID)
 		if err == nil {
 			if workInfo.Status == "hooked" || workInfo.Status == "closed" || workInfo.Status == "tombstone" {

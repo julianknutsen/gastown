@@ -1057,10 +1057,10 @@ func TestSchedulerInvalidJSONContextCleanup(t *testing.T) {
 		t.Fatalf("bd update to corrupt description failed: %v\n%s", err, out)
 	}
 
-	// Run scheduler dispatch (dry-run triggers cleanup via the query path).
-	// cleanupStaleContexts is called before the query.
-	out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "run", "--dry-run")
-	t.Logf("scheduler run --dry-run output:\n%s", out)
+	// Run scheduler dispatch (non-dry-run triggers cleanup before dispatch).
+	// cleanupStaleContexts is called before the dispatch cycle.
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "run")
+	t.Logf("scheduler run output:\n%s", out)
 
 	// Verify the invalid context is no longer listed.
 	townBeads := beads.NewWithBeadsDir(hqPath, filepath.Join(hqPath, ".beads"))
