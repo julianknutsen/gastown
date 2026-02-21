@@ -566,10 +566,44 @@ func (r *Router) sendToGroup(msg *Message) error {
 	return nil
 }
 
+// validateRecipient checks that the recipient identity corresponds to an existing
+// agent or a well-known infrastructure address. Returns nil if the recipient is
+// valid, or an error if no matching agent is found.
+func (r *Router) validateRecipient(identity string) error {
+	// Overseer is the human operator, not an agent bead
+	if identity == "overseer" {
+		return nil
+	}
+
+	// Town-level agents (mayor/, deacon/) are well-known infrastructure agents
+	// that should always be valid recipients, even if no agent bead exists yet.
+	// This prevents failures when agents haven't registered their beads
+	// (e.g., gt compact report sending to deacon/ during early startup).
+	if isTownLevelAddress(identity) {
+		return nil
+	}
+
+	// Query agents from town-level beads
+	agents, _ := r.queryAgents("")
+
+	for _, agent := range agents {
+		if agentBeadToAddress(agent) == identity {
+			return nil // Found matching agent
+		}
+	}
+
+	return fmt.Errorf("no agent found")
+}
+
 // sendToSingle sends a message to a single recipient.
 func (r *Router) sendToSingle(msg *Message) error {
 	// Convert addresses to beads identities
 	toIdentity := addressToIdentity(msg.To)
+
+	// Validate recipient exists
+	if err := r.validateRecipient(toIdentity); err != nil {
+		return fmt.Errorf("invalid recipient %q: %w", msg.To, err)
+	}
 
 	// Build labels for from/thread/reply-to/cc
 	var labels []string

@@ -813,3 +813,41 @@ func TestExpandAnnounceNoTownRoot(t *testing.T) {
 		t.Errorf("expandAnnounce error = %v, want containing 'no town root'", err)
 	}
 }
+
+// TestValidateRecipientTownLevel verifies that town-level agents (mayor/, deacon/)
+// are accepted as valid recipients even when no agent beads exist in the database.
+// This is the bug scenario from gt-pxlri: gt compact report fails because deacon/
+// has no agent bead and validateRecipient rejects it.
+func TestValidateRecipientTownLevel(t *testing.T) {
+	// Use a non-existent town root so queryAgents returns no agents.
+	// This simulates the scenario where no agent beads are registered.
+	r := &Router{workDir: t.TempDir(), townRoot: t.TempDir()}
+
+	tests := []struct {
+		name     string
+		identity string
+		wantErr  bool
+	}{
+		// Town-level agents should be valid even without agent beads
+		{"mayor is valid", "mayor/", false},
+		{"deacon is valid", "deacon/", false},
+		{"overseer is valid", "overseer", false},
+		// Non-town-level agents should fail without beads
+		{"unknown rig agent fails", "testrig/nonexistent", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := r.validateRecipient(tt.identity)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("validateRecipient(%q) expected error, got nil", tt.identity)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("validateRecipient(%q) unexpected error: %v", tt.identity, err)
+				}
+			}
+		})
+	}
+}
