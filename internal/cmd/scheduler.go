@@ -362,6 +362,7 @@ func runSchedulerRun(cmd *cobra.Command, args []string) error {
 
 // listScheduledBeads returns info about all scheduled beads for display.
 // Reconciles sling context beads with work bead readiness to mark blocked status.
+// Uses batch fetch for work bead info to avoid N+1 subprocess spawns.
 func listScheduledBeads(townRoot string) ([]scheduledBeadInfo, error) {
 	allContexts, err := listAllSlingContexts(townRoot)
 	if err != nil {
@@ -372,8 +373,10 @@ func listScheduledBeads(townRoot string) ([]scheduledBeadInfo, error) {
 		return nil, nil
 	}
 
-	// Build readyIDs set
+	// Build readyIDs set and batch-fetch work bead info in parallel-ish
+	// (both are independent queries)
 	readyWorkIDs := listReadyWorkBeadIDs(townRoot)
+	workBeadInfo := batchFetchBeadInfo(townRoot)
 
 	var result []scheduledBeadInfo
 	for _, ctx := range allContexts {
@@ -387,13 +390,12 @@ func listScheduledBeads(townRoot string) ([]scheduledBeadInfo, error) {
 			continue
 		}
 
-		// Get work bead info for title/status
+		// Get work bead info for title/status from batch-fetched map
 		title := ctx.Title
 		status := "open"
-		workInfo, err := getBeadInfo(fields.WorkBeadID)
-		if err == nil {
-			title = workInfo.Title
-			status = workInfo.Status
+		if info, found := workBeadInfo[fields.WorkBeadID]; found {
+			title = info.Title
+			status = info.Status
 			// Skip if work bead is hooked/closed
 			if status == "hooked" || status == "closed" || status == "tombstone" {
 				continue

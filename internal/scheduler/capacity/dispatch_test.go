@@ -166,6 +166,7 @@ func TestDispatchCycle_Run_OnSuccessError(t *testing.T) {
 	// the item should NOT be counted as dispatched — it should be failed.
 	// This prevents double-dispatch when context close fails.
 	failureCalled := []string{}
+	var failureErrors []error
 
 	cycle := &DispatchCycle{
 		AvailableCapacity: func() (int, error) { return 100, nil },
@@ -186,6 +187,7 @@ func TestDispatchCycle_Run_OnSuccessError(t *testing.T) {
 		},
 		OnFailure: func(b PendingBead, err error) {
 			failureCalled = append(failureCalled, b.ID)
+			failureErrors = append(failureErrors, err)
 		},
 		BatchSize: 10,
 	}
@@ -204,6 +206,14 @@ func TestDispatchCycle_Run_OnSuccessError(t *testing.T) {
 	}
 	if len(failureCalled) != 1 || failureCalled[0] != "a" {
 		t.Errorf("failureCalled = %v, want [a]", failureCalled)
+	}
+
+	// Verify the error is an ErrOnSuccessFailed sentinel (not a string-based protocol)
+	if len(failureErrors) == 1 {
+		var onSuccessErr *ErrOnSuccessFailed
+		if !errors.As(failureErrors[0], &onSuccessErr) {
+			t.Errorf("OnFailure error should be *ErrOnSuccessFailed, got %T: %v", failureErrors[0], failureErrors[0])
+		}
 	}
 }
 

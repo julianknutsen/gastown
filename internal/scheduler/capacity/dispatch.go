@@ -5,6 +5,16 @@ import (
 	"time"
 )
 
+// ErrOnSuccessFailed wraps dispatch-succeeded-but-cleanup-failed errors.
+// Used to distinguish "polecat launched, context close failed" from
+// "polecat never launched" in the OnFailure callback.
+type ErrOnSuccessFailed struct{ Err error }
+
+func (e *ErrOnSuccessFailed) Error() string {
+	return "dispatch succeeded but OnSuccess failed: " + e.Err.Error()
+}
+func (e *ErrOnSuccessFailed) Unwrap() error { return e.Err }
+
 // DispatchCycle is a capacity-controlled dispatch orchestrator.
 // The core loop is generic — all domain logic is injected via callbacks.
 type DispatchCycle struct {
@@ -98,7 +108,7 @@ func (c *DispatchCycle) Run() (DispatchReport, error) {
 				// it as a failure to prevent double-dispatch on the next cycle.
 				report.Failed++
 				if c.OnFailure != nil {
-					c.OnFailure(b, fmt.Errorf("dispatch succeeded but OnSuccess failed: %w", successErr))
+					c.OnFailure(b, &ErrOnSuccessFailed{Err: successErr})
 				}
 				continue
 			}
