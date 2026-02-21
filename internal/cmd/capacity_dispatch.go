@@ -143,6 +143,9 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 						style.Warning.Render("⚠"), b.ID, b.WorkBeadID, closeErr)
 				} else {
 					// Last-resort close succeeded — context is now closed.
+					// Log feed event so dashboards can detect bead DB degradation.
+					_ = events.LogFeed(events.TypeSchedulerCloseRetry, actor,
+						events.SchedulerDispatchPayload(b.WorkBeadID, b.TargetRig, polecatNames[b.ID]))
 					// Skip recordDispatchFailure to avoid writing to a closed context.
 					return
 				}

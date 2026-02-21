@@ -378,6 +378,7 @@ func listScheduledBeads(townRoot string) ([]scheduledBeadInfo, error) {
 	readyWorkIDs := listReadyWorkBeadIDs(townRoot)
 	workBeadInfo := batchFetchBeadInfo(townRoot)
 
+	seenWork := make(map[string]bool)
 	var result []scheduledBeadInfo
 	for _, ctx := range allContexts {
 		fields := beads.ParseSlingContextFields(ctx.Description)
@@ -389,6 +390,12 @@ func listScheduledBeads(townRoot string) ([]scheduledBeadInfo, error) {
 		if fields.DispatchFailures >= maxDispatchFailures {
 			continue
 		}
+
+		// Dedup by WorkBeadID (mirrors getReadySlingContexts logic)
+		if seenWork[fields.WorkBeadID] {
+			continue
+		}
+		seenWork[fields.WorkBeadID] = true
 
 		// Get work bead info for title/status from batch-fetched map
 		title := ctx.Title
