@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
@@ -70,7 +71,7 @@ var schedulerResumeCmd = &cobra.Command{
 var schedulerClearCmd = &cobra.Command{
 	Use:   "clear",
 	Short: "Remove beads from the scheduler",
-	Long: `Remove beads from the scheduler by clearing gt:queued labels.
+	Long: `Remove beads from the scheduler by closing sling context beads.
 
 Without --bead, removes ALL beads from the scheduler.
 With --bead, removes only the specified bead.`,
@@ -293,34 +294,48 @@ func runSchedulerClear(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	townBeads := beads.NewWithBeadsDir(townRoot, filepath.Join(townRoot, ".beads"))
+
 	if schedulerClearBead != "" {
-		if err := unscheduleBeadLabels(schedulerClearBead); err != nil {
-			return fmt.Errorf("clearing bead %s from scheduler: %w", schedulerClearBead, err)
+		// Close any sling context for this specific work bead
+		ctx, _, findErr := townBeads.FindOpenSlingContext(schedulerClearBead)
+		if findErr != nil {
+			return fmt.Errorf("finding context for %s: %w", schedulerClearBead, findErr)
 		}
-		fmt.Printf("%s Removed %s from scheduler\n", style.Bold.Render("✓"), schedulerClearBead)
+		if ctx == nil {
+			fmt.Printf("%s No sling context found for %s\n", style.Dim.Render("○"), schedulerClearBead)
+			return nil
+		}
+		if err := townBeads.CloseSlingContext(ctx.ID, "cleared"); err != nil {
+			return fmt.Errorf("closing context %s: %w", ctx.ID, err)
+		}
+		fmt.Printf("%s Removed %s from scheduler (closed context %s)\n",
+			style.Bold.Render("✓"), schedulerClearBead, ctx.ID)
 		return nil
 	}
 
-	ids, err := listAllScheduledBeadIDs(townRoot)
+	// Close all open sling contexts across all dirs
+	allContexts, err := listAllSlingContexts(townRoot)
 	if err != nil {
-		return fmt.Errorf("listing scheduled beads: %w", err)
+		return fmt.Errorf("listing sling contexts: %w", err)
 	}
 
-	if len(ids) == 0 {
+	if len(allContexts) == 0 {
 		fmt.Println("Scheduler is already empty.")
 		return nil
 	}
 
 	cleared := 0
-	for _, id := range ids {
-		if err := unscheduleBeadLabels(id); err != nil {
-			fmt.Printf("  %s Could not clear %s: %v\n", style.Dim.Render("Warning:"), id, err)
+	for _, ctx := range allContexts {
+		// Use the townBeads instance for all close operations (contexts are in HQ DB)
+		if err := townBeads.CloseSlingContext(ctx.ID, "cleared"); err != nil {
+			fmt.Printf("  %s Could not close context %s: %v\n", style.Dim.Render("Warning:"), ctx.ID, err)
 			continue
 		}
 		cleared++
 	}
 
-	fmt.Printf("%s Cleared %d bead(s) from scheduler\n", style.Bold.Render("✓"), cleared)
+	fmt.Printf("%s Cleared %d context bead(s) from scheduler\n", style.Bold.Render("✓"), cleared)
 	return nil
 }
 
@@ -334,141 +349,78 @@ func runSchedulerRun(cmd *cobra.Command, args []string) error {
 	return err
 }
 
-// listScheduledBeads returns all beads with the gt:queued label across all rig DBs.
-// Populates Blocked by reconciling bd list (all scheduled) vs bd ready (unblocked).
+// listScheduledBeads returns info about all scheduled beads for display.
+// Reconciles sling context beads with work bead readiness to mark blocked status.
 func listScheduledBeads(townRoot string) ([]scheduledBeadInfo, error) {
-	var result []scheduledBeadInfo
-	seen := make(map[string]bool)
-
-	dirs := beadsSearchDirs(townRoot)
-
-	readyIDs := make(map[string]bool)
-	for _, dir := range dirs {
-		readyCmd := exec.Command("bd", "ready", "--label", capacity.LabelScheduled, "--json", "--limit=0")
-		readyCmd.Dir = dir
-		readyOut, err := readyCmd.Output()
-		if err != nil {
-			continue
-		}
-		var readyBeads []struct {
-			ID          string `json:"id"`
-			Description string `json:"description"`
-		}
-		if err := json.Unmarshal(readyOut, &readyBeads); err == nil {
-			for _, b := range readyBeads {
-				if meta := capacity.ParseMetadata(b.Description); meta != nil && meta.DispatchFailures >= maxDispatchFailures {
-					continue
-				}
-				readyIDs[b.ID] = true
-			}
-		}
-	}
-
-	var lastErr error
-	failCount := 0
-	for _, dir := range dirs {
-		beads, err := listScheduledBeadsFrom(dir)
-		if err != nil {
-			failCount++
-			lastErr = err
-			continue
-		}
-		for _, b := range beads {
-			if b.Status == "hooked" || b.Status == "closed" {
-				continue
-			}
-			if !seen[b.ID] {
-				seen[b.ID] = true
-				b.Blocked = !readyIDs[b.ID]
-				result = append(result, b)
-			}
-		}
-	}
-
-	if failCount == len(dirs) && failCount > 0 {
-		return nil, fmt.Errorf("all %d bead directories failed (last: %w)", failCount, lastErr)
-	}
-	return result, nil
-}
-
-// listScheduledBeadsFrom queries a single directory for beads with gt:queued label.
-func listScheduledBeadsFrom(dir string) ([]scheduledBeadInfo, error) {
-	listCmd := exec.Command("bd", "list", "--label="+capacity.LabelScheduled, "--json", "--limit=0")
-	listCmd.Dir = dir
-	var stdout strings.Builder
-	listCmd.Stdout = &stdout
-
-	if err := listCmd.Run(); err != nil {
+	allContexts, err := listAllSlingContexts(townRoot)
+	if err != nil {
 		return nil, err
 	}
 
-	var raw []struct {
-		ID          string `json:"id"`
-		Title       string `json:"title"`
-		Status      string `json:"status"`
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal([]byte(stdout.String()), &raw); err != nil {
-		return nil, fmt.Errorf("parsing scheduled beads: %w", err)
+	if len(allContexts) == 0 {
+		return nil, nil
 	}
 
-	result := make([]scheduledBeadInfo, 0, len(raw))
-	for _, r := range raw {
-		targetRig := ""
-		meta := capacity.ParseMetadata(r.Description)
-		if meta != nil {
-			targetRig = meta.TargetRig
-			if meta.DispatchFailures >= maxDispatchFailures {
+	// Build readyIDs set
+	readyWorkIDs := listReadyWorkBeadIDs(townRoot)
+
+	var result []scheduledBeadInfo
+	for _, ctx := range allContexts {
+		fields := beads.ParseSlingContextFields(ctx.Description)
+		if fields == nil {
+			continue
+		}
+
+		// Exclude circuit-broken
+		if fields.DispatchFailures >= maxDispatchFailures {
+			continue
+		}
+
+		// Get work bead info for title/status
+		title := ctx.Title
+		status := "open"
+		workInfo, err := getBeadInfo(fields.WorkBeadID)
+		if err == nil {
+			title = workInfo.Title
+			status = workInfo.Status
+			// Skip if work bead is hooked/closed
+			if status == "hooked" || status == "closed" || status == "tombstone" {
 				continue
 			}
 		}
+
 		result = append(result, scheduledBeadInfo{
-			ID:        r.ID,
-			Title:     r.Title,
-			Status:    r.Status,
-			TargetRig: targetRig,
+			ID:        fields.WorkBeadID,
+			Title:     title,
+			Status:    status,
+			TargetRig: fields.TargetRig,
+			Blocked:   !readyWorkIDs[fields.WorkBeadID],
 		})
 	}
+
 	return result, nil
 }
 
-// listAllScheduledBeadIDs returns the IDs of ALL beads with the gt:queued
-// label across all rig DBs, without status or circuit-breaker filtering.
+// listAllScheduledBeadIDs returns the work bead IDs of all scheduled beads.
 func listAllScheduledBeadIDs(townRoot string) ([]string, error) {
+	allContexts, err := listAllSlingContexts(townRoot)
+	if err != nil {
+		return nil, err
+	}
+
 	var ids []string
 	seen := make(map[string]bool)
-
-	var lastErr error
-	failCount := 0
-	for _, dir := range beadsSearchDirs(townRoot) {
-		listCmd := exec.Command("bd", "list", "--label="+capacity.LabelScheduled, "--json", "--limit=0")
-		listCmd.Dir = dir
-		var stdout strings.Builder
-		listCmd.Stdout = &stdout
-		if err := listCmd.Run(); err != nil {
-			failCount++
-			lastErr = err
+	for _, ctx := range allContexts {
+		fields := beads.ParseSlingContextFields(ctx.Description)
+		if fields == nil {
 			continue
 		}
-		var raw []struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal([]byte(stdout.String()), &raw); err != nil {
-			failCount++
-			lastErr = err
-			continue
-		}
-		for _, r := range raw {
-			if !seen[r.ID] {
-				seen[r.ID] = true
-				ids = append(ids, r.ID)
-			}
+		if !seen[fields.WorkBeadID] {
+			seen[fields.WorkBeadID] = true
+			ids = append(ids, fields.WorkBeadID)
 		}
 	}
 
-	if failCount > 0 && len(ids) == 0 {
-		return nil, fmt.Errorf("all directories failed (last: %w)", lastErr)
-	}
 	return ids, nil
 }
 

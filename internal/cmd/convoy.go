@@ -18,7 +18,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tui/convoy"
@@ -1264,9 +1263,17 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 		// Town-level beads (hq- prefix with path=".") are excluded because
 		// they can't be dispatched via gt sling -- they're handled by the deacon.
 		townRoot := filepath.Dir(townBeads)
+
+		// Batch-check scheduling status for all tracked issues (single DB query).
+		var trackedIDs []string
+		for _, t := range tracked {
+			trackedIDs = append(trackedIDs, t.ID)
+		}
+		scheduledSet := areScheduled(trackedIDs)
+
 		var readyIssues []string
 		for _, t := range tracked {
-			if isReadyIssue(t) {
+			if isReadyIssue(t, scheduledSet) {
 				if !isSlingableBead(townRoot, t.ID) {
 					continue
 				}
@@ -1292,7 +1299,8 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 // - status = "open" AND (no assignee OR assignee session is dead)
 // - OR status = "in_progress"/"hooked" AND assignee session is dead (orphaned molecule)
 // - AND not blocked (cross-rig-aware from issue details)
-func isReadyIssue(t trackedIssueInfo) bool {
+// scheduledSet is a pre-computed set of bead IDs with open sling contexts (from areScheduled).
+func isReadyIssue(t trackedIssueInfo, scheduledSet map[string]bool) bool {
 	// Closed issues are never ready
 	if t.Status == "closed" || t.Status == "tombstone" {
 		return false
@@ -1303,19 +1311,9 @@ func isReadyIssue(t trackedIssueInfo) bool {
 		return false
 	}
 
-	// Queued beads are not stranded — they're waiting for dispatch capacity.
-	// Dispatched beads are suppressed unconditionally. There is a timing window
-	// between dispatch (label swap) and assignee being set (polecat session start)
-	// where the bead has gt:queue-dispatched but no assignee. Filtering only when
-	// Assignee != "" would cause false stranded alerts during this window.
-	// If a dispatched bead needs to be re-queued, use `gt scheduler clear`.
-	for _, l := range t.Labels {
-		if l == capacity.LabelScheduled {
-			return false
-		}
-		if l == "gt:queue-dispatched" {
-			return false
-		}
+	// Scheduled beads are not stranded — they're waiting for dispatch capacity.
+	if scheduledSet[t.ID] {
+		return false
 	}
 
 	// Open issues with no assignee are trivially ready
