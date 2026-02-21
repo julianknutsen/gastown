@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// writeJSONFile is provided by queue_test_helpers_test.go (no build tag).
+// writeJSONFile is provided by scheduler_test_helpers_test.go (no build tag).
 
 // readJSONFile reads and unmarshals a JSON file into dest.
 func readJSONFile(t *testing.T, path string, dest any) {
