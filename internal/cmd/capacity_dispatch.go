@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/gofrs/flock"
 	"github.com/steveyegge/gastown/internal/beads"
@@ -128,8 +129,15 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 			return townBeads.CloseSlingContext(b.ID, "dispatched")
 		},
 		OnFailure: func(b capacity.PendingBead, err error) {
-			_ = events.LogFeed(events.TypeSchedulerDispatchFailed, actor,
-				events.SchedulerDispatchFailedPayload(b.WorkBeadID, b.TargetRig, err.Error()))
+			if strings.HasPrefix(err.Error(), "dispatch succeeded but OnSuccess failed") {
+				// Polecat launched but context close failed — not a true dispatch failure.
+				// Log a distinct warning so operators can distinguish from "polecat never launched".
+				fmt.Fprintf(os.Stderr, "%s Dispatch of %s succeeded but context close failed: %v\n",
+					style.Warning.Render("⚠"), b.WorkBeadID, err)
+			} else {
+				_ = events.LogFeed(events.TypeSchedulerDispatchFailed, actor,
+					events.SchedulerDispatchFailedPayload(b.WorkBeadID, b.TargetRig, err.Error()))
+			}
 			recordDispatchFailure(townBeads, b, err)
 		},
 		BatchSize:  batchSize,
@@ -283,11 +291,17 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 
 	// 2. Build readyWorkIDs set from bd ready across all dirs
 	readyWorkIDs := make(map[string]bool)
+	readyFailCount := 0
+	var readyLastErr error
 	for _, dir := range dirs {
 		readyCmd := exec.Command("bd", "ready", "--json", "--limit=0")
 		readyCmd.Dir = dir
 		readyOut, err := readyCmd.Output()
 		if err != nil {
+			readyFailCount++
+			readyLastErr = err
+			fmt.Fprintf(os.Stderr, "%s Warning: bd ready failed for %s: %v\n",
+				style.Dim.Render("⚠"), dir, err)
 			continue
 		}
 		var readyBeads []struct {
@@ -298,6 +312,10 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 				readyWorkIDs[b.ID] = true
 			}
 		}
+	}
+
+	if readyFailCount == len(dirs) && readyFailCount > 0 {
+		return nil, fmt.Errorf("all %d bd ready queries failed (last: %w)", readyFailCount, readyLastErr)
 	}
 
 	// 3. Build PendingBead list — pure filtering, no mutations.

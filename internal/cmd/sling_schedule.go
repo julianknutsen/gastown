@@ -242,33 +242,6 @@ func runBatchSchedule(beadIDs []string, rigName string) error {
 	return nil
 }
 
-// closeSlingContextForBead finds and closes ALL open sling contexts for a work bead.
-// Multiple contexts can exist if concurrent scheduleBead calls raced past the
-// idempotency check. This ensures no orphaned contexts remain.
-func closeSlingContextForBead(beadID string) error {
-	townRoot, err := workspace.FindFromCwdOrError()
-	if err != nil {
-		return err
-	}
-
-	townBeads := beads.NewWithBeadsDir(townRoot, filepath.Join(townRoot, ".beads"))
-	contexts, listErr := townBeads.ListOpenSlingContexts()
-	if listErr != nil {
-		return listErr
-	}
-
-	var lastErr error
-	for _, ctx := range contexts {
-		fields := beads.ParseSlingContextFields(ctx.Description)
-		if fields != nil && fields.WorkBeadID == beadID {
-			if err := townBeads.CloseSlingContext(ctx.ID, "cleared"); err != nil {
-				lastErr = err
-			}
-		}
-	}
-	return lastErr
-}
-
 // resolveRigForBead determines the rig that owns a bead from its ID prefix.
 func resolveRigForBead(townRoot, beadID string) string {
 	prefix := beads.ExtractPrefix(beadID)
@@ -290,7 +263,9 @@ func resolveFormula(explicit string, hookRawBead bool) string {
 }
 
 // areScheduled returns a set of bead IDs that have open sling contexts.
-// Does a single ListOpenSlingContexts call and builds a lookup set.
+// Queries HQ only — sling contexts are always created in the town-root DB,
+// so HQ is authoritative. This avoids partial-failure scenarios where a rig
+// dir succeeds but HQ fails, which would silently return incomplete results.
 // On error, fails closed: treats ALL requested beads as scheduled to prevent
 // false stranded detection and duplicate scheduling attempts.
 func areScheduled(beadIDs []string) map[string]bool {
@@ -308,7 +283,8 @@ func areScheduled(beadIDs []string) map[string]bool {
 		return result
 	}
 
-	contexts, err := listAllSlingContexts(townRoot)
+	townBeads := beads.NewWithBeadsDir(townRoot, filepath.Join(townRoot, ".beads"))
+	contexts, err := townBeads.ListOpenSlingContexts()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s Warning: could not list sling contexts: %v (treating all as scheduled)\n",
 			style.Dim.Render("⚠"), err)
