@@ -84,6 +84,17 @@ var branchCheckExemptCommands = map[string]bool{
 
 // persistentPreRun runs before every command.
 func persistentPreRun(cmd *cobra.Command, args []string) error {
+	// Delegate to gc when inside a Gas City directory.
+	if shouldDelegate(cmd) {
+		delegateToGC()
+		return nil // unreachable — delegateToGC calls os.Exit
+	}
+
+	// Block role commands that have no gc equivalent inside a city.
+	if err := cityUnsupportedError(cmd); err != nil {
+		return err
+	}
+
 	// Check if binary was built properly (via make build, not raw go build).
 	// Raw go build produces unsigned binaries that macOS may kill.
 	// Warning only - doesn't block execution.
