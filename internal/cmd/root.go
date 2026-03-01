@@ -68,6 +68,7 @@ var beadsExemptCommands = map[string]bool{
 	"krc":           true, // KRC doesn't require beads
 	"run-migration":       true, // Migration orchestrator handles its own beads checks
 	"migrate-bead-labels": true, // Label migration handles its own beads access
+	"migrate":             true, // Gas City migration doesn't need beads
 }
 
 // Commands exempt from the town root branch warning.
