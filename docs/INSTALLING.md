@@ -2,16 +2,22 @@
 
 Complete setup guide for Gas Town multi-agent orchestrator.
 
+For the shortest path, use `brew install gastown` on macOS or the Docker setup in [docker.md](docker.md). Homebrew installs `gt`, `bd`, and `dolt` together. Docker supplies the runtime tools inside the container. The native/source paths below are for hosts where you install and run `gt` directly.
+
 ## Prerequisites
 
 ### Required
 
+Native source installs require these host tools. Homebrew and Docker installs provide some of them for you, as noted in the platform sections below. Docker installs only require Docker Compose on the host; the container supplies Go, Dolt, `bd`, tmux, and CLI utilities.
+
 | Tool | Version | Check | Install |
 |------|---------|-------|---------|
-| **Go** | 1.25.8+ | `go version` | See [golang.org](https://go.dev/doc/install) |
+| **Go** | 1.26.2+ | `go version` | See [golang.org](https://go.dev/doc/install) |
 | **Git** | 2.20+ | `git --version` | See below |
+| **sqlite3** | any | `sqlite3 --version` | Usually pre-installed on macOS; Linux packages are commonly named `sqlite3` |
 | **Dolt** | >= 2.0.7 | `dolt version` | macOS: `brew install dolt`; other platforms: see [dolthub/dolt](https://github.com/dolthub/dolt?tab=readme-ov-file#installation) |
-| **Beads** | >= 0.55.4 | `bd version` | Installed by `brew install gastown`, or from source with `go install github.com/steveyegge/beads/cmd/bd@latest` |
+| **Beads** | >= 0.57.0 | `bd version` | Installed by `brew install gastown`, or from source with `go install github.com/steveyegge/beads/cmd/bd@latest` |
+| **Docker Compose** | v2+ | `docker compose version` | Docker setup only. Install Docker Desktop or Docker Engine with the Compose plugin. |
 
 ### Optional (for Full Stack Mode)
 
@@ -27,12 +33,20 @@ Complete setup guide for Gas Town multi-agent orchestrator.
 
 ### macOS
 
+Use Homebrew for the normal macOS install. It installs `gt`, `bd`, and `dolt` together.
+
 ```bash
 # Install Homebrew if needed
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Required
-brew install go git dolt
+# Recommended install
+brew install gastown
+
+# Optional: source builds also need Go and Dolt
+brew install go dolt
+
+# Optional: Docker setup only
+# Install Docker Desktop or another Docker Engine with Compose v2.
 
 # Optional (for full stack mode)
 brew install tmux
@@ -43,15 +57,17 @@ brew install tmux
 ```bash
 # Required
 sudo apt update
-sudo apt install -y git
+sudo apt install -y git sqlite3
 
 # Install Go (apt version may be outdated, use official installer)
-wget https://go.dev/dl/go1.25.8.linux-amd64.tar.gz
-sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.25.8.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bashrc
+wget https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.26.2.linux-amd64.tar.gz
+echo 'export PATH=/usr/local/go/bin:$HOME/go/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 
 # Install Dolt: see https://github.com/dolthub/dolt?tab=readme-ov-file#installation
+
+# Docker setup only: install Docker Engine with the Compose plugin.
 
 # Optional (for full stack mode)
 sudo apt install -y tmux
@@ -61,18 +77,31 @@ sudo apt install -y tmux
 
 ```bash
 # Required
-sudo dnf install -y git golang
+sudo dnf install -y git sqlite
+# Install Go 1.26.2+ from your distro if available, otherwise use the official Go installer.
 # Install Dolt: see https://github.com/dolthub/dolt?tab=readme-ov-file#installation
+# Docker setup only: install Docker Engine with the Compose plugin.
 
 # Optional
 sudo dnf install -y tmux
 ```
 
+### Windows
+
+Install Go and Dolt first, then install `gt` and `bd` with Go. The binaries land in `%USERPROFILE%\go\bin`; add that directory to `PATH` if Go did not do so automatically. For Docker setup, install Docker Desktop with Compose support.
+
+```powershell
+go install github.com/steveyegge/gastown/cmd/gt@latest
+go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+Use WSL or another Linux environment for tmux-backed workflows. Native Windows shells are best suited to minimal CLI-only use.
+
 ### Verify Prerequisites
 
 ```bash
 # Check all prerequisites
-go version        # Should show go1.25.8 or higher
+go version        # Should show go1.26.2 or higher
 git --version     # Should show 2.20 or higher
 dolt version      # Should show 2.0.7 or higher
 tmux -V           # (Optional) Should show 3.0 or higher
@@ -82,28 +111,33 @@ tmux -V           # (Optional) Should show 3.0 or higher
 
 ### Step 1: Install the Binaries
 
-```bash
-# Install Gas Town CLI
-brew install gastown
+If you used `brew install gastown`, the binaries are already installed. Verify them:
 
-# Verify installation
+```bash
 gt version
 bd version
 dolt version
 ```
 
+On Linux and Windows, install `gt` and `bd` with Go after installing Dolt separately:
+
+```bash
+go install github.com/steveyegge/gastown/cmd/gt@latest
+go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
 Homebrew installs the runtime dependencies declared by the core formula. The
 `gastownhall/gastown` tap is reserved for emergency updates. If you build from
-source instead, install `dolt` first, install `bd` with Go, ensure `$GOPATH/bin`
-(usually `~/go/bin`) is in your PATH, and ensure `~/.local/bin` appears before
-older install locations. On macOS, do not install `gt` with `go install`:
+source instead, install `dolt` first, install `bd` with Go, and ensure both
+`~/.local/bin` and `$GOPATH/bin` (usually `~/go/bin`) appear before older
+install locations. On macOS, do not install `gt` with `go install`:
 unsigned binaries may be killed by the OS. Clone the repository and use `make`
 instead.
 
 ```bash
 brew install dolt
 go install github.com/steveyegge/beads/cmd/bd@latest
-export PATH="$HOME/.local/bin:$PATH:$HOME/go/bin"
+export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
 git clone https://github.com/steveyegge/gastown.git
 cd gastown
 make install
@@ -111,9 +145,15 @@ make install
 
 ### Step 2: Create Your Workspace
 
+Run these workspace steps on macOS, Linux, or WSL. Native Windows shells are minimal CLI-only environments; use WSL for `--shell`, `gt up`, tmux-backed roles, and Mayor sessions.
+
 ```bash
+# Set identity before --git so the initial HQ commit and Dolt config are valid
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+
 # Create a Gas Town workspace (HQ)
-gt install ~/gt --shell
+gt install ~/gt --shell --git
 
 # This creates:
 #   ~/gt/
@@ -144,10 +184,9 @@ gt rig add myproject https://github.com/you/repo.git
 cd ~/gt
 
 gt enable              # enable Gas Town system-wide
-gt git-init            # initialize a git repo for your HQ
 gt up                  # Start all services. Use gt down or gt shutdown for stopping. 
 
-gt doctor              # Run health checks
+gt doctor --fix        # Run health checks and fix post-install warnings
 gt status              # Show workspace status
 ```
 
