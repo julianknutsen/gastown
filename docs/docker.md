@@ -224,7 +224,7 @@ The entrypoint's `gt install /gt --git` does not run `gt up`, install shell inte
 ```bash
 gt enable           # turn on shell hooks for Claude Code SessionStart events
 gt shell install    # install zsh integration (sets GT_TOWN_ROOT, GT_RIG)
-gt up --restore     # start the daemon and restore Mayor/Deacon settings
+gt up --restore     # start the daemon and restore crew and polecats
 ```
 
 After the sequence above, `gt doctor` should report mostly clean. See *Known issues* below for the `claude-settings` failure that persists in the docker setup.
